@@ -9,7 +9,7 @@ router = APIRouter()
 async def get_dashboard_metrics(db: AsyncIOMotorDatabase = Depends(get_db)):
     """Fetches KPI metrics for the dashboard from MongoDB."""
     total_alerts = await db["alerts"].count_documents({})
-    critical_alerts = await db["alerts"].count_documents({"severity": "Critical"})
+    critical_alerts = await db["alerts"].count_documents({"severity": {"$regex": "^critical$", "$options": "i"}})
     open_investigations = await db["alerts"].count_documents({"status": "Investigating"})
     
     # Simple aggregates (mocked or calculated)

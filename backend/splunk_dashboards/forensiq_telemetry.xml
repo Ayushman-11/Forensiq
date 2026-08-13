@@ -1,0 +1,57 @@
+<dashboard version="1.1" theme="dark">
+  <label>Forensiq Telemetry &amp; Detection Dashboard</label>
+  <description>Real-time monitoring for login failures, port scanning, and host discovery.</description>
+  <row>
+    <panel>
+      <title>Failed Logins (Last 24h)</title>
+      <single>
+        <search>
+          <query>index=windows source="XmlWinEventLog:Security" EventCode=4625 | stats count</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="colorBy">value</option>
+        <option name="colorMode">block</option>
+        <option name="rangeColors">["0x53a051","0xf1813f","0xdc4e41"]</option>
+        <option name="rangeValues">[10,50]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Failed Login Activity Over Time</title>
+      <chart>
+        <search>
+          <query>index=windows source="XmlWinEventLog:Security" EventCode=4625 | timechart count by TargetUserName</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.stacked">true</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Suspicious Outbound Network Connections</title>
+      <table>
+        <search>
+          <query>index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=3 Initiated=true NOT (DestinationIp="10.*" OR DestinationIp="192.168.*" OR DestinationIp="172.*" OR DestinationIp="127.*") NOT (DestinationPort=80 OR DestinationPort=443 OR DestinationPort=53) | table _time, Image, User, SourceIp, DestinationIp, DestinationPort, Protocol | sort - _time</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+    <panel>
+      <title>Host Discovery &amp; Recon Commands</title>
+      <table>
+        <search>
+          <query>index=windows source="XmlWinEventLog:Security" EventCode=4688 (CommandLine="*nmap*" OR CommandLine="*arp -a*" OR CommandLine="*ipconfig*" OR CommandLine="*net view*" OR CommandLine="*netstat*" OR CommandLine="*systeminfo*" OR CommandLine="*whoami*" OR CommandLine="*tasklist*") | table _time, SubjectUserName, NewProcessName, CommandLine | sort - _time</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+  </row>
+</dashboard>

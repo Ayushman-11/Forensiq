@@ -3,126 +3,167 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { motion, AnimatePresence } from "framer-motion";
+import { 
+  LayoutDashboard, 
+  Bell, 
+  Terminal, 
+  ShieldAlert, 
+  Target, 
+  Clock, 
+  Server, 
+  FileText, 
+  BarChart2, 
+  Settings,
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  HelpCircle,
+  UserCircle
+} from "lucide-react";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [isSidebarMinimized, setIsSidebarMinimized] = useState(false);
   const pathname = usePathname();
 
   const navItems = [
-    { href: "/", icon: "dashboard", label: "Dashboard" },
-    { href: "/alerts", icon: "notifications", label: "Alerts" },
-    { href: "#", icon: "search_insights", label: "Investigations" },
-    { href: "#", icon: "shield", label: "Threat Intel" },
-    { href: "#", icon: "grid_view", label: "MITRE ATT&CK" },
-    { href: "#", icon: "history", label: "Timeline" },
-    { href: "#", icon: "inventory_2", label: "Assets" },
-    { href: "#", icon: "description", label: "Reports" },
-    { href: "#", icon: "bar_chart", label: "Analytics" },
-    { href: "#", icon: "settings", label: "Settings" },
+    { href: "/", icon: LayoutDashboard, label: "Dashboard" },
+    { href: "/alerts", icon: Bell, label: "Alerts" },
+    { href: "/search", icon: Terminal, label: "Raw Logs" },
+    { href: "#", icon: ShieldAlert, label: "Threat Intel" },
+    { href: "#", icon: Target, label: "MITRE ATT&CK" },
+    { href: "#", icon: Clock, label: "Timeline" },
+    { href: "#", icon: Server, label: "Assets" },
+    { href: "#", icon: FileText, label: "Reports" },
+    { href: "#", icon: BarChart2, label: "Analytics" },
+    { href: "#", icon: Settings, label: "Settings" },
   ];
 
   return (
     <>
       {/* Side Navigation Bar */}
-      <aside 
-        className={`fixed left-0 top-0 h-full ${isSidebarMinimized ? "w-[68px]" : "w-[240px]"} transition-all duration-300 bg-surface dark:bg-surface-dim border-r border-outline-variant dark:border-outline flex flex-col z-50`}
+      <motion.aside 
+        initial={false}
+        animate={{ width: isSidebarMinimized ? 60 : 240 }}
+        className="fixed left-0 top-0 h-full bg-[#141414] border-r border-[#2a2a2a] flex flex-col z-50 transition-all duration-300 overflow-hidden"
       >
-        <div className={`flex items-center gap-3 p-4 mb-4 mt-2 ${isSidebarMinimized ? "justify-center px-2" : ""}`}>
-          <div className="w-8 h-8 rounded bg-primary flex items-center justify-center text-on-primary font-bold shrink-0">F</div>
-          {!isSidebarMinimized && (
-            <div className="whitespace-nowrap overflow-hidden">
-              <h1 className="font-display-md text-display-md font-bold text-primary dark:text-primary-fixed leading-none">Forensiq</h1>
-              <p className="font-caption text-caption text-on-surface-variant">AI Security Ops</p>
-            </div>
-          )}
+        <div className={`flex items-center gap-3 p-4 mb-4 mt-2 ${isSidebarMinimized ? "justify-center px-0" : ""}`}>
+          <div className="w-8 h-8 rounded bg-transparent border border-[#383838] flex items-center justify-center text-white font-display-md text-sm font-bold shrink-0">
+            F
+          </div>
+          <AnimatePresence>
+            {!isSidebarMinimized && (
+              <motion.div 
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -10 }}
+                className="whitespace-nowrap overflow-hidden flex flex-col"
+              >
+                <h1 className="font-display-md text-lg font-bold text-[#f0f0f0] leading-none tracking-tight">Forensiq</h1>
+                <p className="font-caption text-[10px] text-[#888888] font-bold mt-1 uppercase tracking-wider">AI Security Ops</p>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
         
-        <nav className="flex flex-col gap-1 px-3 overflow-y-auto overflow-x-hidden flex-1">
+        <nav className="flex flex-col gap-1 px-3 overflow-y-auto overflow-x-hidden flex-1 pb-6">
           {navItems.map((item) => {
             const isActive = pathname === item.href;
             return (
               <Link 
                 key={item.label}
                 href={item.href} 
-                className={`rounded-lg py-2 flex items-center transition-colors group ${
+                className={`relative rounded-md py-2 flex items-center transition-all group overflow-hidden ${
                   isSidebarMinimized ? "justify-center px-0" : "px-3 gap-3"
                 } ${
                   isActive 
-                    ? "bg-primary/10 text-primary dark:bg-primary-fixed dark:text-on-primary-fixed" 
-                    : "text-on-surface-variant dark:text-outline-variant hover:bg-surface-container-highest dark:hover:bg-on-secondary-fixed-variant"
+                    ? "bg-[#2a2a2a] text-[#ffffff]" 
+                    : "text-[#888888] hover:text-[#f0f0f0] hover:bg-[#1c1c1c]"
                 }`}
                 title={isSidebarMinimized ? item.label : undefined}
               >
-                <span className={`material-symbols-outlined ${!isActive ? "group-hover:text-primary transition-colors" : ""}`}>
-                  {item.icon}
-                </span>
-                {!isSidebarMinimized && (
-                  <span className={`whitespace-nowrap ${isActive ? "font-semibold" : "font-body-md text-body-md"}`}>
-                    {item.label}
-                  </span>
-                )}
+                <item.icon className={`w-4 h-4 shrink-0 relative z-10 ${isActive ? "text-[#FF1E56]" : "opacity-80 group-hover:opacity-100 transition-opacity"}`} />
+                
+                <AnimatePresence>
+                  {!isSidebarMinimized && (
+                    <motion.span 
+                      initial={{ opacity: 0, width: 0 }}
+                      animate={{ opacity: 1, width: 'auto' }}
+                      exit={{ opacity: 0, width: 0 }}
+                      className={`whitespace-nowrap relative z-10 text-[13px] ${isActive ? "font-bold tracking-wide" : "font-medium"}`}
+                    >
+                      {item.label}
+                    </motion.span>
+                  )}
+                </AnimatePresence>
               </Link>
             );
           })}
         </nav>
         
-        {/* Floating Toggle Button */}
+        {/* Toggle Button */}
         <button 
           onClick={() => setIsSidebarMinimized(!isSidebarMinimized)}
-          className="absolute -right-3 top-1/2 -translate-y-1/2 w-6 h-6 bg-surface-bright dark:bg-surface-dim border border-outline-variant dark:border-outline rounded-full flex items-center justify-center text-on-surface-variant hover:text-primary hover:border-primary shadow-sm z-50 cursor-pointer transition-colors"
-          title={isSidebarMinimized ? "Expand Menu" : "Collapse Menu"}
+          className="mx-3 mb-4 p-2 rounded-md border border-[#2a2a2a] bg-[#1c1c1c] text-[#888888] hover:text-white hover:border-[#383838] transition-colors flex justify-center items-center cursor-pointer"
         >
-          <span className={`material-symbols-outlined text-[16px] transition-transform duration-300 ${isSidebarMinimized ? "rotate-180" : "rotate-0"}`}>
-            chevron_left
-          </span>
+          {isSidebarMinimized ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
         </button>
-      </aside>
+      </motion.aside>
 
       {/* Main Content Area */}
-      <div className={`flex-1 flex flex-col min-h-screen transition-all duration-300 ${isSidebarMinimized ? "ml-[68px]" : "ml-[240px]"}`}>
+      <motion.div 
+        animate={{ marginLeft: isSidebarMinimized ? 60 : 240 }}
+        className="flex-1 flex flex-col min-h-screen transition-all duration-300"
+      >
         {/* Top Navigation Bar */}
-        <header className="sticky top-0 h-[64px] z-40 bg-surface/80 dark:bg-surface-dim/80 backdrop-blur-md border-b border-outline-variant dark:border-outline flex justify-between items-center px-6 w-full">
-          <div className="flex items-center gap-4 flex-1">
-            <span className="material-symbols-outlined text-on-surface-variant cursor-pointer hover:text-primary transition-colors">search</span>
-            <input className="bg-transparent border-none focus:ring-0 text-body-md font-body-md text-on-surface placeholder:text-on-surface-variant/50 w-full max-w-md outline-none" placeholder="Search investigations, alerts..." type="text"/>
+        <header className="sticky top-0 h-[56px] z-40 bg-[#0e0e0e] border-b border-[#2a2a2a] flex justify-between items-center px-6 w-full">
+          <div className="flex items-center gap-3 flex-1 max-w-xl">
+            <div className="bg-[#141414] border border-[#2a2a2a] rounded px-3 py-1.5 flex items-center gap-2 w-full focus-within:border-[#383838] transition-all">
+              <Search className="w-4 h-4 text-[#555555]" />
+              <input 
+                className="bg-transparent border-none focus:ring-0 text-sm font-medium text-[#f0f0f0] placeholder:text-[#555555] w-full outline-none" 
+                placeholder="Search..." 
+                type="text"
+              />
+            </div>
           </div>
-          <div className="flex items-center gap-4">
-            <button aria-label="Notifications" className="text-on-surface-variant hover:text-primary transition-colors h-8 w-8 rounded flex items-center justify-center hover:bg-surface-container-high active:scale-95 duration-150 cursor-pointer">
-              <span className="material-symbols-outlined">notifications</span>
+          <div className="flex items-center gap-2">
+            <button aria-label="Notifications" className="text-[#888888] hover:text-[#f0f0f0] transition-all h-8 w-8 rounded flex items-center justify-center hover:bg-[#1c1c1c] cursor-pointer">
+              <Bell className="w-4 h-4" />
             </button>
-            <button aria-label="Help" className="text-on-surface-variant hover:text-primary transition-colors h-8 w-8 rounded flex items-center justify-center hover:bg-surface-container-high active:scale-95 duration-150 cursor-pointer">
-              <span className="material-symbols-outlined">help</span>
+            <button aria-label="Help" className="text-[#888888] hover:text-[#f0f0f0] transition-all h-8 w-8 rounded flex items-center justify-center hover:bg-[#1c1c1c] cursor-pointer">
+              <HelpCircle className="w-4 h-4" />
             </button>
-            <button aria-label="Account" className="text-on-surface-variant hover:text-primary transition-colors h-8 w-8 rounded flex items-center justify-center hover:bg-surface-container-high active:scale-95 duration-150 cursor-pointer">
-              <span className="material-symbols-outlined">account_circle</span>
+            <button aria-label="Account" className="text-[#888888] hover:text-[#f0f0f0] transition-all h-8 w-8 rounded flex items-center justify-center hover:bg-[#1c1c1c] cursor-pointer ml-1">
+              <UserCircle className="w-5 h-5" />
             </button>
           </div>
         </header>
 
         {/* Subheader / Breadcrumbs */}
-        <div className="bg-surface/80 dark:bg-surface-dim/80 px-6 py-2.5 border-b border-outline-variant/50 dark:border-outline/50 flex items-center gap-2">
-          <Link href="/" className="text-on-surface-variant hover:text-primary transition-colors font-body-md text-[13px]">Dashboard</Link>
+        <div className="bg-[#141414] px-6 py-2 border-b border-[#2a2a2a] flex items-center gap-2 relative z-30">
+          <Link href="/" className="text-[#888888] hover:text-[#f0f0f0] transition-colors font-semibold tracking-wider text-[11px] uppercase">Dashboard</Link>
           {pathname.split('/').filter(p => p).map((segment, index, arr) => {
             const href = `/${arr.slice(0, index + 1).join('/')}`;
             const isLast = index === arr.length - 1;
             const title = segment.charAt(0).toUpperCase() + segment.slice(1);
             return (
               <div key={href} className="flex items-center gap-2">
-                <span className="text-on-surface-variant/50 material-symbols-outlined text-[14px]">chevron_right</span>
+                <span className="text-[#555555] mx-1">/</span>
                 {isLast ? (
-                  <span className="text-on-surface font-medium font-body-md text-[13px]">{title}</span>
+                  <span className="text-[#f0f0f0] font-bold text-[11px] uppercase tracking-wider">{title}</span>
                 ) : (
-                  <Link href={href} className="text-on-surface-variant hover:text-primary transition-colors font-body-md text-[13px]">{title}</Link>
+                  <Link href={href} className="text-[#888888] hover:text-[#f0f0f0] transition-colors font-semibold text-[11px] uppercase tracking-wider">{title}</Link>
                 )}
               </div>
             );
           })}
         </div>
         
-        <main className="flex-1 p-6 md:p-8 bg-surface dark:bg-surface-dim overflow-y-auto">
+        <main className="flex-1 p-6 relative z-20">
           {children}
         </main>
-      </div>
+      </motion.div>
     </>
   );
 }

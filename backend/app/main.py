@@ -14,13 +14,28 @@ from app.api.v1.router import api_router
 
 from app.database.session import connect_to_mongo, close_mongo_connection
 
+from app.services.poller import AlertPoller
+from app.database.session import db_config
+
+poller = None
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan context manager handling startup and shutdown events."""
     setup_logging()
     logger.info("forensiq_backend_startup", env=settings.ENV, debug=settings.DEBUG)
     await connect_to_mongo()
+    
+    global poller
+    if db_config.client:
+        poller = AlertPoller(db_config.client[settings.MONGO_DB_NAME], interval_seconds=30)
+        poller.start()
+        
     yield
+    
+    if poller:
+        poller.stop()
+        
     await close_mongo_connection()
     logger.info("forensiq_backend_shutdown")
 

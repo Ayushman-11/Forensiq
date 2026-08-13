@@ -1,4 +1,5 @@
 import asyncio
+import re
 from typing import List, Dict, Any
 from pydantic import BaseModel
 import httpx
@@ -13,8 +14,22 @@ class Enrichment(BaseModel):
     threat_score: int # 0-100
     source: str
     raw_response: dict
+    cached: bool = False
 
-async def _query_vt(endpoint: str, ioc: str, ioc_type: str) -> Enrichment:
+def _get_ioc_type(ioc: str) -> str:
+    if re.match(r"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$", ioc):
+        return "ip"
+    elif re.match(r"^[a-fA-F0-9]{32,64}$", ioc):
+        return "hash"
+    return "domain"
+
+async def _query_vt(ioc: str, ioc_type: str) -> Enrichment:
+    endpoint = {
+        "ip": "ip_addresses",
+        "domain": "domains",
+        "hash": "files"
+    }.get(ioc_type, "domains")
+    
     if not settings.VT_API_KEY:
         return _mock_enrichment(ioc, ioc_type, "VirusTotal (Mock)")
         
@@ -61,17 +76,30 @@ async def _query_vt(endpoint: str, ioc: str, ioc_type: str) -> Enrichment:
         return _mock_enrichment(ioc, ioc_type, "VirusTotal (Error Fallback)")
 
 def _mock_enrichment(ioc: str, ioc_type: str, source: str) -> Enrichment:
-    # simple heuristic mock
+    # advanced heuristic mock based on common bad patterns
     is_malicious = False
+    reputation = "benign"
+    threat_score = 0
+    
     if ioc_type == "ip":
-        is_malicious = ioc.startswith("10.") == False and ioc.startswith("192.") == False
+        # Simulate some IPs as malicious
+        if ioc.startswith("47.") or ioc.startswith("185.") or ioc.startswith("104.") or ioc.startswith("34."):
+            is_malicious = True
+            threat_score = 85
+            reputation = "malicious"
+    elif ioc_type == "domain":
+        if any(bad in ioc.lower() for bad in ["ngrok", "raw.githubusercontent", "pastebin", "dyndns", "bit.ly"]):
+            is_malicious = True
+            threat_score = 95
+            reputation = "malicious"
+            
     return Enrichment(
         ioc=ioc,
         ioc_type=ioc_type,
-        reputation="suspicious" if is_malicious else "benign",
-        threat_score=75 if is_malicious else 5,
+        reputation=reputation,
+        threat_score=threat_score,
         source=source,
-        raw_response={"mock_reason": "Fallback hit"}
+        raw_response={"mock_reason": f"Simulated {reputation} result"}
     )
 
 async def enrich_ioc_node(state: AgentState) -> Dict[str, Any]:
@@ -83,16 +111,22 @@ async def enrich_ioc_node(state: AgentState) -> Dict[str, Any]:
     
     tasks = []
     for ioc in extracted_iocs:
-        # crude detection
-        if any(c.isalpha() for c in ioc):
-            tasks.append(_query_vt("domains", ioc, "domain"))
-        else:
-            tasks.append(_query_vt("ip_addresses", ioc, "ip"))
+        ioc_type = _get_ioc_type(ioc)
+        tasks.append(_query_vt(ioc, ioc_type))
             
     results = await asyncio.gather(*tasks)
     
-    # Store results as dicts in the state
     enrichment_results = [r.model_dump() for r in results]
     
+    malicious_count = sum(1 for r in results if r.reputation == "malicious")
+    suspicious_count = sum(1 for r in results if r.reputation == "suspicious")
+    
+    current_log = state.get("investigation_log", [])
+    new_log = current_log + [f"IOC Enrichment complete: {len(results)} IOCs checked. {malicious_count} malicious, {suspicious_count} suspicious."]
+    
     logger.info("ioc_enrichment_complete", enriched_count=len(enrichment_results))
-    return {"enrichment_results": enrichment_results}
+    
+    return {
+        "enrichment_results": enrichment_results,
+        "investigation_log": new_log
+    }

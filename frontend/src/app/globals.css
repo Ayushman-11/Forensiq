@@ -1,83 +1,131 @@
 @import "tailwindcss";
 
 @theme {
-  --color-on-primary: #ffffff;
-  --color-on-surface-variant: #434655;
-  --color-on-primary-fixed: #00174b;
-  --color-primary-fixed: #dbe1ff;
-  --color-secondary: #575e70;
-  --color-tertiary-container: #bc4800;
-  --color-inverse-primary: #b4c5ff;
-  --color-error: #ba1a1a;
-  --color-on-primary-container: #eeefff;
-  --color-on-secondary: #ffffff;
-  --color-surface-tint: #0053db;
-  --color-primary-fixed-dim: #b4c5ff;
-  --color-secondary-container: #d9dff5;
-  --color-error-container: #ffdad6;
-  --color-surface-variant: #e1e2ed;
-  --color-on-secondary-fixed: #141b2b;
-  --color-surface-container-lowest: #ffffff;
-  --color-surface-bright: #faf8ff;
-  --color-outline: #737686;
-  --color-primary: #004ac6;
-  --color-secondary-fixed: #dce2f7;
-  --color-on-tertiary-container: #ffede6;
-  --color-primary-container: #2563eb;
-  --color-outline-variant: #c3c6d7;
-  --color-inverse-on-surface: #f0f0fb;
-  --color-on-tertiary: #ffffff;
-  --color-on-error: #ffffff;
-  --color-surface-dim: #d9d9e5;
-  --color-secondary-fixed-dim: #c0c6db;
-  --color-surface: #faf8ff;
-  --color-tertiary-fixed: #ffdbcd;
-  --color-inverse-surface: #2e3039;
-  --color-surface-container: #ededf9;
-  --color-surface-container-low: #f3f3fe;
-  --color-on-tertiary-fixed: #360f00;
-  --color-on-background: #191b23;
-  --color-on-primary-fixed-variant: #003ea8;
-  --color-surface-container-high: #e7e7f3;
-  --color-on-tertiary-fixed-variant: #7d2d00;
-  --color-on-error-container: #93000a;
-  --color-on-surface: #191b23;
-  --color-tertiary-fixed-dim: #ffb596;
-  --color-surface-container-highest: #e1e2ed;
-  --color-on-secondary-container: #5c6274;
-  --color-tertiary: #943700;
-  --color-background: #faf8ff;
-  --color-on-secondary-fixed-variant: #404758;
+  /* ── Forensiq Dark Palette ───────────────────────── */
+  /* Base */
+  --color-base:       #000000;
+  --color-surface:    #0e0e0e;
+  --color-surface-1:  #141414;
+  --color-surface-2:  #1c1c1c;
+  --color-surface-3:  #232323;
+  --color-border:     #2a2a2a;
+  --color-border-2:   #383838;
 
-  --radius-DEFAULT: 0.125rem;
-  --radius-lg: 0.25rem;
-  --radius-xl: 0.5rem;
-  --radius-full: 0.75rem;
+  /* Text */
+  --color-text:       #f0f0f0;
+  --color-text-muted: #888888;
+  --color-text-dim:   #555555;
 
-  --spacing-margin-page: 24px;
-  --spacing-gutter: 16px;
-  --spacing-stack-sm: 8px;
-  --spacing-navbar-height: 64px;
-  --spacing-stack-lg: 24px;
-  --spacing-stack-md: 16px;
-  --spacing-sidebar-width: 240px;
-  --spacing-context-panel-width: 320px;
+  /* Accents from palette */
+  --color-red:        #FF1E56;
+  --color-red-dim:    rgba(255,30,86,0.12);
+  --color-red-border: rgba(255,30,86,0.25);
+  --color-amber:      #FFAC41;
+  --color-amber-dim:  rgba(255,172,65,0.12);
+  --color-amber-border: rgba(255,172,65,0.25);
 
-  --font-display-md: var(--font-geist-sans);
-  --font-caption: var(--font-geist-sans);
-  --font-body-md: var(--font-geist-sans);
-  --font-title-sm: var(--font-geist-sans);
-  --font-mono-label: var(--font-jetbrains-mono);
-  --font-display-lg-mobile: var(--font-geist-sans);
-  --font-display-lg: var(--font-geist-sans);
+  /* Standard semantic */
+  --color-blue:       #3b82f6;
+  --color-blue-dim:   rgba(59,130,246,0.12);
+  --color-green:      #22c55e;
+  --color-green-dim:  rgba(34,197,94,0.12);
+  --color-muted:      #525252;
+
+  /* Legacy compat aliases for any remaining Tailwind utility usage */
+  --color-primary:                var(--color-red);
+  --color-on-primary:             #ffffff;
+  --color-on-surface:             var(--color-text);
+  --color-on-surface-variant:     var(--color-text-muted);
+  --color-outline:                var(--color-border);
+  --color-outline-variant:        var(--color-border);
+  --color-surface-container-lowest: var(--color-surface-1);
+  --color-surface-container-low:  var(--color-surface-1);
+  --color-surface-container:      var(--color-surface-2);
+  --color-surface-container-high: var(--color-surface-3);
+  --color-surface-container-highest: var(--color-surface-3);
+  --color-surface-bright:         var(--color-surface-2);
+  --color-background:             var(--color-base);
+  --color-error:                  var(--color-red);
+  --color-tertiary-container:     var(--color-amber);
+  --color-secondary:              var(--color-muted);
+
+  /* Radius — minimal, Splunk-like */
+  --radius-DEFAULT: 0.25rem;
+  --radius-lg:      0.375rem;
+  --radius-xl:      0.5rem;
+  --radius-full:    9999px;
+
+  /* Spacing */
+  --spacing-sidebar-width: 60px;
+  --spacing-navbar-height: 44px;
+
+  /* Fonts */
+  --font-display-md:  var(--font-space-grotesk), sans-serif;
+  --font-display-lg:  var(--font-space-grotesk), sans-serif;
+  --font-title-sm:    var(--font-space-grotesk), sans-serif;
+  --font-body-md:     var(--font-space-grotesk), sans-serif;
+  --font-caption:     var(--font-space-grotesk), sans-serif;
+  --font-mono-label:  var(--font-jetbrains-mono), monospace;
 }
 
 @layer base {
+  *, *::before, *::after { box-sizing: border-box; }
+
   body {
-    @apply bg-background text-on-surface antialiased;
+    background-color: var(--color-base);
+    color: var(--color-text);
+    font-family: var(--font-space-grotesk), sans-serif;
+    @apply antialiased;
+  }
+
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--color-border-2); border-radius: 2px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--color-muted); }
+}
+
+@layer utilities {
+  /* Cards */
+  .card {
+    background: var(--color-surface-1);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+  }
+  .card-2 {
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+  }
+
+  /* Severity pills */
+  .sev-critical { color: var(--color-red); background: var(--color-red-dim); border: 1px solid var(--color-red-border); }
+  .sev-high     { color: var(--color-amber); background: var(--color-amber-dim); border: 1px solid var(--color-amber-border); }
+  .sev-medium   { color: var(--color-blue); background: var(--color-blue-dim); border: 1px solid rgba(59,130,246,0.25); }
+  .sev-low      { color: var(--color-muted); background: rgba(82,82,82,0.12); border: 1px solid rgba(82,82,82,0.25); }
+
+  /* Label style */
+  .label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+  }
+
+  /* Dot indicators */
+  .dot-live  { width:7px; height:7px; border-radius:50%; background:var(--color-green); box-shadow: 0 0 8px var(--color-green); animation: pulse-dot 2s ease-in-out infinite; }
+  .dot-red   { width:7px; height:7px; border-radius:50%; background:var(--color-red); }
+  .dot-amber { width:7px; height:7px; border-radius:50%; background:var(--color-amber); }
+  .dot-blue  { width:7px; height:7px; border-radius:50%; background:var(--color-blue); }
+  .dot-muted { width:7px; height:7px; border-radius:50%; background:var(--color-muted); }
+
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--color-green); }
+    50% { opacity: 0.6; box-shadow: 0 0 14px var(--color-green); }
   }
 }
 
+/* Material icons — thinner weight for dark aesthetic */
 .material-symbols-outlined {
-  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 20;
 }
