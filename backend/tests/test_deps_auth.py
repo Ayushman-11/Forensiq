@@ -1,13 +1,36 @@
 """Tests for the get_current_user / require_roles dependencies."""
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from httpx import AsyncClient, ASGITransport
+from jose import jwt as jose_jwt
 from mongomock_motor import AsyncMongoMockClient
 
 from app.api.deps import get_current_user, require_roles
-from app.core.security import create_access_token, hash_password
+from app.core.config import settings
+from app.core.security import create_access_token, create_refresh_token, hash_password
+
+
+def _make_expired_access_token(user_id: str, email: str, role: str) -> str:
+    """Test-local helper: builds an access token with `exp` in the past.
+
+    `create_access_token` intentionally has no custom-expiry parameter (Task 5
+    depends on its documented signature), so we mint the expired token
+    directly with jose, signed the same way decode_token expects.
+    """
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": user_id,
+        "email": email,
+        "role": role,
+        "type": "access",
+        "iat": now - timedelta(minutes=10),
+        "exp": now - timedelta(minutes=5),
+    }
+    return jose_jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
 @pytest.fixture
@@ -96,3 +119,59 @@ async def test_require_roles_allows_matching_role(auth_test_app, mock_db):
     async with AsyncClient(transport=ASGITransport(app=auth_test_app), base_url="http://t") as c:
         resp = await c.get("/admin-only", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_rejects_refresh_token(auth_test_app, mock_db):
+    """A well-formed, unexpired *refresh* token must not authenticate a request."""
+    await mock_db["users"].insert_one({
+        "_id": "user123",
+        "email": "a@b.com",
+        "password_hash": hash_password("pw"),
+        "role": "analyst",
+        "is_active": True,
+    })
+    token, _jti, _expires_at = create_refresh_token(user_id="user123")
+    async with AsyncClient(transport=ASGITransport(app=auth_test_app), base_url="http://t") as c:
+        resp = await c.get("/whoami", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_rejects_inactive_user(auth_test_app, mock_db):
+    await mock_db["users"].insert_one({
+        "_id": "user123",
+        "email": "a@b.com",
+        "password_hash": hash_password("pw"),
+        "role": "analyst",
+        "is_active": False,
+    })
+    token = create_access_token(user_id="user123", email="a@b.com", role="analyst")
+    async with AsyncClient(transport=ASGITransport(app=auth_test_app), base_url="http://t") as c:
+        resp = await c.get("/whoami", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_rejects_unknown_user(auth_test_app, mock_db):
+    """Token is validly signed and unexpired, but `sub` matches no user document."""
+    token = create_access_token(user_id="ghost-user", email="ghost@b.com", role="analyst")
+    async with AsyncClient(transport=ASGITransport(app=auth_test_app), base_url="http://t") as c:
+        resp = await c.get("/whoami", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_rejects_expired_token(auth_test_app, mock_db):
+    """Token parses and verifies structurally, but `exp` is in the past."""
+    await mock_db["users"].insert_one({
+        "_id": "user123",
+        "email": "a@b.com",
+        "password_hash": hash_password("pw"),
+        "role": "analyst",
+        "is_active": True,
+    })
+    token = _make_expired_access_token(user_id="user123", email="a@b.com", role="analyst")
+    async with AsyncClient(transport=ASGITransport(app=auth_test_app), base_url="http://t") as c:
+        resp = await c.get("/whoami", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 401
