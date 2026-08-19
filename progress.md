@@ -17,37 +17,37 @@ This document tracks the progress of the Forensiq project over time. Each entry 
 
 ### Recent Development Activity (Based on Repository Analysis)
 #### Backend Progress:
-- � ✅ Application core initialized with FastAPI
-- � ✅ Structured logging configured with structlog
-- � ✅ Versioned API router established (/api/v1/)
-- � ✅ Health check endpoints implemented
-- � ✅ Alerts management endpoints created
-- � ✅ Search capabilities implemented
-- � ✅ SIEM abstraction layer designed (SIEMProvider protocol)
-- � ✅ Splunk provider implementation completed
-- � ✅ NormalizedEvent schema created
-- � ✅ Basic test suite established (test_health.py, test_splunk_client.py)
-- �� ⏳ Database models and ORM setup pending (PostgreSQL + pgvector)
-- �� ⏳ AI agents pipeline not fully implemented (agents exist but need orchestration)
-- �� ⏳ Task queue (Celery/Redis) not implemented
+-  ✅ Application core initialized with FastAPI
+-  ✅ Structured logging configured with structlog
+-  ✅ Versioned API router established (/api/v1/)
+-  ✅ Health check endpoints implemented
+-  ✅ Alerts management endpoints created
+-  ✅ Search capabilities implemented
+-  ✅ SIEM abstraction layer designed (SIEMProvider protocol)
+-  ✅ Splunk provider implementation completed
+-  ✅ NormalizedEvent schema created
+-  ✅ Basic test suite established (test_health.py, test_splunk_client.py)
+-  ⏳ Database models and ORM setup pending (PostgreSQL + pgvector)
+-  ⏳ AI agents pipeline not fully implemented (agents exist but need orchestration)
+-  ⏳ Task queue (Celery/Redis) not implemented
 
 #### Frontend Progress:
-- � ✅ Next.js App Router application initialized
-- � ✅ SOC Overview dashboard with KPI charts implemented
-- � ✅ @mui/x-charts integrated for data visualization
-- � ✅ Recent alerts data table UI created
-- � ✅ Dedicated alerts investigation view implemented
-- � ✅ Tailwind CSS configured with custom styling
-- � ✅ Consistent layout components (AppLayout.tsx)
-- �� ⏳ Frontend-to-backend API integration pending
-- �� ⏳ Real data fetching from backend endpoints needed
-- �� ⏳ Interactive components (filtering, sorting, drill-down) pending
+-  ✅ Next.js App Router application initialized
+-  ✅ SOC Overview dashboard with KPI charts implemented
+-  ✅ @mui/x-charts integrated for data visualization
+-  ✅ Recent alerts data table UI created
+-  ✅ Dedicated alerts investigation view implemented
+-  ✅ Tailwind CSS configured with custom styling
+-  ✅ Consistent layout components (AppLayout.tsx)
+-  ⏳ Frontend-to-backend API integration pending
+-  ⏳ Real data fetching from backend endpoints needed
+-  ⏳ Interactive components (filtering, sorting, drill-down) pending
 
 #### Infrastructure Progress:
-- �� ⏳ Docker Compose development environment not fully configured
-- �� ⏳ Production deployment setup pending
-- �� ⏳ Database migration system (Alembic) not implemented
-- �� ⏳ Environment variable management for secrets pending
+-  ⏳ Docker Compose development environment not fully configured
+-  ⏳ Production deployment setup pending
+-  ⏳ Database migration system (Alembic) not implemented
+-  ⏳ Environment variable management for secrets pending
 
 ## Upcoming Milestones
 Based on DEVELOPMENT_PLAN.md:
