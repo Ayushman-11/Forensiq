@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     )
     ALGORITHM: str = Field(default="HS256", description="JWT signing algorithm")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=60 * 24, description="Access token TTL in minutes")
+    REFRESH_TOKEN_EXPIRE_MINUTES: int = Field(
+        default=60 * 24 * 7, description="Refresh token TTL in minutes (7 days)"
+    )
 
     # Splunk Provider Configuration
     SPLUNK_URL: str = Field(default="https://localhost:8089", description="Splunk REST Management API URL")
