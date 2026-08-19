@@ -25,12 +25,20 @@ async def lifespan(app: FastAPI):
     setup_logging()
     logger.info("forensiq_backend_startup", env=settings.ENV, debug=settings.DEBUG)
     await connect_to_mongo()
-    
+
+    if db_config.client:
+        # TTL index: let MongoDB itself expire session documents once their
+        # expires_at timestamp has passed, instead of relying solely on the
+        # refresh JWT's own exp claim (which the session store never enforces).
+        await db_config.client[settings.MONGO_DB_NAME]["sessions"].create_index(
+            "expires_at", expireAfterSeconds=0
+        )
+
     global poller
     if db_config.client:
         poller = AlertPoller(db_config.client[settings.MONGO_DB_NAME], interval_seconds=30)
         poller.start()
-        
+
     yield
     
     if poller:
@@ -44,9 +52,9 @@ app = FastAPI(
     title="Forensiq API",
     description="AI-Agent Driven Security Operations & Investigation Platform API",
     version="0.1.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_url="/openapi.json",
+    docs_url="/docs" if settings.DEBUG else None,
+    redoc_url="/redoc" if settings.DEBUG else None,
+    openapi_url="/openapi.json" if settings.DEBUG else None,
     lifespan=lifespan,
 )
 

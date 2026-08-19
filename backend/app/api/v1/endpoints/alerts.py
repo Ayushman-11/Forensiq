@@ -13,6 +13,7 @@ from app.models.alert import AlertModel
 from app.services.ingestion import IngestionService
 from app.agents.graph import investigation_graph
 from app.core.logging import logger
+from app.api.deps import require_roles
 
 router = APIRouter()
 
@@ -118,7 +119,10 @@ async def get_alert(alert_id: str, db: AsyncIOMotorDatabase = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/ingest", response_model=dict)
-async def ingest_from_splunk(db: AsyncIOMotorDatabase = Depends(get_db)):
+async def ingest_from_splunk(
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    _user: dict = Depends(require_roles("admin", "soc_manager")),
+):
     """Triggers a manual ingestion of alerts from Splunk into MongoDB."""
     try:
         service = IngestionService(db)
