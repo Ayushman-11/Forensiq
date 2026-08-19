@@ -19,6 +19,17 @@ async function tryRefresh(): Promise<boolean> {
   }
 }
 
+let refreshInFlight: Promise<boolean> | null = null;
+
+function refreshOnce(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = tryRefresh().finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
 export async function apiFetch(path: string, options: RequestInit = {}): Promise<Response> {
   const access = getAccessToken();
   const headers = new Headers(options.headers);
@@ -27,7 +38,7 @@ export async function apiFetch(path: string, options: RequestInit = {}): Promise
   let res = await fetch(`${API_BASE}${path}`, { ...options, headers });
 
   if (res.status === 401 && getRefreshToken()) {
-    const refreshed = await tryRefresh();
+    const refreshed = await refreshOnce();
     if (refreshed) {
       const retryHeaders = new Headers(options.headers);
       const newAccess = getAccessToken();
