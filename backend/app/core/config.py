@@ -4,8 +4,12 @@ Enforces type safety and environment variable loading using Pydantic Settings v2
 """
 
 from typing import List
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Named constant so the "insecure default" comparison isn't a fragile string
+# duplicate between the field default and the production fail-fast check.
+DEFAULT_SECRET_KEY = "default-development-secret-key-must-change-in-prod-min-32-chars"
 
 
 class Settings(BaseSettings):
@@ -20,7 +24,7 @@ class Settings(BaseSettings):
     ENV: str = Field(default="development", description="Application runtime environment")
     DEBUG: bool = Field(default=True, description="Enable debug mode and verbose logs")
     SECRET_KEY: str = Field(
-        default="default-development-secret-key-must-change-in-prod-min-32-chars",
+        default=DEFAULT_SECRET_KEY,
         description="JWT signature secret key",
     )
     ALGORITHM: str = Field(default="HS256", description="JWT signing algorithm")
@@ -63,5 +67,18 @@ class Settings(BaseSettings):
         default="",
         description="VirusTotal API Key (v3)"
     )
+
+    @model_validator(mode="after")
+    def _reject_insecure_secret_in_production(self) -> "Settings":
+        """Fail fast at startup if production is left signing JWTs with the
+        publicly-known default SECRET_KEY. Development/test are unaffected."""
+        if self.ENV.lower() == "production" and self.SECRET_KEY == DEFAULT_SECRET_KEY:
+            raise ValueError(
+                "FORENSIQ_SECRET_KEY must be set to a non-default value when "
+                "FORENSIQ_ENV=production. Refusing to start with the insecure "
+                "default development secret key."
+            )
+        return self
+
 
 settings = Settings()
