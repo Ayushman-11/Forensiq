@@ -50,11 +50,9 @@ async def refresh(req: RefreshRequest, db: AsyncIOMotorDatabase = Depends(get_db
     if payload.get("type") != "refresh":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type")
 
-    session = await db["sessions"].find_one({"_id": payload.get("jti")})
+    session = await db["sessions"].find_one_and_delete({"_id": payload.get("jti")})
     if not session:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token has been revoked")
-
-    await db["sessions"].delete_one({"_id": payload.get("jti")})
 
     user = await db["users"].find_one({"_id": payload.get("sub")})
     if not user or not user.get("is_active", False):
