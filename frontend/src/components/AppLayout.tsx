@@ -21,10 +21,18 @@ import {
   HelpCircle,
   UserCircle
 } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
+import { roleLabel } from "@/lib/roles";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [isSidebarMinimized, setIsSidebarMinimized] = useState(false);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const pathname = usePathname();
+  const { user, logout } = useAuth();
+
+  if (pathname === "/login") {
+    return <>{children}</>;
+  }
 
   const navItems = [
     { href: "/", icon: LayoutDashboard, label: "Dashboard" },
@@ -134,9 +142,43 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <button aria-label="Help" className="text-[#888888] hover:text-[#f0f0f0] transition-all h-8 w-8 rounded flex items-center justify-center hover:bg-[#1c1c1c] cursor-pointer">
               <HelpCircle className="w-4 h-4" />
             </button>
-            <button aria-label="Account" className="text-[#888888] hover:text-[#f0f0f0] transition-all h-8 w-8 rounded flex items-center justify-center hover:bg-[#1c1c1c] cursor-pointer ml-1">
-              <UserCircle className="w-5 h-5" />
-            </button>
+            <div className="relative">
+              <button
+                aria-label="Account"
+                onClick={() => setIsUserMenuOpen((v) => !v)}
+                className="text-[#888888] hover:text-[#f0f0f0] transition-all h-8 w-8 rounded flex items-center justify-center hover:bg-[#1c1c1c] cursor-pointer ml-1"
+              >
+                <UserCircle className="w-5 h-5" />
+              </button>
+              <AnimatePresence>
+                {isUserMenuOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    className="absolute right-0 top-10 w-56 bg-[#141414] border border-[#2a2a2a] rounded-lg shadow-lg p-3 flex flex-col gap-2 z-50"
+                  >
+                    <div className="flex flex-col gap-0.5 pb-2 border-b border-[#2a2a2a]">
+                      <span className="text-[13px] font-bold text-[#f0f0f0] truncate">
+                        {user?.email}
+                      </span>
+                      <span className="text-[10px] text-[#888888] uppercase tracking-widest font-bold">
+                        {user ? roleLabel(user.role) : ""}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setIsUserMenuOpen(false);
+                        logout();
+                      }}
+                      className="text-left text-[12px] font-bold text-[#888888] hover:text-[#FF1E56] transition-colors py-1 cursor-pointer"
+                    >
+                      Logout
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
         </header>
 
