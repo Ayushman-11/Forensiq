@@ -36,7 +36,8 @@ export function decodeUser(accessToken: string): DecodedUser | null {
     const payloadSegment = accessToken.split(".")[1];
     if (!payloadSegment) return null;
     const base64 = payloadSegment.replace(/-/g, "+").replace(/_/g, "/");
-    const json = JSON.parse(atob(base64));
+    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
+    const json = JSON.parse(atob(padded));
     if (typeof json.email !== "string" || typeof json.role !== "string" || typeof json.sub !== "string") {
       return null;
     }
