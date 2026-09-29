@@ -88,4 +88,4 @@ npm run dev
 ### 3. View the Application
 Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-> **⚠️ Important Note**: The frontend relies on the FastAPI backend for live data. Ensure the backend is running on `http://localhost:8000` and configure `NEXT_PUBLIC_API_URL` accordingly. Users must sign in before accessing the dashboard.
+> **⚠️ Important Note**: The frontend relies on the FastAPI backend for live data. Ensure the backend is running on `http://localhost:8001` and configure `NEXT_PUBLIC_API_URL` accordingly. Splunk Enterprise uses port 8000. Users must sign in before accessing the dashboard.

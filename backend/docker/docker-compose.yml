@@ -40,7 +40,7 @@ services:
       - FORENSIQ_REDIS_URL=redis://redis:6379/0
       - FORENSIQ_SPLUNK_URL=https://host.docker.internal:8089
     ports:
-      - "8000:8000"
+      - "8001:8000"
     depends_on:
       mongo:
         condition: service_healthy

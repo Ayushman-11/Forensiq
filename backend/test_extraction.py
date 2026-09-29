@@ -42,7 +42,7 @@ async def test_extraction():
     
     # Trigger Investigate Pipeline
     encoded_id = urllib.parse.quote(alert_id, safe='')
-    url = f"http://localhost:8000/api/v1/alerts/{encoded_id}/investigate"
+    url = f"http://localhost:8001/api/v1/alerts/{encoded_id}/investigate"
     
     async with httpx.AsyncClient(timeout=30.0) as http_client:
         print(f"Executing LangGraph pipeline via {url} ...")

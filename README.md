@@ -98,7 +98,7 @@ If you are on Windows, you can launch the entire stack using our provided script
 This script will automatically:
 1. Create a Python virtual environment and install backend dependencies.
 2. Install Node.js frontend dependencies.
-3. Open two new terminal windows running the backend (Port 8000) and frontend (Port 3000) servers simultaneously.
+3. Open two new terminal windows running the backend (Port 8001) and frontend (Port 3000) servers simultaneously. Splunk Enterprise uses Port 8000.
 
 ### 3. Deploying Splunk Dashboards (Optional)
 If you have a local Splunk instance, you can automatically deploy Forensiq's custom Splunk dashboards and alert rules:

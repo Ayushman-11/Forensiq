@@ -43,7 +43,7 @@ cp .env.example .env
 uv pip install -e .
 
 # 4. Run server
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8001
 ```
 
 ### Running via Docker Compose
@@ -57,8 +57,8 @@ docker compose -f docker/docker-compose.yml up --build
 ## Interactive API Documentation
 
 Once the server is running, interactive Swagger API docs are available at:
-- **Swagger UI**: [http://localhost:8000/docs](http://localhost:8000/docs)
-- **ReDoc**: [http://localhost:8000/redoc](http://localhost:8000/redoc)
+- **Swagger UI**: [http://localhost:8001/docs](http://localhost:8001/docs)
+- **ReDoc**: [http://localhost:8001/redoc](http://localhost:8001/redoc)
 
 ---
 
