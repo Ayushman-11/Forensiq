@@ -2,6 +2,7 @@ from langgraph.graph import StateGraph, START, END
 from app.agents.state import AgentState
 from app.agents.context_agent import extract_context_node
 from app.agents.ioc_agent import enrich_ioc_node
+from app.agents.analysis_agent import analyze_investigation_node
 
 def build_investigation_graph():
     """
@@ -13,11 +14,13 @@ def build_investigation_graph():
     # 2. Add nodes
     builder.add_node("extract_context", extract_context_node)
     builder.add_node("enrich_iocs", enrich_ioc_node)
+    builder.add_node("analyze_investigation", analyze_investigation_node)
     
     # 3. Add edges
     builder.add_edge(START, "extract_context")
     builder.add_edge("extract_context", "enrich_iocs")
-    builder.add_edge("enrich_iocs", END)
+    builder.add_edge("enrich_iocs", "analyze_investigation")
+    builder.add_edge("analyze_investigation", END)
     
     # 4. Compile the graph
     return builder.compile()

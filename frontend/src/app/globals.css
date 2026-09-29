@@ -66,6 +66,12 @@
   --font-body-md:     var(--font-space-grotesk), sans-serif;
   --font-caption:     var(--font-space-grotesk), sans-serif;
   --font-mono-label:  var(--font-jetbrains-mono), monospace;
+
+  /* Product decision-system tokens */
+  --color-accent: #65c7c2;
+  --color-critical: #f05a6e;
+  --color-high: #e8a24b;
+  --color-success: #74c69d;
 }
 
 @layer base {
@@ -85,6 +91,22 @@
 }
 
 @layer utilities {
+  .page-state { min-height: 55vh; display: flex; align-items: center; justify-content: center; gap: 0.75rem; color: var(--color-text-muted); font-size: 0.875rem; }
+  .feedback-error { display: flex; align-items: center; gap: 0.5rem; padding: 0.75rem 1rem; border: 1px solid rgba(240,90,110,0.35); border-radius: var(--radius-lg); background: rgba(240,90,110,0.08); color: var(--color-critical); font-size: 0.8125rem; }
+  .button-secondary { display: inline-flex; align-items: center; gap: 0.5rem; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface-1); padding: 0.5rem 0.75rem; color: var(--color-text-muted); font-size: 0.75rem; font-weight: 700; transition: border-color 150ms ease, color 150ms ease, background 150ms ease; }
+  .button-secondary:hover { border-color: var(--color-accent); color: var(--color-text); background: var(--color-surface-2); }
+  .button-primary { display: inline-flex; align-items: center; gap: 0.5rem; border: 1px solid rgba(101,199,194,0.45); border-radius: var(--radius-lg); background: rgba(101,199,194,0.12); padding: 0.55rem 0.8rem; color: var(--color-accent); font-size: 0.75rem; font-weight: 800; transition: background 150ms ease, border-color 150ms ease; }
+  .button-primary:hover { border-color: var(--color-accent); background: rgba(101,199,194,0.2); }
+  .button-primary:disabled { cursor: wait; opacity: 0.6; }
+  .field { height: 2.25rem; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); padding: 0 0.75rem; color: var(--color-text); font-size: 0.75rem; outline: none; }
+  .field:focus { border-color: var(--color-accent); }
+  .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; border-bottom: 1px solid var(--color-border); padding: 1rem 1.25rem; }
+  .section-title { margin-top: 0.25rem; font-size: 1rem; font-weight: 700; color: var(--color-text); }
+  .link-action { display: inline-flex; align-items: center; gap: 0.25rem; color: var(--color-accent); font-size: 0.75rem; font-weight: 700; }
+  .alert-row { display: flex; align-items: center; gap: 0.875rem; padding: 0.875rem 1.25rem; transition: background 150ms ease; }
+  .alert-row:hover { background: var(--color-surface-2); }
+  .status-badge { display: inline-flex; min-width: 4.25rem; justify-content: center; border-radius: var(--radius-full); padding: 0.25rem 0.5rem; font-size: 0.625rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+
   /* Cards */
   .card {
     background: var(--color-surface-1);
@@ -98,8 +120,8 @@
   }
 
   /* Severity pills */
-  .sev-critical { color: var(--color-red); background: var(--color-red-dim); border: 1px solid var(--color-red-border); }
-  .sev-high     { color: var(--color-amber); background: var(--color-amber-dim); border: 1px solid var(--color-amber-border); }
+  .sev-critical { color: var(--color-critical); background: rgba(240,90,110,0.10); border: 1px solid rgba(240,90,110,0.28); }
+  .sev-high     { color: var(--color-high); background: rgba(232,162,75,0.10); border: 1px solid rgba(232,162,75,0.28); }
   .sev-medium   { color: var(--color-blue); background: var(--color-blue-dim); border: 1px solid rgba(59,130,246,0.25); }
   .sev-low      { color: var(--color-muted); background: rgba(82,82,82,0.12); border: 1px solid rgba(82,82,82,0.25); }
 

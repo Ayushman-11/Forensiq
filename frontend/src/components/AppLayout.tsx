@@ -6,19 +6,11 @@ import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   LayoutDashboard, 
-  Bell, 
+  Bell,
   Terminal, 
-  ShieldAlert, 
-  Target, 
-  Clock, 
-  Server, 
-  FileText, 
-  BarChart2, 
-  Settings,
   Search,
   ChevronLeft,
   ChevronRight,
-  HelpCircle,
   UserCircle
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
@@ -38,13 +30,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     { href: "/", icon: LayoutDashboard, label: "Dashboard" },
     { href: "/alerts", icon: Bell, label: "Alerts" },
     { href: "/search", icon: Terminal, label: "Raw Logs" },
-    { href: "#", icon: ShieldAlert, label: "Threat Intel" },
-    { href: "#", icon: Target, label: "MITRE ATT&CK" },
-    { href: "#", icon: Clock, label: "Timeline" },
-    { href: "#", icon: Server, label: "Assets" },
-    { href: "#", icon: FileText, label: "Reports" },
-    { href: "#", icon: BarChart2, label: "Analytics" },
-    { href: "#", icon: Settings, label: "Settings" },
   ];
 
   return (
@@ -126,22 +111,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         {/* Top Navigation Bar */}
         <header className="sticky top-0 h-[56px] z-40 bg-[#0e0e0e] border-b border-[#2a2a2a] flex justify-between items-center px-6 w-full">
           <div className="flex items-center gap-3 flex-1 max-w-xl">
-            <div className="bg-[#141414] border border-[#2a2a2a] rounded px-3 py-1.5 flex items-center gap-2 w-full focus-within:border-[#383838] transition-all">
-              <Search className="w-4 h-4 text-[#555555]" />
-              <input 
-                className="bg-transparent border-none focus:ring-0 text-sm font-medium text-[#f0f0f0] placeholder:text-[#555555] w-full outline-none" 
-                placeholder="Search..." 
-                type="text"
-              />
-            </div>
+            <Link href="/search" className="flex items-center gap-2 text-xs font-semibold text-[#888888] hover:text-[#f0f0f0] transition-colors">
+              <Search className="w-4 h-4" />
+              Search telemetry
+              <span className="hidden rounded border border-[#2a2a2a] px-1.5 py-0.5 font-mono text-[10px] text-[#555555] sm:inline">SPL</span>
+            </Link>
           </div>
           <div className="flex items-center gap-2">
-            <button aria-label="Notifications" className="text-[#888888] hover:text-[#f0f0f0] transition-all h-8 w-8 rounded flex items-center justify-center hover:bg-[#1c1c1c] cursor-pointer">
-              <Bell className="w-4 h-4" />
-            </button>
-            <button aria-label="Help" className="text-[#888888] hover:text-[#f0f0f0] transition-all h-8 w-8 rounded flex items-center justify-center hover:bg-[#1c1c1c] cursor-pointer">
-              <HelpCircle className="w-4 h-4" />
-            </button>
             <div className="relative">
               <button
                 aria-label="Account"

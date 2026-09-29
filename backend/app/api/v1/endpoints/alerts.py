@@ -153,7 +153,11 @@ async def run_investigation_background(alert_id: str, job_id: str, db: AsyncIOMo
             "extracted_iocs": [],
             "enrichment_results": [],
             "investigation_log": [f"Investigation started for alert {alert_id}"],
-            "ai_analysis": None
+            "ai_analysis": None,
+            "risk_assessment": {},
+            "mitre_mappings": [],
+            "timeline": [],
+            "recommendation": None,
         }
         
         # Run graph
@@ -163,9 +167,13 @@ async def run_investigation_background(alert_id: str, job_id: str, db: AsyncIOMo
         context = final_state.get("context", {})
         extracted_iocs = final_state.get("extracted_iocs", [])
         investigation_log = final_state.get("investigation_log", [])
+        risk_assessment = final_state.get("risk_assessment", {})
+        mitre_mappings = final_state.get("mitre_mappings", [])
+        timeline = final_state.get("timeline", [])
+        recommendation = final_state.get("recommendation")
         
         # Calculate mock AI confidence based on enrichments
-        ai_confidence = alert.get("ai_confidence", 50)
+        ai_confidence = risk_assessment.get("confidence_score", alert.get("ai_confidence", 50))
         for e in enrichments:
             if e.get("reputation") in ["malicious", "suspicious"]:
                 ai_confidence = min(99, ai_confidence + 20)
@@ -178,7 +186,13 @@ async def run_investigation_background(alert_id: str, job_id: str, db: AsyncIOMo
                 "ai_confidence": ai_confidence,
                 "context": context,
                 "enrichments": enrichments,
-                "extracted_iocs": extracted_iocs
+                "extracted_iocs": extracted_iocs,
+                "risk_assessment": risk_assessment,
+                "risk_score": risk_assessment.get("risk_score", 0),
+                "priority": risk_assessment.get("priority", "medium"),
+                "mitre_mappings": mitre_mappings,
+                "timeline": timeline,
+                "recommendation": recommendation,
             }}
         )
         
@@ -190,7 +204,11 @@ async def run_investigation_background(alert_id: str, job_id: str, db: AsyncIOMo
                 "completed_at": datetime.utcnow(),
                 "logs": investigation_log,
                 "context": context,
-                "enrichments": enrichments
+                "enrichments": enrichments,
+                "risk_assessment": risk_assessment,
+                "mitre_mappings": mitre_mappings,
+                "timeline": timeline,
+                "recommendation": recommendation,
             }}
         )
         logger.info(f"Investigation {job_id} for alert {alert_id} completed successfully.")
@@ -216,7 +234,7 @@ async def investigate_alert(
     background_tasks: BackgroundTasks,
     db: AsyncIOMotorDatabase = Depends(get_db)
 ):
-    """Triggers an async AI Agent pipeline (Context & IOC Enrichment) using LangGraph."""
+    """Triggers the transparent MVP investigation pipeline using LangGraph."""
     try:
         alert = await db["alerts"].find_one({"_id": alert_id})
         if not alert:

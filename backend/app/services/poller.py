@@ -53,6 +53,10 @@ class AlertPoller:
                 "extracted_iocs": alert_data.get("extracted_iocs", []),
                 "enrichment_results": [],
                 "ai_analysis": None,
+                "risk_assessment": {},
+                "mitre_mappings": [],
+                "timeline": [],
+                "recommendation": None,
             }
 
             final_state = await investigation_graph.ainvoke(initial_state)
@@ -84,6 +88,12 @@ class AlertPoller:
                         "ai_confidence": ai_confidence,
                         "enrichments": enrichments,
                         "extracted_iocs": extracted_iocs,
+                        "risk_assessment": final_state.get("risk_assessment", {}),
+                        "risk_score": final_state.get("risk_assessment", {}).get("risk_score", 0),
+                        "priority": final_state.get("risk_assessment", {}).get("priority", "medium"),
+                        "mitre_mappings": final_state.get("mitre_mappings", []),
+                        "timeline": final_state.get("timeline", []),
+                        "recommendation": final_state.get("recommendation"),
                     }
                 },
             )

@@ -1,247 +1,99 @@
 "use client";
 
-import { useState, useEffect } from 'react';
-import ContextPanel from '@/components/investigation/ContextPanel';
-import EnrichmentPanel from '@/components/investigation/EnrichmentPanel';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Search, RefreshCw, Filter, Monitor, ChevronDown, ChevronRight, Loader2, Target } from 'lucide-react';
-import { apiFetch } from '@/lib/api';
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { CircleAlert, Clock3, Filter, Loader2, Play, RefreshCw, Search, X } from "lucide-react";
+import ContextPanel from "@/components/investigation/ContextPanel";
+import EnrichmentPanel from "@/components/investigation/EnrichmentPanel";
+import { apiFetch } from "@/lib/api";
+
+type Alert = {
+  _id: string; title: string; severity: string; status: string; host?: string; user?: string;
+  rule_name?: string; alert_type?: string; created_at: string; ai_confidence?: number;
+  risk_score?: number; priority?: string; recommendation?: string; enrichments?: unknown[];
+  extracted_iocs?: string[]; context?: Record<string, string>; [key: string]: unknown;
+};
+
+const severityClass: Record<string, string> = { critical: "sev-critical", high: "sev-high", medium: "sev-medium", low: "sev-low" };
+
+function ageLabel(value: string) {
+  const minutes = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 60000));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  return hours < 24 ? `${hours}h ago` : `${Math.round(hours / 24)}d ago`;
+}
 
 export default function AlertsPage() {
-  const [expandedAlertId, setExpandedAlertId] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-  const [severityFilter, setSeverityFilter] = useState('All');
-  const [statusFilter, setStatusFilter] = useState('All');
-  
-  const [alerts, setAlerts] = useState<any[]>([]);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [selected, setSelected] = useState<Alert | null>(null);
+  const [search, setSearch] = useState("");
+  const [severity, setSeverity] = useState("All");
+  const [status, setStatus] = useState("All");
   const [loading, setLoading] = useState(true);
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const fetchAlerts = async () => {
+  const load = useCallback(async () => {
     try {
-      const params = new URLSearchParams();
-      params.append('limit', '100');
-      if (severityFilter !== 'All') params.append('severity', severityFilter);
-      if (statusFilter !== 'All') params.append('status', statusFilter);
-      if (search) params.append('search', search);
-
+      setError(null);
+      const params = new URLSearchParams({ limit: "100" });
+      if (search) params.set("search", search);
+      if (severity !== "All") params.set("severity", severity);
+      if (status !== "All") params.set("status", status);
       const res = await apiFetch(`/api/v1/alerts?${params.toString()}`);
-      if (res.ok) {
-        setAlerts(await res.json());
-      }
-    } catch (e) {
-      console.error('Failed to fetch alerts', e);
-    } finally {
-      setLoading(false);
-    }
-  };
+      if (!res.ok) throw new Error("Unable to load alert queue");
+      const next = (await res.json()) as Alert[];
+      setAlerts(next);
+      if (selected) setSelected(next.find((alert) => alert._id === selected._id) ?? null);
+    } catch (err) { setError(err instanceof Error ? err.message : "Unable to load alert queue"); }
+    finally { setLoading(false); }
+  }, [search, severity, status, selected]);
 
-  useEffect(() => {
-    fetchAlerts();
-    const interval = setInterval(fetchAlerts, 10000);
-    return () => clearInterval(interval);
-  }, [severityFilter, statusFilter, search]);
+  useEffect(() => { const initial = setTimeout(() => void load(), 0); const interval = setInterval(() => void load(), 30000); return () => { clearTimeout(initial); clearInterval(interval); }; }, [load]);
 
-  const formatTime = (dateStr: string) => {
+  const counts = useMemo(() => alerts.reduce<Record<string, number>>((out, alert) => { out[alert.severity] = (out[alert.severity] ?? 0) + 1; return out; }, {}), [alerts]);
+
+  const investigate = async () => {
+    if (!selected) return;
+    setWorking(true);
     try {
-      const date = new Date(dateStr);
-      return date.toLocaleString();
-    } catch {
-      return dateStr;
-    }
+      const res = await apiFetch(`/api/v1/alerts/${encodeURIComponent(selected._id)}/investigate`, { method: "POST" });
+      if (!res.ok) throw new Error("Investigation could not be started");
+      await load();
+    } catch (err) { setError(err instanceof Error ? err.message : "Investigation could not be started"); }
+    finally { setWorking(false); }
   };
 
   return (
-    <div className="flex flex-col gap-4 max-w-[1400px] mx-auto pb-10">
-      {/* Header & Filter Bar */}
-      <div className="flex justify-between items-center bg-[#141414] border border-[#2a2a2a] rounded-lg p-3 shrink-0 sticky top-[56px] z-30 shadow-md">
-        <div className="flex gap-4 items-center flex-1">
-          <div className="relative w-96">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[#555555] w-4 h-4" />
-            <input 
-              type="text" 
-              placeholder="Search by Title or Host..." 
-              className="w-full bg-[#0e0e0e] border border-[#2a2a2a] rounded py-2 pl-10 pr-4 text-xs focus:border-[#383838] focus:bg-[#1c1c1c] outline-none text-[#f0f0f0] transition-all font-mono placeholder:text-[#555555]"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
-          <div className="flex gap-2">
-            <div className="relative">
-              <Filter className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#555555] w-3 h-3" />
-              <select 
-                value={severityFilter}
-                onChange={(e) => setSeverityFilter(e.target.value)}
-                className="bg-[#0e0e0e] border border-[#2a2a2a] rounded py-2 pl-8 pr-8 text-[11px] uppercase tracking-wider font-bold outline-none text-[#f0f0f0] cursor-pointer hover:bg-[#1c1c1c] transition-all appearance-none"
-              >
-                <option value="All">All Severity</option>
-                <option value="Critical">Critical</option>
-                <option value="High">High</option>
-                <option value="Medium">Medium</option>
-                <option value="Low">Low</option>
-              </select>
-            </div>
-            <div className="relative">
-              <Filter className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#555555] w-3 h-3" />
-              <select 
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="bg-[#0e0e0e] border border-[#2a2a2a] rounded py-2 pl-8 pr-8 text-[11px] uppercase tracking-wider font-bold outline-none text-[#f0f0f0] cursor-pointer hover:bg-[#1c1c1c] transition-all appearance-none"
-              >
-                <option value="All">All Status</option>
-                <option value="Investigated">Investigated</option>
-                <option value="Investigating">Investigating</option>
-                <option value="New">New</option>
-              </select>
-            </div>
-          </div>
+    <div className="mx-auto flex max-w-[1440px] flex-col gap-5 pb-10">
+      <header className="flex flex-wrap items-end justify-between gap-4 border-b border-[var(--color-border)] pb-5">
+        <div><p className="label mb-2">Operations / queue</p><h1 className="text-2xl font-bold tracking-tight text-[var(--color-text)]">Alerts</h1><p className="mt-1 text-sm text-[var(--color-text-muted)]">Triage detections, then open one investigation at a time.</p></div>
+        <button onClick={() => void load()} className="button-secondary"><RefreshCw className="h-4 w-4" /> Refresh</button>
+      </header>
+
+      {error && <div className="feedback-error"><CircleAlert className="h-4 w-4" />{error}</div>}
+      <section className="card flex flex-wrap items-center gap-3 p-3">
+        <div className="relative min-w-[240px] flex-1"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-dim)]" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search title or host" className="field pl-10" /></div>
+        <div className="relative"><Filter className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-text-dim)]" /><select value={severity} onChange={(event) => setSeverity(event.target.value)} className="field appearance-none pl-9 pr-8"><option>All</option><option>critical</option><option>high</option><option>medium</option><option>low</option></select></div>
+        <div className="relative"><select value={status} onChange={(event) => setStatus(event.target.value)} className="field appearance-none pr-8"><option>All</option><option>New</option><option>Investigating</option><option>Investigated</option><option>Investigation Failed</option></select></div>
+        <div className="flex items-center gap-2 border-l border-[var(--color-border)] pl-3 text-xs text-[var(--color-text-muted)]"><span>{alerts.length} shown</span>{counts.critical ? <span className="status-badge sev-critical">{counts.critical} critical</span> : null}</div>
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.65fr)]">
+        <div className="card overflow-hidden">
+          <div className="section-heading"><div><p className="label">Detection queue</p><h2 className="section-title">Select an alert to inspect</h2></div><span className="text-xs text-[var(--color-text-muted)]">Auto-refresh 30s</span></div>
+          {loading ? <div className="page-state min-h-[300px]"><Loader2 className="h-5 w-5 animate-spin" /> Loading queue…</div> : alerts.length === 0 ? <div className="p-10 text-center text-sm text-[var(--color-text-muted)]">No alerts match these filters.</div> : <div className="divide-y divide-[var(--color-border)]">{alerts.map((alert) => <button key={alert._id} onClick={() => setSelected(alert)} className={`flex w-full items-center gap-3 p-4 text-left transition-colors hover:bg-[var(--color-surface-2)] ${selected?._id === alert._id ? "bg-[var(--color-surface-2)]" : ""}`}><span className={`status-badge ${severityClass[alert.severity] ?? "sev-low"}`}>{alert.severity}</span><span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-[var(--color-text)]">{alert.title}</span><span className="mt-1 block truncate font-mono text-[11px] text-[var(--color-text-muted)]">{alert.host ?? "Unknown host"} · {alert.rule_name ?? "Unclassified detection"}</span></span><span className="flex shrink-0 items-center gap-1.5 font-mono text-[11px] text-[var(--color-text-muted)]"><Clock3 className="h-3.5 w-3.5" />{ageLabel(alert.created_at)}</span></button>)}</div>}
         </div>
-        <div className="flex gap-2 items-center">
-          <span className="text-[10px] text-[#888888] font-bold uppercase tracking-widest mr-2">
-            {alerts.length} Total
-          </span>
-          <button 
-            onClick={() => fetchAlerts()} 
-            className="text-[#888888] hover:text-white transition-all flex items-center justify-center p-2 rounded bg-[#0e0e0e] border border-[#2a2a2a] hover:border-[#383838] cursor-pointer"
-            title="Refresh Data"
-          >
-            <RefreshCw className="w-4 h-4" />
-          </button>
+
+        <div className="card min-h-[500px] overflow-hidden">
+          {!selected ? <div className="flex h-full min-h-[500px] flex-col items-center justify-center gap-3 p-8 text-center"><CircleAlert className="h-8 w-8 text-[var(--color-text-dim)]" /><p className="text-sm font-semibold text-[var(--color-text-muted)]">No alert selected</p><p className="max-w-xs text-xs text-[var(--color-text-dim)]">Select a detection to see the evidence that matters before taking action.</p></div> : <AlertDetail alert={selected} working={working} onInvestigate={investigate} onClose={() => setSelected(null)} />}
         </div>
-      </div>
-
-      {/* Main Single Column Alert List */}
-      <div className="flex flex-col gap-3 relative">
-        {loading ? (
-          <div className="p-12 text-center text-[#555555] font-bold text-xs uppercase tracking-widest flex flex-col items-center gap-4">
-            <Loader2 className="w-8 h-8 animate-spin" />
-            Synchronizing Queue...
-          </div>
-        ) : alerts.length === 0 ? (
-          <div className="p-12 text-center text-[#555555] border border-[#2a2a2a] border-dashed rounded-lg font-bold text-xs uppercase tracking-widest">
-            No matching events found in queue.
-          </div>
-        ) : (
-          <AnimatePresence initial={false}>
-            {alerts.map((alert) => {
-              const isCrit = alert.severity === 'critical';
-              const isHigh = alert.severity === 'high';
-              const isMed = alert.severity === 'medium';
-              const sevColor = isCrit ? '#FF1E56' : isHigh ? '#FFAC41' : isMed ? '#3b82f6' : '#525252';
-              const isExpanded = expandedAlertId === alert._id;
-              
-              const isInvestigating = alert.status === "Investigating";
-              const isInvestigated = alert.status === "Investigated" || alert.status === "Investigation Failed";
-
-              return (
-                <motion.div 
-                  layout
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  key={alert._id} 
-                  className={`border rounded-lg overflow-hidden transition-all duration-300 ${
-                    isExpanded 
-                      ? 'bg-[#141414] border-[#383838] shadow-[0_0_15px_rgba(0,0,0,0.5)]' 
-                      : 'bg-[#0e0e0e] border-[#2a2a2a] hover:border-[#383838] hover:bg-[#141414]'
-                  }`}
-                >
-                  {/* Accordion Header */}
-                  <div 
-                    onClick={() => setExpandedAlertId(isExpanded ? null : alert._id)}
-                    className="p-4 cursor-pointer flex items-center justify-between"
-                  >
-                    <div className="flex items-center gap-4 flex-1">
-                      <div className="w-5 h-5 flex items-center justify-center text-[#555555]">
-                        {isExpanded ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
-                      </div>
-                      
-                      <div className="flex items-center gap-2 w-28 shrink-0">
-                        <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: sevColor }}></span>
-                        <span className="text-[11px] font-bold uppercase tracking-widest" style={{ color: sevColor }}>
-                          {alert.severity}
-                        </span>
-                      </div>
-
-                      <div className="flex-1 flex flex-col gap-1">
-                        <span className="text-[15px] font-bold leading-none text-[#f0f0f0] truncate max-w-xl">
-                          {alert.title}
-                        </span>
-                        <div className="flex items-center gap-4 text-[10px] text-[#888888] font-mono font-bold uppercase tracking-widest">
-                          <span className="flex items-center gap-1.5"><Monitor className="w-3 h-3 text-[#3b82f6]" /> {alert.host || '-'}</span>
-                          <span>|</span>
-                          <span className="flex items-center gap-1.5"><Target className="w-3 h-3 text-[#FFAC41]" /> {alert.rule_name || 'Generic'}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-6 shrink-0">
-                      {isInvestigating && (
-                        <div className="flex items-center gap-2 text-[#FFAC41] bg-[#FFAC41]/10 border border-[#FFAC41]/30 px-3 py-1 rounded text-[10px] font-bold uppercase tracking-widest">
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          AI Investigating...
-                        </div>
-                      )}
-                      
-                      {isInvestigated && (
-                        <div className="flex flex-col items-end gap-1">
-                          <span className="text-[10px] text-[#555555] font-bold uppercase tracking-widest">Confidence</span>
-                          <span className={`px-2 py-0.5 rounded text-[11px] border font-bold ${
-                            alert.ai_confidence > 80 ? 'border-[#FF1E56]/30 text-[#FF1E56] bg-[#FF1E56]/10' : 
-                            alert.ai_confidence > 50 ? 'border-[#FFAC41]/30 text-[#FFAC41] bg-[#FFAC41]/10' : 
-                            'border-[#383838] text-[#888888] bg-[#232323]'
-                          }`}>
-                            {alert.ai_confidence}%
-                          </span>
-                        </div>
-                      )}
-
-                      <div className="flex flex-col items-end gap-1 w-32">
-                        <span className="text-[10px] text-[#555555] font-bold uppercase tracking-widest">Detected At</span>
-                        <span className="text-[11px] text-[#888888] font-bold font-mono tracking-wider">{formatTime(alert.created_at)}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Expanded Content Area */}
-                  <AnimatePresence>
-                    {isExpanded && (
-                      <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: 'auto', opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        className="border-t border-[#2a2a2a] bg-[#141414] overflow-hidden"
-                      >
-                        {isInvestigating ? (
-                          <div className="p-12 flex flex-col items-center justify-center gap-4">
-                            <Loader2 className="w-8 h-8 animate-spin text-[#FFAC41]" />
-                            <div className="text-center">
-                              <p className="text-[13px] font-bold text-[#f0f0f0] mb-1">AI Agents Active</p>
-                              <p className="text-[11px] text-[#888888] uppercase tracking-widest font-bold">Extracting IOCs & Threat Intel Correlation...</p>
-                            </div>
-                          </div>
-                        ) : isInvestigated ? (
-                          <div className="p-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
-                            {/* We re-use the Context/Enrichment panels but without borders if possible, or they can stay as cards */}
-                            <div className="col-span-1 border-r border-[#2a2a2a] pr-4">
-                               <ContextPanel alert={alert} />
-                            </div>
-                            <div className="col-span-1 pl-2">
-                               <EnrichmentPanel alert={alert} />
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="p-8 text-center">
-                            <p className="text-[11px] text-[#888888] uppercase tracking-widest font-bold">Alert queued. Awaiting processing...</p>
-                          </div>
-                        )}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </motion.div>
-              );
-            })}
-          </AnimatePresence>
-        )}
-      </div>
+      </section>
     </div>
   );
+}
+
+function AlertDetail({ alert, working, onInvestigate, onClose }: { alert: Alert; working: boolean; onInvestigate: () => void; onClose: () => void }) {
+  const canInvestigate = alert.status === "New" || alert.status === "Investigation Failed";
+  return <div className="flex h-full flex-col"><div className="flex items-start justify-between border-b border-[var(--color-border)] p-5"><div><p className="label mb-2">Selected detection</p><h2 className="text-lg font-bold leading-snug text-[var(--color-text)]">{alert.title}</h2><p className="mt-2 font-mono text-[11px] text-[var(--color-text-muted)]">{alert.host ?? "Unknown host"} · {alert.user ?? "Unknown user"}</p></div><button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]" aria-label="Close detail"><X className="h-4 w-4" /></button></div><div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-border)] p-4"><span className={`status-badge ${severityClass[alert.severity] ?? "sev-low"}`}>{alert.severity}</span><span className="status-badge border border-[var(--color-border)] text-[var(--color-text-muted)]">{alert.status}</span>{alert.risk_score !== undefined ? <span className="text-xs text-[var(--color-text-muted)]">Risk <strong className="text-[var(--color-text)]">{alert.risk_score}/100</strong></span> : null}<span className="ml-auto font-mono text-[11px] text-[var(--color-text-muted)]">{ageLabel(alert.created_at)}</span></div>{canInvestigate && <div className="border-b border-[var(--color-border)] p-4"><button onClick={onInvestigate} disabled={working} className="button-primary">{working ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />} {working ? "Starting…" : "Investigate alert"}</button></div>}<div className="flex-1 space-y-4 overflow-y-auto p-4">{alert.recommendation ? <div className="rounded border border-[var(--color-accent)]/30 bg-[var(--color-accent)]/5 p-3"><p className="label">Recommended next step</p><p className="mt-2 text-sm text-[var(--color-text)]">{alert.recommendation}</p></div> : null}<div className="grid gap-4 xl:grid-cols-2"><ContextPanel alert={alert} /><EnrichmentPanel alert={alert} /></div></div></div>;
 }

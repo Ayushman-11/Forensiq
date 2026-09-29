@@ -31,6 +31,12 @@ class AlertModel(BaseModel):
     extracted_iocs: Optional[List[str]] = None
     description: Optional[str] = None
     source_siem: Optional[str] = None
+    risk_score: Optional[int] = None
+    priority: Optional[str] = None
+    recommendation: Optional[str] = None
+    risk_assessment: Optional[dict] = None
+    mitre_mappings: Optional[List[dict]] = None
+    timeline: Optional[List[dict]] = None
 
     class Config:
         populate_by_name = True
@@ -38,8 +44,10 @@ class AlertModel(BaseModel):
 
 class DashboardMetrics(BaseModel):
     total_alerts: int
+    new_alerts: int
     critical_alerts: int
+    high_priority_alerts: int
     open_investigations: int
+    investigated_alerts: int
     ai_confidence_avg: int
-    mttd_seconds: int
-    intel_hits: int
+    last_ingested_at: Optional[str] = None
