@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { Space_Grotesk, JetBrains_Mono } from "next/font/google";
-import Link from "next/link";
 import AppLayout from "@/components/AppLayout";
 import { AuthProvider } from "@/context/AuthContext";
 import AuthGuard from "@/components/AuthGuard";
@@ -31,12 +30,6 @@ export default function RootLayout({
       lang="en"
       className={`${spaceGrotesk.variable} ${jetbrainsMono.variable} h-full antialiased`}
     >
-      <head>
-        <link
-          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL,GRAD,opsz@400,0,0,24&display=swap"
-          rel="stylesheet"
-        />
-      </head>
       <body className="min-h-screen overflow-x-hidden selection:bg-primary-container selection:text-on-primary-container bg-background text-on-surface flex">
         <AuthProvider>
           <AuthGuard>

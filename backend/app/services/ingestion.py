@@ -223,9 +223,13 @@ class IngestionService:
     STATE_COLLECTION = "ingestion_state"
     ALERTS_COLLECTION = "alerts"
 
-    def __init__(self, db: AsyncIOMotorDatabase) -> None:
+    def __init__(self, db: AsyncIOMotorDatabase, org_id: str = "default") -> None:
         self.db = db
+        self.org_id = org_id
         self.engine = DetectionRuleEngine()
+        self.errors: List[dict] = []
+        self.total_fetched = 0
+        self.rules_run = 0
 
     # ------------------------------------------------------------------
     # State helpers
@@ -261,12 +265,12 @@ class IngestionService:
         earliest = await self._get_last_ingested_time()
         rules = self.engine.get_all_rules()
         new_alerts: List[dict] = []
-        total_fetched = 0
 
         splunk = SplunkClient()
         try:
             for rule in rules:
                 try:
+                    self.rules_run += 1
                     logger.info(
                         "ingestion_rule_start",
                         rule=rule.name,
@@ -278,7 +282,7 @@ class IngestionService:
                         latest_time="now",
                         limit=limit,
                     )
-                    total_fetched += len(raw_events)
+                    self.total_fetched += len(raw_events)
 
                     for norm_event in raw_events:
                         # norm_event is a NormalizedEvent; grab the raw_payload dict
@@ -291,6 +295,7 @@ class IngestionService:
                             continue
 
                         alert_doc = normalize_event(raw, rule)
+                        alert_doc["org_id"] = self.org_id
                         alert_id = alert_doc["_id"]
 
                         # Deduplication check
@@ -317,6 +322,7 @@ class IngestionService:
                         rule=rule.name,
                         error=str(rule_err),
                     )
+                    self.errors.append({"rule": rule.name, "error": str(rule_err)})
                     continue
 
         finally:
@@ -326,8 +332,8 @@ class IngestionService:
 
         logger.info(
             "ingestion_complete",
-            total_fetched=total_fetched,
+            total_fetched=self.total_fetched,
             total_inserted=len(new_alerts),
-            rules_run=len(rules),
+            rules_run=self.rules_run,
         )
         return new_alerts

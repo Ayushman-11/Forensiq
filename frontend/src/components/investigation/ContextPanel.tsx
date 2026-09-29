@@ -2,9 +2,10 @@
 
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { User, Monitor, ChevronDown, CheckCircle, Search, Cpu, Target, Braces } from 'lucide-react';
+import { User, Monitor, ChevronDown, Search, Target, Braces } from 'lucide-react';
+import type { AlertRecord } from '@/lib/types';
 
-export default function ContextPanel({ alert }: { alert: any }) {
+export default function ContextPanel({ alert }: { alert: AlertRecord }) {
   const [showRaw, setShowRaw] = useState(false);
 
   if (!alert) {

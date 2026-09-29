@@ -3,8 +3,9 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Radar, AlertTriangle, Eye, CheckCircle, Clock } from 'lucide-react';
+import type { AlertRecord, Enrichment } from '@/lib/types';
 
-export default function EnrichmentPanel({ alert }: { alert: any }) {
+export default function EnrichmentPanel({ alert }: { alert: AlertRecord }) {
   if (!alert) {
     return (
       <div className="h-full bg-[#141414] border border-[#2a2a2a] rounded-lg flex items-center justify-center text-[#383838]">
@@ -28,8 +29,8 @@ export default function EnrichmentPanel({ alert }: { alert: any }) {
     );
   }
 
-  const maliciousCount = enrichments.filter((e: any) => e.reputation === 'malicious').length;
-  const suspiciousCount = enrichments.filter((e: any) => e.reputation === 'suspicious').length;
+  const maliciousCount = enrichments.filter((e: Enrichment) => e.reputation === 'malicious').length;
+  const suspiciousCount = enrichments.filter((e: Enrichment) => e.reputation === 'suspicious').length;
   const notEnrichedYet = enrichments.length === 0;
 
   return (
@@ -78,7 +79,7 @@ export default function EnrichmentPanel({ alert }: { alert: any }) {
         {!notEnrichedYet ? (
           <div className="p-3 flex flex-col gap-2">
             <AnimatePresence>
-              {enrichments.map((e: any, idx: number) => (
+              {enrichments.map((e: Enrichment, idx: number) => (
                 <motion.div
                   key={idx}
                   initial={{ opacity: 0, y: 8 }}
@@ -105,16 +106,16 @@ export default function EnrichmentPanel({ alert }: { alert: any }) {
                     <div className="flex-1 bg-[#0e0e0e] border border-[#2a2a2a] rounded-none h-1.5 overflow-hidden">
                       <motion.div
                         initial={{ width: 0 }}
-                        animate={{ width: `${Math.max(4, e.threat_score)}%` }}
+                        animate={{ width: `${Math.max(4, e.threat_score ?? 0)}%` }}
                         transition={{ duration: 0.8, delay: idx * 0.05, type: "spring", stiffness: 100 }}
                         className={`h-1.5 ${
-                          e.threat_score > 75 ? 'bg-[#FF1E56]' : 
-                          e.threat_score > 25 ? 'bg-[#FFAC41]' : 
+                          (e.threat_score ?? 0) > 75 ? 'bg-[#FF1E56]' :
+                          (e.threat_score ?? 0) > 25 ? 'bg-[#FFAC41]' :
                           'bg-[#22c55e]'
                         }`}
                       />
                     </div>
-                    <span className="font-mono text-[10px] font-bold text-[#888888]">{e.threat_score}/100</span>
+                    <span className="font-mono text-[10px] font-bold text-[#888888]">{e.threat_score ?? 0}/100</span>
                   </div>
                   <div className="mt-1 text-[9px] text-[#555555] font-bold uppercase tracking-widest">via {e.source}</div>
                 </motion.div>

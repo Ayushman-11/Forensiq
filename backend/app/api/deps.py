@@ -61,6 +61,7 @@ async def get_current_user(
 
     user["id"] = str(user.pop("_id"))
     user.pop("password_hash", None)
+    user["org_id"] = user.get("org_id", "default")
     return user
 
 

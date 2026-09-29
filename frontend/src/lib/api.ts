@@ -46,7 +46,7 @@ export async function apiFetch(path: string, options: RequestInit = {}): Promise
       res = await fetch(`${API_BASE}${path}`, { ...options, headers: retryHeaders });
     } else {
       clearTokens();
-      if (typeof window !== "undefined") window.location.href = "/login";
+      if (typeof window !== "undefined") window.location.replace("/login");
     }
   }
 

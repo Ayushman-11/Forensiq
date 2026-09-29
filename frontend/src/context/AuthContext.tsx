@@ -18,11 +18,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const token = getAccessToken();
-    if (token) {
-      setUser(decodeUser(token));
-    }
-    setIsLoading(false);
+    const timer = setTimeout(() => {
+      const token = getAccessToken();
+      if (token) setUser(decodeUser(token));
+      setIsLoading(false);
+    }, 0);
+    return () => clearTimeout(timer);
   }, []);
 
   const login = async (email: string, password: string) => {

@@ -37,6 +37,8 @@ class AlertModel(BaseModel):
     risk_assessment: Optional[dict] = None
     mitre_mappings: Optional[List[dict]] = None
     timeline: Optional[List[dict]] = None
+    correlations: Optional[List[dict]] = None
+    evidence: Optional[dict] = None
 
     class Config:
         populate_by_name = True

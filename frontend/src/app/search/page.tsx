@@ -11,10 +11,11 @@ const QUICK_QUERIES = [
   { label: 'Network Conns', query: 'search index=windows EventCode=3' },
   { label: 'DNS Queries', query: 'search index=windows EventCode=22' },
 ];
+type SearchEvent = { timestamp?: string; hostname?: string; provider?: string; event_id?: string; command_line?: string; process_name?: string; raw_payload?: Record<string, unknown> };
 
 export default function SearchPage() {
   const [query, setQuery] = useState('search index=windows EventCode=4625');
-  const [events, setEvents] = useState<any[]>([]);
+  const [events, setEvents] = useState<SearchEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchTime, setSearchTime] = useState<number | null>(null);
@@ -27,7 +28,6 @@ export default function SearchPage() {
     setLoading(true);
     setError(null);
     setEvents([]);
-    const start = Date.now();
 
     try {
       const res = await apiFetch('/api/v1/search/search', {
@@ -48,9 +48,9 @@ export default function SearchPage() {
 
       const data = await res.json();
       setEvents(data.events || []);
-      setSearchTime(Date.now() - start);
-    } catch (err: any) {
-      setError(err.message || 'An error occurred while searching logs');
+      setSearchTime(null);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'An error occurred while searching logs');
     } finally {
       setLoading(false);
     }
@@ -176,7 +176,7 @@ export default function SearchPage() {
                     key={i}
                     className="border-b border-[#2a2a2a] hover:bg-[#1c1c1c] transition-colors"
                   >
-                    <td className="py-2 px-4 text-xs text-[#888888]">{formatTime(ev.timestamp)}</td>
+                    <td className="py-2 px-4 text-xs text-[#888888]">{formatTime(ev.timestamp ?? "")}</td>
                     <td className="py-2 px-4 text-xs font-bold text-[#f0f0f0]">{ev.hostname || '-'}</td>
                     <td className="py-2 px-4 text-[10px] uppercase text-[#3b82f6] font-bold">{ev.provider || '-'}</td>
                     <td className="py-2 px-4">
