@@ -18,11 +18,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const token = getAccessToken();
-    if (token) {
-      setUser(decodeUser(token));
-    }
-    setIsLoading(false);
+    let cancelled = false;
+
+    (async () => {
+      const token = getAccessToken();
+      const decoded = token ? decodeUser(token) : null;
+
+      if (decoded) {
+        if (!cancelled) setUser(decoded);
+        if (!cancelled) setIsLoading(false);
+        return;
+      }
+
+      const refresh_token = getRefreshToken();
+      if (refresh_token) {
+        try {
+          const res = await fetch(`${API_BASE}/api/v1/auth/refresh`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ refresh_token }),
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            setTokens(data.access_token, data.refresh_token);
+            if (!cancelled) setUser(decodeUser(data.access_token));
+          } else {
+            clearTokens();
+          }
+        } catch {
+          clearTokens();
+        }
+      }
+
+      if (!cancelled) setIsLoading(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const login = async (email: string, password: string) => {
