@@ -20,7 +20,8 @@ function LoginForm() {
     setLoading(true);
     try {
       await login(email, password);
-      const redirect = searchParams.get("redirect") || "/";
+      const redirectParam = searchParams.get("redirect");
+      const redirect = redirectParam && redirectParam.startsWith("/") && !redirectParam.startsWith("//") ? redirectParam : "/";
       router.replace(redirect);
     } catch (err: any) {
       setError(err.message || "Login failed");
