@@ -22,6 +22,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.logging import logger
 from app.infrastructure.siem.splunk import SplunkClient
 from app.services.detection_rules import DetectionRule, DetectionRuleEngine
+from app.core.config import settings
 
 # ---------------------------------------------------------------------------
 # IOC helpers
@@ -276,8 +277,9 @@ class IngestionService:
                         rule=rule.name,
                         earliest=earliest,
                     )
+                    query = rule.spl_query.replace("index=windows", f"index={settings.SPLUNK_DETECTION_INDEX}")
                     raw_events = await splunk.search(
-                        query=rule.spl_query,
+                        query=query,
                         earliest_time=earliest,
                         latest_time="now",
                         limit=limit,

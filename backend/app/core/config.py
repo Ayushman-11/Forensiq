@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     SPLUNK_PASSWORD: str = Field(default="ChangedPassword123!", description="Splunk REST API password")
     SPLUNK_VERIFY_SSL: bool = Field(default=False, description="Verify SSL certificates for Splunk API")
     SPLUNK_DEFAULT_INDEX: str = Field(default="main", description="Default Splunk index to search")
+    SPLUNK_DETECTION_INDEX: str = Field(default="windows", description="Index containing detection telemetry")
 
     # Database Configuration
     MONGO_URI: str = Field(
