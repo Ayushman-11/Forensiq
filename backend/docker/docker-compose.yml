@@ -1,20 +1,16 @@
 version: '3.8'
 
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: forensiq-postgres
+  mongo:
+    image: mongo:7
+    container_name: forensiq-mongo
     restart: always
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: forensiq
     ports:
-      - "5432:5432"
+      - "27017:27017"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - mongo_data:/data/db
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "mongosh --quiet --eval \"db.runCommand({ ping: 1 }).ok\" localhost:27017/forensiq"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -39,17 +35,18 @@ services:
     restart: always
     environment:
       - FORENSIQ_ENV=development
-      - FORENSIQ_POSTGRES_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/forensiq
+      - FORENSIQ_MONGO_URI=mongodb://mongo:27017
+      - FORENSIQ_MONGO_DB_NAME=forensiq
       - FORENSIQ_REDIS_URL=redis://redis:6379/0
       - FORENSIQ_SPLUNK_URL=https://host.docker.internal:8089
     ports:
       - "8000:8000"
     depends_on:
-      postgres:
+      mongo:
         condition: service_healthy
       redis:
         condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 volumes:
-  postgres_data:
+  mongo_data:

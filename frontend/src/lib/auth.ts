@@ -1,4 +1,4 @@
-export const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const ACCESS_TOKEN_KEY = "forensiq_access_token";
 const REFRESH_TOKEN_KEY = "forensiq_refresh_token";

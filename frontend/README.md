@@ -88,4 +88,4 @@ npm run dev
 ### 3. View the Application
 Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-> **⚠️ Important Note**: The frontend relies on the FastAPI backend for live data. Ensure the backend is running on `http://localhost:8000` to populate the dashboards. If the backend is unreachable, the frontend will attempt to gracefully fall back to mock data or display loading states.
+> **⚠️ Important Note**: The frontend relies on the FastAPI backend for live data. Ensure the backend is running on `http://localhost:8000` and configure `NEXT_PUBLIC_API_URL` accordingly. Users must sign in before accessing the dashboard.

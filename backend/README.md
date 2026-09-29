@@ -27,7 +27,7 @@ FastAPI / Services → SIEMProvider Interface → SplunkClient / ElasticClient /
 ### Prerequisites
 - Python 3.13+
 - Docker & Docker Compose
-- PostgreSQL (or Docker container)
+- MongoDB 7+ (or Docker container)
 - Splunk Enterprise with REST API enabled (`https://localhost:8089`)
 
 ### Running Locally
@@ -49,7 +49,7 @@ uvicorn app.main:app --reload --port 8000
 ### Running via Docker Compose
 
 ```bash
-docker-compose -f docker/docker-compose.yml up --build
+docker compose -f docker/docker-compose.yml up --build
 ```
 
 ---

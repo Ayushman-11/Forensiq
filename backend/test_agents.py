@@ -13,7 +13,7 @@ async def test_pipeline():
     if not alert:
         print("No Splunk alerts found in the database. Trying to ingest...")
         async with httpx.AsyncClient() as http_client:
-            res = await http_client.post("http://localhost:8001/api/v1/alerts/ingest")
+            res = await http_client.post("http://localhost:8000/api/v1/alerts/ingest")
             print("Ingestion result:", res.json())
             alert = await db.alerts.find_one({"raw_alert_data": {"$exists": True}})
             
@@ -32,7 +32,7 @@ async def test_pipeline():
     # 2. Trigger the investigate endpoint
     import urllib.parse
     encoded_id = urllib.parse.quote(alert_id, safe='')
-    url = f"http://localhost:8001/api/v1/alerts/{encoded_id}/investigate"
+    url = f"http://localhost:8000/api/v1/alerts/{encoded_id}/investigate"
     async with httpx.AsyncClient(timeout=30.0) as http_client:
         response = await http_client.post(url)
         

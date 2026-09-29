@@ -11,7 +11,7 @@ import json
 import urllib.parse
 import httpx
 
-BASE = "http://localhost:8001/api/v1"
+BASE = "http://localhost:8000/api/v1"
 
 async def test():
     print("=" * 60)
@@ -25,7 +25,7 @@ async def test():
             r = await client.get(f"{BASE}/health/")
             print(f"  Status: {r.json()}")
         except Exception as e:
-            print(f"  Backend not running on port 8001: {e}")
+            print(f"  Backend not running on port 8000: {e}")
             return
 
         # 2. Ingest from Splunk
