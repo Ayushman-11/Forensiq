@@ -175,7 +175,7 @@ _RULES: List[DetectionRule] = [
         mitre_technique="T1110",
         mitre_tactic="Credential Access",
         spl_query=(
-            "search index=windows source=\"XmlWinEventLog:Security\" EventCode=4625 "
+            "search index=windows | spath | search EventCode=4625 "
             "| stats count by IpAddress, TargetUserName "
             "| where count >= 5"
         ),
@@ -193,8 +193,7 @@ _RULES: List[DetectionRule] = [
         mitre_technique="T1059.001",
         mitre_tactic="Execution",
         spl_query=(
-            "search index=windows source=\"XmlWinEventLog:Microsoft-Windows-Sysmon/Operational\" "
-            "EventCode=1 "
+            "search index=windows | spath | search EventCode=1 "
             "(Image=\"*powershell*\" OR Image=\"*pwsh*\") "
             "(CommandLine=\"*-enc*\" OR CommandLine=\"*-EncodedCommand*\" OR "
             "CommandLine=\"*-NonI*\" OR CommandLine=\"*bypass*\" OR "
@@ -215,8 +214,7 @@ _RULES: List[DetectionRule] = [
         mitre_technique="T1547.001",
         mitre_tactic="Persistence",
         spl_query=(
-            "search index=windows source=\"XmlWinEventLog:Microsoft-Windows-Sysmon/Operational\" "
-            "EventCode=13 TargetObject=\"*CurrentVersion\\\\Run*\""
+            "search index=windows | spath | search EventCode=13 TargetObject=\"*CurrentVersion\\\\Run*\""
         ),
         event_codes=["13"],
         match_fn=_registry_persistence,
@@ -232,8 +230,7 @@ _RULES: List[DetectionRule] = [
         mitre_technique="T1071",
         mitre_tactic="Command and Control",
         spl_query=(
-            "search index=windows source=\"XmlWinEventLog:Microsoft-Windows-Sysmon/Operational\" "
-            "EventCode=3 Initiated=true "
+            "search index=windows | spath | search EventCode=3 Initiated=true "
             "NOT (DestinationIp=\"10.*\" OR DestinationIp=\"192.168.*\" OR "
             "DestinationIp=\"172.*\" OR DestinationIp=\"127.*\") "
             "NOT (DestinationPort=80 OR DestinationPort=443 OR DestinationPort=53)"
@@ -253,8 +250,7 @@ _RULES: List[DetectionRule] = [
         mitre_technique="T1071.004",
         mitre_tactic="Command and Control",
         spl_query=(
-            "search index=windows source=\"XmlWinEventLog:Microsoft-Windows-Sysmon/Operational\" "
-            "EventCode=22 "
+            "search index=windows | spath | search EventCode=22 "
             "(QueryName=\"*dyndns*\" OR QueryName=\"*ngrok*\" OR QueryName=\"*pastebin*\" "
             "OR QueryName=\"*raw.githubusercontent*\" OR QueryName=\"*bit.ly*\")"
         ),
@@ -273,8 +269,7 @@ _RULES: List[DetectionRule] = [
         mitre_technique="T1059.001",
         mitre_tactic="Execution",
         spl_query=(
-            "search index=windows source=\"XmlWinEventLog:Microsoft-Windows-PowerShell/Operational\" "
-            "EventCode=4104 "
+            "search index=windows | spath | search EventCode=4104 "
             "(ScriptBlockText=\"*Invoke-Expression*\" OR ScriptBlockText=\"*IEX*\" OR "
             "ScriptBlockText=\"*Net.WebClient*\" OR ScriptBlockText=\"*DownloadString*\" "
             "OR ScriptBlockText=\"*bypass*\")"
@@ -293,7 +288,7 @@ _RULES: List[DetectionRule] = [
         mitre_technique="T1550.002",
         mitre_tactic="Lateral Movement",
         spl_query=(
-            "search index=windows source=\"XmlWinEventLog:Security\" EventCode=4648 "
+            "search index=windows | spath | search EventCode=4648 "
             "NOT SubjectUserName=\"-\" NOT TargetUserName=\"-\""
         ),
         event_codes=["4648"],
@@ -311,7 +306,7 @@ _RULES: List[DetectionRule] = [
         mitre_technique="T1566.001",
         mitre_tactic="Initial Access",
         spl_query=(
-            "search index=windows source=\"XmlWinEventLog:Security\" EventCode=4688 "
+            "search index=windows | spath | search EventCode=4688 "
             "(ParentProcessName=\"*winword*\" OR ParentProcessName=\"*excel*\" OR "
             "ParentProcessName=\"*powerpnt*\" OR ParentProcessName=\"*outlook*\" OR "
             "ParentProcessName=\"*chrome*\" OR ParentProcessName=\"*firefox*\" OR "
