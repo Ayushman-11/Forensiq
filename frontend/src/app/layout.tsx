@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import Link from "next/link";
 import AppLayout from "@/components/AppLayout";
+import { AuthProvider } from "@/context/AuthContext";
+import AuthGuard from "@/components/AuthGuard";
 import "./globals.css";
 
 const spaceGrotesk = Space_Grotesk({
@@ -36,9 +38,13 @@ export default function RootLayout({
         />
       </head>
       <body className="min-h-screen overflow-x-hidden selection:bg-primary-container selection:text-on-primary-container bg-background text-on-surface flex">
-        <AppLayout>
-          {children}
-        </AppLayout>
+        <AuthProvider>
+          <AuthGuard>
+            <AppLayout>
+              {children}
+            </AppLayout>
+          </AuthGuard>
+        </AuthProvider>
       </body>
     </html>
   );
