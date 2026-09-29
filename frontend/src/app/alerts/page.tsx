@@ -5,6 +5,7 @@ import ContextPanel from '@/components/investigation/ContextPanel';
 import EnrichmentPanel from '@/components/investigation/EnrichmentPanel';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, RefreshCw, Filter, Monitor, ChevronDown, ChevronRight, Loader2, Target } from 'lucide-react';
+import { apiFetch } from '@/lib/api';
 
 export default function AlertsPage() {
   const [expandedAlertId, setExpandedAlertId] = useState<string | null>(null);
@@ -23,7 +24,7 @@ export default function AlertsPage() {
       if (statusFilter !== 'All') params.append('status', statusFilter);
       if (search) params.append('search', search);
 
-      const res = await fetch(`http://localhost:8001/api/v1/alerts?${params.toString()}`);
+      const res = await apiFetch(`/api/v1/alerts?${params.toString()}`);
       if (res.ok) {
         setAlerts(await res.json());
       }

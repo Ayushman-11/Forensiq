@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { LineChart } from '@mui/x-charts/LineChart';
 import { PieChart } from '@mui/x-charts/PieChart';
 import Link from 'next/link';
+import { apiFetch } from "@/lib/api";
 
 export default function AlertsHub() {
   const [metrics, setMetrics] = useState<any>(null);
@@ -15,10 +16,10 @@ export default function AlertsHub() {
   const fetchDashboardData = async () => {
     try {
       const [metricsRes, alertsRes, timelineRes, ruleRes] = await Promise.all([
-        fetch('http://localhost:8001/api/v1/dashboard/metrics'),
-        fetch('http://localhost:8001/api/v1/alerts?limit=8'),
-        fetch('http://localhost:8001/api/v1/alerts/stats/timeline'),
-        fetch('http://localhost:8001/api/v1/alerts/stats/by-rule')
+        apiFetch('/api/v1/dashboard/metrics'),
+        apiFetch('/api/v1/alerts?limit=8'),
+        apiFetch('/api/v1/alerts/stats/timeline'),
+        apiFetch('/api/v1/alerts/stats/by-rule')
       ]);
       
       if (metricsRes.ok) setMetrics(await metricsRes.json());

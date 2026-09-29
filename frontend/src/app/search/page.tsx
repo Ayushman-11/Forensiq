@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Terminal, Search, Loader2, AlertCircle, Clock, Monitor, Code, Hash } from 'lucide-react';
+import { apiFetch } from '@/lib/api';
 
 const QUICK_QUERIES = [
   { label: 'Failed Logins', query: 'search index=windows source="XmlWinEventLog:Security" EventCode=4625' },
@@ -29,7 +30,7 @@ export default function SearchPage() {
     const start = Date.now();
 
     try {
-      const res = await fetch('http://localhost:8001/api/v1/search/search', {
+      const res = await apiFetch('/api/v1/search/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
