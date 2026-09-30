@@ -29,36 +29,42 @@ import { apiFetch } from '@/lib/api';
 const QUICK_QUERIES = [
   { 
     label: 'Failed Windows Logins (4625)', 
-    query: 'search index=windows source="XmlWinEventLog:Security" EventCode=4625',
+    query: 'search index=* EventCode=4625',
     category: 'Authentication'
   },
   { 
     label: 'PowerShell Execution (Sysmon 1)', 
-    query: 'search index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=1 Image="*powershell*"',
+    query: 'search index=sysmon EventCode=1 | head 50',
     category: 'Execution'
   },
   { 
-    label: 'Outbound Network Conns (Sysmon 3)', 
-    query: 'search index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=3',
+    label: 'Network Connections (Sysmon 3)', 
+    query: 'search index=sysmon EventCode=3 | head 50',
     category: 'Network'
   },
   { 
-    label: 'DNS Query Telemetry (Sysmon 22)', 
-    query: 'search index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=22',
+    label: 'Latest Sysmon Telemetry', 
+    query: 'search index=sysmon | head 50',
+    category: 'Sysmon'
+  },
+  { 
+    label: 'Latest Security Events (All)', 
+    query: 'search index=* | head 50',
     category: 'Discovery'
   },
   {
-    label: 'High Severity Security Detections',
-    query: 'search index=windows severity="high" OR severity="critical"',
-    category: 'Threats'
+    label: 'PowerShell Operational Logs',
+    query: 'search index=main | head 50',
+    category: 'PowerShell'
   }
 ];
 
 const TIME_RANGES = [
-  { label: 'Past 15 Minutes', value: '-15m' },
-  { label: 'Past 1 Hour', value: '-1h' },
+  { label: 'All Time', value: '0' },
   { label: 'Past 24 Hours', value: '-24h' },
   { label: 'Past 7 Days', value: '-7d' },
+  { label: 'Past 1 Hour', value: '-1h' },
+  { label: 'Past 15 Minutes', value: '-15m' },
 ];
 
 type SearchEvent = { 
@@ -79,7 +85,7 @@ type SearchEvent = {
 };
 
 export default function SearchPage() {
-  const [query, setQuery] = useState('search index=windows EventCode=4625');
+  const [query, setQuery] = useState('search index=sysmon | head 50');
   const [timeRange, setTimeRange] = useState('-24h');
   const [events, setEvents] = useState<SearchEvent[]>([]);
   const [loading, setLoading] = useState(false);
@@ -339,7 +345,7 @@ export default function SearchPage() {
               </p>
             </div>
           ) : (
-            <table className="w-full text-left border-collapse">
+            <table className="w-full text-left border-collapse table-fixed">
               <thead className="sticky top-0 bg-[#0A101C] border-b border-[#1E2E48] z-10">
                 <tr className="text-xs font-bold text-slate-400 uppercase tracking-wider font-mono">
                   <th className="py-3 px-4 w-12 text-center">#</th>
