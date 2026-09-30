@@ -1,0 +1,9 @@
+[
+  {
+    "_id": "cc05bec9-4d1c-4809-a42d-b5c77e8c7d84",
+    "email": "admin@forensiq.ai",
+    "password_hash": "$2b$12$cFYJfXvtM131Acozbc0WOuAejprDqD/qDCIicVx76ODA2XR5lgc4C",
+    "role": "admin",
+    "is_active": true
+  }
+]

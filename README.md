@@ -76,36 +76,106 @@ A robust Next.js 15 App Router interface featuring:
 
 ---
 
-## 🚀 Getting Started
+## 🚀 Getting Started (From Scratch)
 
 ### Prerequisites
+Ensure you have the following installed on your machine:
 - **Python 3.11+**
-- **Node.js 18+**
-- **Splunk Enterprise** (Local or Remote, for live telemetry ingestion)
-- **MongoDB** (Local or Dockerized)
+- **Node.js 18+ & npm**
+- **MongoDB** (Local installation)
+- **Splunk Enterprise** (Local or Remote)
+- **Git**
 
-### 1. Environment Setup
-1. Clone the repository.
-2. Navigate to the `backend` folder and duplicate `.env.example` to `.env`.
-3. Update your `.env` with your local Splunk credentials and VirusTotal API key.
+### 1. Clone & Environment Setup
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/your-username/Forensiq.git
+   cd Forensiq
+   ```
+2. Navigate to the `backend` directory and set up your environment variables:
+   ```bash
+   cd backend
+   cp .env.example .env
+   ```
+3. Open the `.env` file and configure your keys and credentials (see Integration sections below).
 
-### 2. Running the Project (Automated)
-If you are on Windows, you can launch the entire stack using our provided script:
+### 2. Backend Setup (FastAPI & LangGraph)
+1. Create a Python virtual environment:
+   ```bash
+   python -m venv venv
+   # On Windows:
+   .\venv\Scripts\activate
+   # On macOS/Linux:
+   source venv/bin/activate
+   ```
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Start the backend server:
+   ```bash
+   uvicorn app.main:app --reload --port 8001
+   ```
 
-```powershell
-& ".\run_project.ps1"
-```
-This script will automatically:
-1. Create a Python virtual environment and install backend dependencies.
-2. Install Node.js frontend dependencies.
-3. Open two new terminal windows running the backend (Port 8001) and frontend (Port 3000) servers simultaneously. Splunk Enterprise uses Port 8000.
+### 3. Frontend Setup (Next.js)
+1. Open a new terminal and navigate to the `frontend` directory:
+   ```bash
+   cd frontend
+   ```
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+3. Start the frontend development server:
+   ```bash
+   npm run dev
+   ```
+4. Access the Forensiq Dashboard at `http://localhost:3000`.
 
-### 3. Deploying Splunk Dashboards (Optional)
-If you have a local Splunk instance, you can automatically deploy Forensiq's custom Splunk dashboards and alert rules:
-```powershell
-cd backend
-python scripts/deploy_human_friendly_alerts.py
-```
+*(Alternatively, on Windows, you can run `.\run_project.ps1` from the root to start both backend and frontend automatically).*
+
+---
+
+## 🔌 Integrations
+
+### MongoDB Integration
+Forensiq uses MongoDB to store normalized alerts and AI investigation states.
+1. **Install MongoDB**: Download and install MongoDB Community Server from the [official website](https://www.mongodb.com/try/download/community).
+2. **Configure Backend**: In your `backend/.env` file, set the MongoDB connection string:
+   ```env
+   FORENSIQ_MONGO_URI=mongodb://localhost:27017
+   FORENSIQ_MONGO_DB_NAME=forensiq
+   ```
+3. **Sharing Data with Team Members (Optional)**: If you want to share your existing alerts and investigation data with new team members, you can dump your local database and have them restore it using the provided Python scripts:
+   - **To export (on your machine):**
+     Ensure your backend virtual environment is active, then run:
+     ```bash
+     cd backend
+     python scripts/export_db.py
+     ```
+     Zip the newly created `mongo_dump_json` folder and share it with your team.
+   - **To import (on a team member's machine):**
+     Extract the zip file into the `backend` directory so that the folder `mongo_dump_json` is present. Ensure your backend virtual environment is active, then run:
+     ```bash
+     cd backend
+     python scripts/import_db.py
+     ```
+
+### Splunk Integration
+Forensiq ingests real-time alerts from Splunk and can also deploy dashboards back to it.
+1. **Install Splunk**: Download Splunk Enterprise from the [official website](https://www.splunk.com/en_us/download/splunk-enterprise.html). Install and start the service (typically runs on `http://localhost:8000`).
+2. **Configure Backend**: In your `backend/.env` file, provide your Splunk credentials and host:
+   ```env
+   SPLUNK_HOST=localhost
+   SPLUNK_PORT=8089
+   SPLUNK_USERNAME=admin
+   SPLUNK_PASSWORD=your_splunk_password
+   ```
+3. **Deploy Splunk Dashboards (Optional)**: Deploy Forensiq's custom alerts and dashboards to your Splunk instance:
+   ```bash
+   cd backend
+   python scripts/deploy_human_friendly_alerts.py
+   ```
 
 ---
 

