@@ -1,48 +1,55 @@
 # Forensiq Project Status Report
 
 ## 1. Executive Summary
-The **Forensiq** project (an AI-Agent Driven Security Operations & Investigation Platform) has successfully established its foundational architecture. Following the `DEVELOPMENT_PLAN.md` and `implementation_plan.md`, the codebase reflects a solid start on **Phase 0 (Project Scaffolding)** and portions of **Phase 1 (Core Backend)** and **Phase 2 (Splunk Integration)**. 
+The **Forensiq** project (an AI-Agent Driven Security Operations & Investigation Platform) has made significant progress in establishing its core architecture and user interface. 
 
-The frontend and backend have been initialized as separate applications within a monorepo structure. The core API endpoints, SIEM abstraction layer, and the primary dashboard UI have been developed.
+The frontend and backend have been initialized as separate applications within a monorepo structure. The core API endpoints, SIEM abstraction layer, and the primary dashboard UI have been developed and significantly enhanced to reflect a dark SOC (Security Operations Center) theme.
 
 ## 2. What Has Been Built & Is Working
 
-### 2.1 Backend (FastAPI)
-The backend is structured as a robust Python FastAPI application:
-- **Application Core**: 
-  - `app/main.py` serves as the entrypoint with CORS, structured logging (`structlog`), global exception handling, and API routing logic.
-  - Configuration management via Pydantic (`app/core/config.py`).
-- **API Endpoints**: 
-  - Versioned API router established (`/api/v1/`).
-  - Implemented routes include:
-    - **Health Checks** (`app/api/v1/endpoints/health.py`)
-    - **Alerts Management** (`app/api/v1/endpoints/alerts.py`)
-    - **Search Capabilities** (`app/api/v1/endpoints/search.py`)
-- **SIEM Infrastructure Abstraction**:
-  - A clean protocol-based SIEM provider interface was created (`app/infrastructure/siem/base.py`).
-  - **Splunk Integration**: A concrete implementation for Splunk (`app/infrastructure/siem/splunk.py`) is successfully built, fulfilling Phase 2 requirements for a Splunk REST API wrapper.
-- **Data Schemas**:
-  - `NormalizedEvent` schema created (`app/schemas/normalized_event.py`) for standardizing raw SIEM data.
-- **Testing**:
-  - Pytest setup with `test_health.py` and `test_splunk_client.py` validating the core functionalities.
-
-### 2.2 Frontend (Next.js)
-The frontend is a Next.js App Router application showcasing the SOC workspace:
+### 2.1 Frontend (Next.js)
+The frontend is a robust Next.js App Router application showcasing the SOC workspace:
 - **UI Dashboard (`app/page.tsx`)**:
   - A rich "SOC Overview" layout featuring KPI cards (Total Alerts, Critical, Open Inv., AI Confidence, MTTD).
   - Integrated with `@mui/x-charts` rendering Line, Pie, and Bar charts for alert trends, severity, and investigator load.
-  - A "Recent Alerts" data table UI with mock data showing severity, host, user, AI confidence, and status.
+  - High-contrast SOC dark theme with scalable typography and a real-time telemetry chart.
 - **Alerts View (`app/alerts/page.tsx`)**: 
-  - A dedicated view for alert investigation and management.
+  - A dedicated, real-time updated view for alert investigation and management.
+  - Clean layout avoiding render loops, decoupled from the global load state.
+- **Raw Logs / Search View (`app/search/page.tsx`)**:
+  - Redesigned to match the Splunk SOC theme. 
+  - Implementation of a feature-rich event inspector (JSON viewer, copy-to-clipboard, structured metadata grid) that expands without layout breaking (using `table-fixed`).
 - **Design System**: 
   - Tailwind CSS configured (`globals.css`) alongside a customized `AppLayout.tsx` for consistent navigation and scaffolding. 
+  - Visuals overhauled across all main pages.
+
+### 2.2 Backend (FastAPI)
+The backend is structured as a robust Python FastAPI application:
+- **Application Core**: 
+  - `app/main.py` serves as the entrypoint with CORS, structured logging (`structlog`), global exception handling, and API routing logic.
+- **API Endpoints**: 
+  - Versioned API router established (`/api/v1/`).
+  - Routes implemented: Health Checks, Alerts Management, Dashboard, Auth, Search Capabilities.
+- **SIEM Infrastructure Abstraction**:
+  - Clean protocol-based SIEM provider interface created (`app/infrastructure/siem/base.py`).
+  - Concrete Splunk Implementation (`app/infrastructure/siem/splunk.py`) successfully built, supporting real data querying.
+- **Database & Models**:
+  - DB session established (`app/database/session.py`).
+  - Core models created (`app/models/alert.py`, `app/models/incident.py`).
+- **Agents & Services (Initial Foundation)**:
+  - `app/agents/`: Initialized with `analysis_agent.py`, `context_agent.py`, `ioc_agent.py`, and `graph.py` state machines.
+  - `app/services/`: Built ingestion polling (`poller.py`), detection rules engine (`detection_rules.py`), correlation logic (`correlation.py`), and auditing (`audit.py`).
+- **Data Schemas**:
+  - `NormalizedEvent` schema created (`app/schemas/normalized_event.py`) for standardizing raw SIEM data.
 
 ## 3. Pending Implementation (Next Steps)
-Based on the existing plans, here are the areas that are currently missing or empty:
-1. **Database & ORM**: The `database/`, `models/`, and `repositories/` directories are initialized but currently empty. Connecting PostgreSQL (with `pgvector`) and Alembic migrations is the next logical step.
-2. **AI Agents Pipeline (Phase 3)**: The `agents/` and `services/` directories are empty. The orchestration of LangGraph, LLM agents (Risk, Recommendation), and Python service agents (Context, Enrichment, Correlation, MITRE, Timeline) has not started.
-3. **Task Queue (Celery/Redis)**: Worker definitions and task orchestration setup are not yet implemented in the backend.
-4. **Frontend API Integration**: The frontend is currently rendering static/mocked data and needs `fetch`/API client logic to connect with the FastAPI backend.
+While significant structural code is laid out, the following areas remain to be fully implemented, wired up, or tested:
+
+1. **Database Migrations (Alembic)**: While models exist, actual Alembic migration scripts and the setup of PostgreSQL (with pgvector) in the environment need to be verified and executed.
+2. **AI Agent Pipeline Orchestration**: The agents exist in code, but their orchestration loop via LangGraph and connectivity to the LLM backend (OpenAI/Anthropic) needs full end-to-end integration testing.
+3. **Task Queue Implementation**: A robust async task queue (e.g., Celery/Redis) is needed for offloading long-running threat intelligence lookups and agent analysis loops.
+4. **Authentication & Authorization**: Full enforcement of RBAC (Role-Based Access Control) using JWTs in the frontend and backend.
+5. **Real-time WebSockets**: Integrating WebSockets for live alert streaming to the UI instead of relying solely on polling.
 
 ## 4. Conclusion
-The project is on track. The structural foundation is exceptionally clean, especially the separation of concerns in the backend (using the `SIEMProvider` protocol) which perfectly aligns with the `implementation_plan.md`. The immediate focus should shift toward standing up the PostgreSQL database schemas and hooking the frontend components up to the live FastAPI endpoints.
+The project has successfully crossed the foundational milestone. The UI is exceptionally polished, providing a premium SOC experience, and the API boundaries are clean. The primary focus moving forward is plumbing the database connections, solidifying the background agent execution pipelines, and finalizing end-to-end interactivity.
