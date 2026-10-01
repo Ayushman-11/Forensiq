@@ -27,11 +27,17 @@ async def lifespan(app: FastAPI):
     await connect_to_mongo()
 
     if db_config.client:
+        db = db_config.client[settings.MONGO_DB_NAME]
         # TTL index: let MongoDB itself expire session documents once their
         # expires_at timestamp has passed, instead of relying solely on the
         # refresh JWT's own exp claim (which the session store never enforces).
-        await db_config.client[settings.MONGO_DB_NAME]["sessions"].create_index(
+        await db["sessions"].create_index(
             "expires_at", expireAfterSeconds=0
+        )
+        # Compound index and TTL index for IOC threat intelligence cache
+        await db["ioc_cache"].create_index([("ioc", 1), ("source", 1)], unique=True)
+        await db["ioc_cache"].create_index(
+            "cached_at", expireAfterSeconds=int(settings.IOC_CACHE_TTL_HOURS * 3600)
         )
 
     global poller

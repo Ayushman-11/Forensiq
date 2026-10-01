@@ -3,10 +3,12 @@ Alert Ingestion and Listing endpoints.
 """
 
 from typing import List, Dict, Any, Literal, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import uuid
 import asyncio
+import json
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.database.session import get_db
@@ -150,14 +152,86 @@ async def ingest_from_splunk(
         )
 
 
+async def _finalize_and_save_investigation(
+    db: AsyncIOMotorDatabase,
+    alert_id: str,
+    job_id: str,
+    alert: dict,
+    final_state: dict,
+) -> dict:
+    """Consolidates graph state results and persists them to alerts and investigation_jobs."""
+    enrichments = final_state.get("enrichment_results", [])
+    context = final_state.get("context", {})
+    extracted_iocs = final_state.get("extracted_iocs", [])
+    investigation_log = final_state.get("investigation_log", [])
+    risk_assessment = final_state.get("risk_assessment", {})
+    mitre_mappings = final_state.get("mitre_mappings", [])
+    timeline = final_state.get("timeline", [])
+    recommendation = final_state.get("recommendation")
+    correlations = final_state.get("correlations")
+    if correlations is None:
+        correlations = await correlate_alert(db, alert)
+    evidence = {
+        "ioc_count": len(extracted_iocs),
+        "enrichment_count": len(enrichments),
+        "correlated_alert_count": len(correlations),
+        "mitre_count": len(mitre_mappings),
+    }
+
+    ai_confidence = risk_assessment.get("confidence_score", alert.get("ai_confidence", 50))
+    for e in enrichments:
+        if e.get("reputation") in ["malicious", "suspicious"]:
+            ai_confidence = min(99, ai_confidence + 20)
+
+    alert_update = {
+        "status": "Investigated",
+        "ai_confidence": ai_confidence,
+        "context": context,
+        "enrichments": enrichments,
+        "extracted_iocs": extracted_iocs,
+        "risk_assessment": risk_assessment,
+        "risk_score": risk_assessment.get("risk_score", 0),
+        "priority": risk_assessment.get("priority", "medium"),
+        "mitre_mappings": mitre_mappings,
+        "timeline": timeline,
+        "recommendation": recommendation,
+        "correlations": correlations,
+        "evidence": evidence,
+    }
+
+    await db["alerts"].update_one(
+        {"_id": alert_id},
+        {"$set": alert_update},
+    )
+
+    await db["investigation_jobs"].update_one(
+        {"_id": job_id},
+        {"$set": {
+            "status": "complete",
+            "completed_at": datetime.now(timezone.utc),
+            "logs": investigation_log,
+            "context": context,
+            "enrichments": enrichments,
+            "risk_assessment": risk_assessment,
+            "mitre_mappings": mitre_mappings,
+            "timeline": timeline,
+            "recommendation": recommendation,
+            "correlations": correlations,
+            "evidence": evidence,
+        }}
+    )
+    logger.info("investigation_completed_and_saved", job_id=job_id, alert_id=alert_id)
+    return {**alert, **alert_update}
+
+
 async def run_investigation_background(alert_id: str, job_id: str, db: AsyncIOMotorDatabase):
     """Background task to run the LangGraph pipeline."""
     try:
         await db["investigation_jobs"].update_one(
             {"_id": job_id},
-            {"$set": {"status": "running", "started_at": datetime.utcnow()}}
+            {"$set": {"status": "running", "started_at": datetime.now(timezone.utc)}}
         )
-        
+
         alert = await db["alerts"].find_one({"_id": alert_id})
         if not alert:
             raise ValueError(f"Alert {alert_id} not found")
@@ -171,75 +245,21 @@ async def run_investigation_background(alert_id: str, job_id: str, db: AsyncIOMo
             "ai_analysis": None,
             "risk_assessment": {},
             "mitre_mappings": [],
+            "correlations": [],
             "timeline": [],
             "recommendation": None,
         }
-        
-        # Run graph
+
         final_state = await investigation_graph.ainvoke(initial_state)
-        
-        enrichments = final_state.get("enrichment_results", [])
-        context = final_state.get("context", {})
-        extracted_iocs = final_state.get("extracted_iocs", [])
-        investigation_log = final_state.get("investigation_log", [])
-        risk_assessment = final_state.get("risk_assessment", {})
-        mitre_mappings = final_state.get("mitre_mappings", [])
-        timeline = final_state.get("timeline", [])
-        recommendation = final_state.get("recommendation")
-        correlations = await correlate_alert(db, alert)
-        evidence = {"ioc_count": len(extracted_iocs), "enrichment_count": len(enrichments), "correlated_alert_count": len(correlations), "mitre_count": len(mitre_mappings)}
-        
-        # Calculate mock AI confidence based on enrichments
-        ai_confidence = risk_assessment.get("confidence_score", alert.get("ai_confidence", 50))
-        for e in enrichments:
-            if e.get("reputation") in ["malicious", "suspicious"]:
-                ai_confidence = min(99, ai_confidence + 20)
-                
-        # Update Alert
-        await db["alerts"].update_one(
-            {"_id": alert_id},
-            {"$set": {
-                "status": "Investigated",
-                "ai_confidence": ai_confidence,
-                "context": context,
-                "enrichments": enrichments,
-                "extracted_iocs": extracted_iocs,
-                "risk_assessment": risk_assessment,
-                "risk_score": risk_assessment.get("risk_score", 0),
-                "priority": risk_assessment.get("priority", "medium"),
-                "mitre_mappings": mitre_mappings,
-                "timeline": timeline,
-                "recommendation": recommendation,
-                "correlations": correlations,
-                "evidence": evidence,
-            }}
-        )
-        
-        # Mark job complete
-        await db["investigation_jobs"].update_one(
-            {"_id": job_id},
-            {"$set": {
-                "status": "complete", 
-                "completed_at": datetime.utcnow(),
-                "logs": investigation_log,
-                "context": context,
-                "enrichments": enrichments,
-                "risk_assessment": risk_assessment,
-                "mitre_mappings": mitre_mappings,
-                "timeline": timeline,
-                "recommendation": recommendation,
-                "correlations": correlations,
-                "evidence": evidence,
-            }}
-        )
+        await _finalize_and_save_investigation(db, alert_id, job_id, alert, final_state)
         logger.info(f"Investigation {job_id} for alert {alert_id} completed successfully.")
-        
+
     except Exception as e:
         logger.error(f"Investigation {job_id} failed: {e}")
         await db["investigation_jobs"].update_one(
             {"_id": job_id},
             {"$set": {
-                "status": "failed", 
+                "status": "failed",
                 "completed_at": datetime.utcnow(),
                 "error": str(e)
             }}
@@ -248,6 +268,204 @@ async def run_investigation_background(alert_id: str, job_id: str, db: AsyncIOMo
             {"_id": alert_id},
             {"$set": {"status": "Investigation Failed"}}
         )
+
+
+@router.post("/{alert_id:path}/investigate/stream")
+async def investigate_alert_stream(
+    alert_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Executes the LangGraph investigation pipeline and streams real-time Server-Sent Events (SSE)
+    for each agent node to the client.
+    """
+    try:
+        alert = await db["alerts"].find_one(scoped_query(user, {"_id": alert_id}))
+        if not alert:
+            raise HTTPException(status_code=404, detail="Alert not found")
+
+        job_id = str(uuid.uuid4())
+        org_id = tenant_id(user)
+
+        await db["investigation_jobs"].insert_one({
+            "_id": job_id,
+            "alert_id": alert_id,
+            "status": "running",
+            "created_at": datetime.now(timezone.utc),
+            "started_at": datetime.now(timezone.utc),
+            "org_id": org_id,
+        })
+
+        await db["alerts"].update_one(
+            scoped_query(user, {"_id": alert_id}),
+            {"$set": {"status": "Investigating"}}
+        )
+
+        async def sse_event_stream():
+            step_definitions = {
+                "extract_context": {
+                    "step": 1,
+                    "name": "Context Extraction",
+                    "description": "Analyzing raw telemetry, host & user context",
+                },
+                "enrich_iocs": {
+                    "step": 2,
+                    "name": "Threat Intel & Cache Lookup",
+                    "description": "Enriching IOCs via VirusTotal & AbuseIPDB with cache lookup",
+                },
+                "correlate_events": {
+                    "step": 3,
+                    "name": "Historical Event Correlation",
+                    "description": "Searching across tenant alert history for related entities",
+                },
+                "map_mitre": {
+                    "step": 4,
+                    "name": "MITRE ATT&CK Mapping",
+                    "description": "Mapping behavioral heuristics to MITRE tactics and techniques",
+                },
+                "build_timeline": {
+                    "step": 5,
+                    "name": "Chronological Timeline Assembly",
+                    "description": "Sorting multi-source events into attack lifecycle phases",
+                },
+                "assess_risk": {
+                    "step": 6,
+                    "name": "AI Risk Assessment",
+                    "description": "Evaluating threat severity, blast radius, and confidence score",
+                },
+                "generate_recommendations": {
+                    "step": 7,
+                    "name": "Incident Response Recommendations",
+                    "description": "Synthesizing mitigation playbooks and actionable next steps",
+                },
+            }
+
+            # 1. Send init event
+            init_payload = {
+                "job_id": job_id,
+                "alert_id": alert_id,
+                "total_steps": len(step_definitions),
+                "status": "running",
+                "message": "Investigation pipeline initialized",
+            }
+            yield f"event: init\ndata: {json.dumps(init_payload)}\n\n"
+
+            initial_state = {
+                "alert_data": alert,
+                "context": {},
+                "extracted_iocs": [],
+                "enrichment_results": [],
+                "investigation_log": [f"Investigation started for alert {alert_id}"],
+                "ai_analysis": None,
+                "risk_assessment": {},
+                "mitre_mappings": [],
+                "correlations": [],
+                "timeline": [],
+                "recommendation": None,
+            }
+
+            accumulated_state = dict(initial_state)
+
+            try:
+                async for chunk in investigation_graph.astream(initial_state):
+                    for node_name, node_output in chunk.items():
+                        accumulated_state.update(node_output)
+                        meta = step_definitions.get(node_name, {
+                            "step": 0,
+                            "name": node_name,
+                            "description": "",
+                        })
+
+                        summary = ""
+                        if node_name == "extract_context":
+                            iocs = node_output.get("extracted_iocs", [])
+                            summary = f"Extracted {len(iocs)} indicators of compromise: {', '.join(iocs[:3])}" if iocs else "No distinct IOCs extracted from raw telemetry."
+                        elif node_name == "enrich_iocs":
+                            res = node_output.get("enrichment_results", [])
+                            mal = sum(1 for r in res if r.get("reputation") == "malicious")
+                            cached = sum(1 for r in res if r.get("cached"))
+                            summary = f"Enriched {len(res)} threat feeds ({mal} malicious, {cached} cached)."
+                        elif node_name == "correlate_events":
+                            corrs = node_output.get("correlations", [])
+                            summary = f"Correlated {len(corrs)} related alert(s) across historical telemetry."
+                        elif node_name == "map_mitre":
+                            mappings = node_output.get("mitre_mappings", [])
+                            summary = f"Mapped {len(mappings)} MITRE technique(s): {', '.join(m.get('technique', '') for m in mappings[:2])}"
+                        elif node_name == "build_timeline":
+                            tl = node_output.get("timeline", [])
+                            phases = {e.get("phase") for e in tl if e.get("phase")}
+                            summary = f"Assembled {len(tl)} chronological events across {len(phases)} attack phase(s)."
+                        elif node_name == "assess_risk":
+                            risk = node_output.get("risk_assessment", {})
+                            summary = f"Risk Score: {risk.get('risk_score', 0)}/100 ({risk.get('priority', 'medium').upper()} Priority)."
+                        elif node_name == "generate_recommendations":
+                            summary = "Actionable incident response checklist generated."
+
+                        node_event = {
+                            "job_id": job_id,
+                            "node": node_name,
+                            "step": meta["step"],
+                            "name": meta["name"],
+                            "description": meta["description"],
+                            "status": "completed",
+                            "summary": summary,
+                            "data": {k: v for k, v in node_output.items() if k != "alert_data"},
+                        }
+                        yield f"event: node_complete\ndata: {json.dumps(node_event, default=str)}\n\n"
+
+                # Persist final results into MongoDB
+                final_alert = await _finalize_and_save_investigation(
+                    db=db,
+                    alert_id=alert_id,
+                    job_id=job_id,
+                    alert=alert,
+                    final_state=accumulated_state,
+                )
+
+                serialized_alert = {}
+                for k, v in final_alert.items():
+                    if isinstance(v, datetime):
+                        serialized_alert[k] = v.isoformat()
+                    elif hasattr(v, "__str__") and k == "_id":
+                        serialized_alert[k] = str(v)
+                    else:
+                        serialized_alert[k] = v
+
+                complete_event = {
+                    "job_id": job_id,
+                    "alert_id": alert_id,
+                    "status": "complete",
+                    "message": "Investigation successfully finished",
+                    "alert": serialized_alert,
+                }
+                yield f"event: complete\ndata: {json.dumps(complete_event, default=str)}\n\n"
+
+            except Exception as e:
+                logger.error(f"Investigation stream error for {alert_id}: {e}")
+                await db["investigation_jobs"].update_one(
+                    {"_id": job_id},
+                    {"$set": {"status": "failed", "completed_at": datetime.now(timezone.utc), "error": str(e)}}
+                )
+                await db["alerts"].update_one(
+                    {"_id": alert_id},
+                    {"$set": {"status": "Investigation Failed"}}
+                )
+                yield f"event: error\ndata: {json.dumps({'job_id': job_id, 'alert_id': alert_id, 'error': str(e)})}\n\n"
+
+        return StreamingResponse(
+            sse_event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{alert_id:path}/investigate", response_model=dict)
 async def investigate_alert(

@@ -31,3 +31,6 @@ build/
 
 # git worktrees
 .worktrees/
+
+# Data dumps
+mongo_dump_json/
