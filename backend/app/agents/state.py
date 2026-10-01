@@ -23,6 +23,7 @@ class AgentState(TypedDict):
     ai_analysis: Optional[str]
 
     # Transparent MVP decision layer outputs
+    correlations: List[Dict[str, Any]]
     risk_assessment: Dict[str, Any]
     mitre_mappings: List[Dict[str, Any]]
     timeline: List[Dict[str, Any]]

@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import ContextPanel from "@/components/investigation/ContextPanel";
 import EnrichmentPanel from "@/components/investigation/EnrichmentPanel";
+import InvestigationModal from "@/components/investigation/InvestigationModal";
 import { apiFetch } from "@/lib/api";
 import type { AlertRecord, InvestigationJob } from "@/lib/types";
 

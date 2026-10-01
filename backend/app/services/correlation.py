@@ -25,6 +25,7 @@ async def correlate_alert(db, alert: dict, user: dict | None = None) -> list[dic
         results.append({
             "alert_id": str(item.get("_id")), "title": item.get("title"),
             "severity": item.get("severity"), "status": item.get("status"),
+            "host": item.get("host"),
             "created_at": item.get("created_at"), "matches": matches,
         })
     return results

@@ -68,6 +68,28 @@ class Settings(BaseSettings):
         default="",
         description="VirusTotal API Key (v3)"
     )
+    ABUSEIPDB_API_KEY: str = Field(
+        default="",
+        description="AbuseIPDB API Key (v2)"
+    )
+    IOC_CACHE_TTL_HOURS: int = Field(
+        default=24,
+        description="Time to live in hours for cached IOC enrichments in MongoDB"
+    )
+
+    # Grok / xAI LLM Configuration
+    XAI_API_KEY: str = Field(
+        default="",
+        description="xAI Grok API Key",
+    )
+    XAI_BASE_URL: str = Field(
+        default="https://api.x.ai/v1",
+        description="xAI API Base URL",
+    )
+    XAI_MODEL: str = Field(
+        default="grok-beta",
+        description="xAI Grok Model name (e.g. grok-beta, grok-2-latest)",
+    )
 
     @model_validator(mode="after")
     def _reject_insecure_secret_in_production(self) -> "Settings":

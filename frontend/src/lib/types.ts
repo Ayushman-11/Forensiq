@@ -9,3 +9,15 @@ export type AlertRecord = {
   timeline?: TimelineEvent[]; correlations?: Correlation[]; evidence?: Record<string, number>; raw_event?: Record<string, unknown>;
 };
 export type InvestigationJob = { _id: string; status: string; created_at?: string; completed_at?: string; recommendation?: string; risk_assessment?: { risk_score?: number; priority?: string; confidence_score?: number } };
+
+export type StepStatus = "pending" | "running" | "completed" | "failed";
+
+export type PipelineStep = {
+  step: number;
+  node: string;
+  name: string;
+  description: string;
+  status: StepStatus;
+  summary?: string;
+  data?: Record<string, unknown>;
+};
