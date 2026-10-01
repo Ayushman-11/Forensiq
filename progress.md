@@ -1,11 +1,18 @@
 # Forensiq Project Progress Tracker
 
-Last updated: 2026-08-11
+Last updated: 2026-09-30
 
 ## Overview
 This document tracks the progress of the Forensiq project over time. Each entry includes the date, accomplishments, and current status.
 
 ## Progress Entries
+
+### 2026-09-30: UI Polishing & Code Analysis
+- Overhauled Dashboard UI (`app/page.tsx`) with dark SOC theme and KPI charts.
+- Fixed layout issues and render loops in Alerts UI (`app/alerts/page.tsx`).
+- Completely redesigned Raw Logs UI (`app/search/page.tsx`) with an expandable telemetry inspector, copy-to-clipboard, and layout fixes (`table-fixed`).
+- Analyzed backend repository structure revealing working prototypes of agents (`analysis_agent.py`, `context_agent.py`), models (`alert.py`, `incident.py`), and services (`ingestion.py`, `correlation.py`).
+- Updated `project_status_report.md`.
 
 ### 2026-08-11: Project Understanding & Documentation
 - Analyzed project structure and key documentation files
@@ -13,7 +20,6 @@ This document tracks the progress of the Forensiq project over time. Each entry 
 - Examined frontend and backend codebase structure
 - Created comprehensive project context documentation in memory/project_context.md
 - Initialized this progress tracking file
-- **Status**: Project understanding complete, ready to begin implementation work
 
 ### Recent Development Activity (Based on Repository Analysis)
 #### Backend Progress:
@@ -26,61 +32,34 @@ This document tracks the progress of the Forensiq project over time. Each entry 
 -  ✅ SIEM abstraction layer designed (SIEMProvider protocol)
 -  ✅ Splunk provider implementation completed
 -  ✅ NormalizedEvent schema created
--  ✅ Basic test suite established (test_health.py, test_splunk_client.py)
--  ⏳ Database models and ORM setup pending (PostgreSQL + pgvector)
--  ⏳ AI agents pipeline not fully implemented (agents exist but need orchestration)
+-  ✅ Database models implemented (Alert, Incident)
+-  ✅ Agent scripts created (Analysis, Context, IOC, Graph)
+-  ✅ Service logic written (Ingestion, Polling, Rules, Correlation)
+-  ⏳ Full integration and orchestration of AI Agents via LangGraph pending
 -  ⏳ Task queue (Celery/Redis) not implemented
+-  ⏳ Database migrations via Alembic pending execution
 
 #### Frontend Progress:
 -  ✅ Next.js App Router application initialized
--  ✅ SOC Overview dashboard with KPI charts implemented
+-  ✅ SOC Overview dashboard with KPI charts implemented, stylized in dark SOC theme
 -  ✅ @mui/x-charts integrated for data visualization
--  ✅ Recent alerts data table UI created
--  ✅ Dedicated alerts investigation view implemented
+-  ✅ Recent alerts data table UI created and wired to mock/API data
+-  ✅ Dedicated alerts investigation view implemented and stabilized
+-  ✅ Advanced SPL Search Interface built with telemetry inspector
 -  ✅ Tailwind CSS configured with custom styling
 -  ✅ Consistent layout components (AppLayout.tsx)
--  ⏳ Frontend-to-backend API integration pending
--  ⏳ Real data fetching from backend endpoints needed
--  ⏳ Interactive components (filtering, sorting, drill-down) pending
-
-#### Infrastructure Progress:
--  ⏳ Docker Compose development environment not fully configured
--  ⏳ Production deployment setup pending
--  ⏳ Database migration system (Alembic) not implemented
--  ⏳ Environment variable management for secrets pending
+-  ⏳ Full endpoint wiring for all actions (investigation, resolution, etc.) pending
+-  ⏳ Real-time WebSockets integration pending
 
 ## Upcoming Milestones
-Based on DEVELOPMENT_PLAN.md:
 
 ### Immediate Next Steps:
-1. **Database Setup**: Configure PostgreSQL with pgvector extension
-2. **ORM Implementation**: Define SQLAlchemy models for all entities
-3. **API Integration**: Connect frontend components to backend endpoints
-4. **Agent Pipeline**: Implement LangGraph orchestration for AI agents
-5. **Task Queue**: Set up Celery + Redis for asynchronous processing
-
-### Phase-Specific Goals:
-- **Phase 1 Completion**: Finish core backend including database and basic alert ingestion
-- **Phase 2 Completion**: Implement Splunk integration with real data ingestion
-- **Phase 3 Completion**: Deploy full AI agent pipeline (all 8 agents)
-- **Phase 4 Completion**: Build investigation dashboard with real-time updates
-- **Phase 5 Completion**: Implement report generation functionality
-- **Phase 6 Completion**: Add multi-tenancy and organization management
-- **Phase 7 Completion**: Complete testing, deployment, and documentation
-
-## Metrics to Track
-- Number of implemented API endpoints
-- Percentage of AI agents operational
-- Database schema completion (%)
-- Frontend-backend integration coverage
-- Test coverage percentage
-- Docker deployment readiness
+1. **Database Setup**: Execute Alembic migrations and wire up live PostgreSQL with pgvector.
+2. **Task Queue**: Set up Celery + Redis for asynchronous processing of SIEM polling and AI investigations.
+3. **Agent Pipeline Orchestration**: Hook up the existing agent scripts to live LLM services and LangGraph workflows.
+4. **WebSocket Integration**: Implement real-time pushes of new alerts to the frontend.
 
 ## Blockers & Dependencies
-- Need Splunk Enterprise instance for proper integration testing
-- Requires API keys for threat intelligence services (VirusTotal, AbuseIPDB, AlienVault OTX)
-- PostgreSQL database with pgvector extension needed for full functionality
-- Docker and Docker Compose required for containerized deployment
-
-## Notes
-This progress file should be updated regularly as development proceeds to provide clear visibility into project status for all stakeholders.
+- Need API keys configured for LLM models (OpenAI/Anthropic) to run the agents.
+- Need Redis running for Task Queues.
+- Need PostgreSQL instance for persistent state.
