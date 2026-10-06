@@ -66,28 +66,39 @@ class IngestionService:
     def _cursor_id(self) -> str:
         return f"cursor:{self.org_id}:splunk"
 
-    async def _load_cursor(self) -> Optional[datetime]:
+    async def _load_cursor(self) -> tuple[Optional[datetime], bool]:
         for doc_id in (self._cursor_id, "last_ingested"):  # legacy doc keeps existing installs from re-ingesting
             doc = await self.db[self.STATE_COLLECTION].find_one({"_id": doc_id})
             if doc and doc.get("ts"):
                 parsed = parse_ts(doc["ts"])
                 if parsed:
-                    return parsed
-        return None
+                    return parsed, bool(doc.get("truncated", False))
+        return None, False
 
-    async def _save_cursor(self, newest: Optional[datetime]) -> None:
+    async def _save_cursor(self, newest: Optional[datetime], truncated: bool) -> None:
         if newest is None:
             return
-        iso = newest.isoformat()
-        await self.db[self.STATE_COLLECTION].update_one({"_id": self._cursor_id}, {"$set": {"ts": iso}}, upsert=True)
-        await self.db[self.STATE_COLLECTION].update_one({"_id": "last_ingested"}, {"$set": {"ts": iso}}, upsert=True)
+        for doc_id in (self._cursor_id, "last_ingested"):
+            existing = await self.db[self.STATE_COLLECTION].find_one({"_id": doc_id})
+            prev = parse_ts(existing["ts"]) if existing and existing.get("ts") else None
+            ts = max(prev, newest) if prev else newest  # never move the cursor backwards
+            await self.db[self.STATE_COLLECTION].update_one(
+                {"_id": doc_id}, {"$set": {"ts": ts.isoformat(), "truncated": truncated}}, upsert=True
+            )
 
-    def _earliest_epoch(self, cursor: Optional[datetime]) -> str:
+    def _earliest_epoch(self, cursor: Optional[datetime], truncated: bool = False) -> str:
         if cursor is None:
             start = datetime.now(timezone.utc) - timedelta(hours=settings.INGEST_INITIAL_LOOKBACK_HOURS)
-        else:
-            start = cursor - timedelta(seconds=settings.INGEST_OVERLAP_SECONDS)
-        return str(int(start.timestamp()))
+            return str(int(start.timestamp()))
+        if truncated:
+            # Previous cycle hit the page cap: resume exactly at the cursor so progress is guaranteed.
+            logger.warning("ingestion_truncated", cursor=cursor.isoformat())
+            return str(int(cursor.timestamp()))
+        start = cursor - timedelta(seconds=settings.INGEST_OVERLAP_SECONDS)
+        epoch = int(start.timestamp())
+        bucket = settings.INGEST_DEDUP_BUCKET_SECONDS
+        # Align to the dedup bucket start so every cycle sees in-flight buckets completely.
+        return str(epoch - epoch % bucket)
 
     # -- pipeline stages ------------------------------------------------
 
@@ -146,8 +157,7 @@ class IngestionService:
         self.rules_run = len(self.rules)
         return hits
 
-    async def _store(self, groups, run: dict) -> List[dict]:
-        new_alerts: List[dict] = []
+    async def _store(self, groups, run: dict, new_alerts: List[dict]) -> List[dict]:
         collection = self.db[self.ALERTS_COLLECTION]
         for group in groups:
             doc = build_alert_doc(group, self.org_id, self.noise)
@@ -177,15 +187,15 @@ class IngestionService:
         stage = "fetch"
         splunk = self._splunk_factory()
         try:
-            cursor = await self._load_cursor()
-            events, newest = await self._collect(splunk, self._earliest_epoch(cursor), run)
+            cursor, was_truncated = await self._load_cursor()
+            events, newest = await self._collect(splunk, self._earliest_epoch(cursor, was_truncated), run)
             stage = "detect"
             hits = self._detect(events, run)
             run["hits"] = len(hits)
             stage = "store"
             groups = group_hits(hits, self.org_id, settings.INGEST_DEDUP_BUCKET_SECONDS)
-            new_alerts = await self._store(groups, run)
-            await self._save_cursor(newest)  # only reached when every stage succeeded
+            await self._store(groups, run, new_alerts)
+            await self._save_cursor(newest, run["truncated"])  # only reached when every stage succeeded
             if newest:
                 run["lag_seconds"] = max(0, int((datetime.now(timezone.utc) - newest).total_seconds()))
         except Exception as exc:

@@ -5,6 +5,7 @@ from mongomock_motor import AsyncMongoMockClient
 
 from app.core.config import settings
 from app.normalization.noise import NoiseFilter
+import app.services.ingestion as ingestion_mod
 from app.services.ingestion import IngestionService
 
 
@@ -86,7 +87,8 @@ async def test_next_cycle_queries_from_cursor_minus_overlap(db, splunk_rows):
     await _service(db, splunk).fetch_and_store_alerts()
     cursor = datetime.fromisoformat((await db["ingestion_state"].find_one({"_id": "cursor:default:splunk"}))["ts"])
     earliest = int(splunk.queries[0][1])
-    assert earliest == int((cursor - timedelta(seconds=settings.INGEST_OVERLAP_SECONDS)).timestamp())
+    raw = int((cursor - timedelta(seconds=settings.INGEST_OVERLAP_SECONDS)).timestamp())
+    assert earliest == raw - raw % settings.INGEST_DEDUP_BUCKET_SECONDS  # aligned to the dedup bucket start
 
 
 @pytest.mark.asyncio
@@ -95,7 +97,8 @@ async def test_first_run_uses_legacy_last_ingested_then_lookback(db):
     await db["ingestion_state"].insert_one({"_id": "last_ingested", "ts": legacy.isoformat()})
     splunk = FakeSplunk([])
     await _service(db, splunk).fetch_and_store_alerts()
-    assert int(splunk.queries[0][1]) == int((legacy - timedelta(seconds=settings.INGEST_OVERLAP_SECONDS)).timestamp())
+    raw = int((legacy - timedelta(seconds=settings.INGEST_OVERLAP_SECONDS)).timestamp())
+    assert int(splunk.queries[0][1]) == raw - raw % settings.INGEST_DEDUP_BUCKET_SECONDS
 
     db2 = AsyncMongoMockClient()["fresh"]
     splunk2 = FakeSplunk([])
@@ -133,3 +136,97 @@ async def test_splunk_client_is_closed_even_on_error(db):
     splunk = FakeSplunk(error=RuntimeError("x"))
     await _service(db, splunk).fetch_and_store_alerts()
     assert splunk.closed
+
+
+class GrowingSplunk(FakeSplunk):
+    """Serves the current dataset, honoring earliest_time like Splunk does."""
+
+    def __init__(self, rows):
+        super().__init__()
+        self.rows = rows
+
+    async def search_raw_pages(self, query, earliest_time, latest_time="now", page_size=500, max_pages=20):
+        self.queries.append((query, earliest_time))
+        yield [r for r in self.rows
+               if datetime.fromisoformat(r["_time"]).timestamp() >= int(earliest_time)]
+
+
+def _fail_row(base, i, ip="45.33.32.156"):
+    return {"_time": (base + timedelta(seconds=i)).isoformat(), "EventCode": "4625", "host": "LAB",
+            "IpAddress": ip, "TargetUserName": "admin", "LogonType": "3", "_cd": f"1:{ip}:{i}"}
+
+
+async def _cursor(db):
+    return await db["ingestion_state"].find_one({"_id": "cursor:default:splunk"})
+
+
+@pytest.mark.asyncio
+async def test_cursor_never_regresses(db, splunk_rows):
+    page = _rows(splunk_rows, "22")
+    await _service(db, FakeSplunk([page])).fetch_and_store_alerts()
+    before = (await _cursor(db))["ts"]
+    older = [dict(r, _time="2000-01-01T00:00:00+00:00") for r in page]
+    await _service(db, FakeSplunk([older])).fetch_and_store_alerts()
+    assert (await _cursor(db))["ts"] == before
+
+
+@pytest.mark.asyncio
+async def test_truncated_cycle_resumes_exactly_at_cursor(db, monkeypatch):
+    monkeypatch.setattr(settings, "INGEST_PAGE_SIZE", 2)
+    monkeypatch.setattr(settings, "INGEST_MAX_PAGES", 1)
+    base = datetime(2026, 8, 11, 6, 0, 7, tzinfo=timezone.utc)
+    await _service(db, FakeSplunk([[_fail_row(base, 0), _fail_row(base, 1)]])).fetch_and_store_alerts()
+    run = await db["ingestion_runs"].find_one({})
+    cursor = await _cursor(db)
+    assert run["truncated"] is True and cursor["truncated"] is True
+    splunk = FakeSplunk([])
+    await _service(db, splunk).fetch_and_store_alerts()
+    assert int(splunk.queries[0][1]) == int(datetime.fromisoformat(cursor["ts"]).timestamp())
+
+
+@pytest.mark.asyncio
+async def test_non_truncated_next_cycle_is_bucket_aligned(db, splunk_rows):
+    await _service(db, FakeSplunk([_rows(splunk_rows, "22")])).fetch_and_store_alerts()
+    cursor = datetime.fromisoformat((await _cursor(db))["ts"])
+    assert (await _cursor(db))["truncated"] is False
+    splunk = FakeSplunk([])
+    await _service(db, splunk).fetch_and_store_alerts()
+    earliest = int(splunk.queries[0][1])
+    assert earliest % settings.INGEST_DEDUP_BUCKET_SECONDS == 0
+    assert earliest <= int((cursor - timedelta(seconds=settings.INGEST_OVERLAP_SECONDS)).timestamp())
+
+
+@pytest.mark.asyncio
+async def test_partial_store_failure_still_reports_stored_alerts(db, monkeypatch):
+    base = datetime(2026, 8, 11, 6, 0, tzinfo=timezone.utc)
+    rows = [_fail_row(base, i, ip) for ip in ("45.33.32.156", "185.220.101.4") for i in range(6)]
+    real = ingestion_mod.build_alert_doc
+    calls = {"n": 0}
+
+    def flaky(*a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("boom")
+        return real(*a, **kw)
+
+    monkeypatch.setattr(ingestion_mod, "build_alert_doc", flaky)
+    svc = _service(db, FakeSplunk([rows]))
+    new = await svc.fetch_and_store_alerts()
+    assert len(new) == 1 and await db["alerts"].count_documents({}) == 1
+    assert (await db["ingestion_runs"].find_one({}))["status"] == "error"
+    assert svc.errors[0]["stage"] == "store"
+    assert await _cursor(db) is None
+
+
+@pytest.mark.asyncio
+async def test_slow_brute_force_counts_across_cycles(db, monkeypatch):
+    monkeypatch.setattr(settings, "INGEST_INITIAL_LOOKBACK_HOURS", 24 * 365)
+    base = datetime(2026, 8, 11, 6, 0, 0, tzinfo=timezone.utc)  # bucket-aligned start
+    rows, reported = [], []
+    for i in range(6):
+        rows.append(_fail_row(base, i * 50))
+        new = await _service(db, GrowingSplunk(rows)).fetch_and_store_alerts()
+        reported += [a for a in new if a["rule_name"] == "brute_force_login"]
+    stored = await db["alerts"].find({"rule_name": "brute_force_login"}).to_list(10)
+    assert len(stored) == 1 and stored[0]["count"] == 6
+    assert len(reported) == 1
