@@ -22,10 +22,15 @@ from app.core.security import hash_password
 async def create_admin(email: str, password: str, role: str) -> None:
     client = AsyncIOMotorClient(settings.MONGO_URI)
     db = client[settings.MONGO_DB_NAME]
+    email = email.strip().lower()
 
     existing = await db["users"].find_one({"email": email})
     if existing:
-        print(f"User '{email}' already exists (id={existing['_id']}). Aborting.")
+        await db["users"].update_one(
+            {"_id": existing["_id"]},
+            {"$set": {"password_hash": hash_password(password), "role": role, "is_active": True}}
+        )
+        print(f"Updated password for existing user '{email}' (id={existing['_id']}).")
         client.close()
         return
 
