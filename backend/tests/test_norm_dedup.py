@@ -70,3 +70,36 @@ def test_aggregate_failed_logons_threshold_and_buckets():
 def test_aggregate_ignores_non_4625_events():
     mixed = [ev(i, event_code="22") for i in range(10)]
     assert aggregate_failed_logons(mixed, threshold=5, bucket_seconds=300) == []
+
+
+def test_naive_and_aware_utc_ts_give_same_alert_id():
+    naive = ev(0, ts=T0.replace(tzinfo=None))
+    aware = ev(0)
+    a = group_hits([RuleHit(RULE, naive)], "default", 300)[0].alert_id
+    b = group_hits([RuleHit(RULE, aware)], "default", 300)[0].alert_id
+    assert a == b
+
+
+def test_mixed_naive_and_aware_events_in_one_group_do_not_raise():
+    hits = [RuleHit(RULE, ev(0, ts=T0.replace(tzinfo=None))), RuleHit(RULE, ev(1)),
+            RuleHit(RULE, ev(2, ts=(T0 + timedelta(seconds=2)).replace(tzinfo=None)))]
+    (g,) = group_hits(hits, "default", 300)
+    assert g.count == 3 and g.first_seen == T0 and g.last_seen == T0 + timedelta(seconds=2)
+
+
+def test_aggregated_4625_alert_id_stable_across_overlapping_cycles():
+    cycle_a = [ev(i, event_code="4625", src_ip="45.33.32.156", target_user="admin") for i in range(6)]
+    cycle_b = [ev(i, event_code="4625", src_ip="45.33.32.156", target_user="root") for i in range(3, 8)]
+    ids = []
+    for cycle in (cycle_a, cycle_b):
+        agg = aggregate_failed_logons(cycle, threshold=5, bucket_seconds=300)
+        (g,) = group_hits([RuleHit(RULE, e, c) for e, c in agg], "default", 300)
+        ids.append(g.alert_id)
+    assert ids[0] == ids[1]
+
+
+def test_aggregate_representative_is_deterministic_on_tied_timestamps():
+    evs = [ev(0, event_id=f"e{n}", ts=T0, event_code="4625", src_ip="45.33.32.156") for n in (3, 1, 2, 0, 4)]
+    for order in (evs, list(reversed(evs))):
+        (rep, count), = aggregate_failed_logons(order, threshold=5, bucket_seconds=300)
+        assert rep.event_id == "e0" and count == 5
