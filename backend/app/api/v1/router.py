@@ -3,7 +3,7 @@ API v1 Router Aggregator.
 """
 
 from fastapi import APIRouter, Depends
-from app.api.v1.endpoints import alerts, health, search, dashboard, auth
+from app.api.v1.endpoints import alerts, health, search, dashboard, auth, reports
 from app.api.deps import get_current_user
 
 api_router = APIRouter(prefix="/api/v1")
@@ -18,4 +18,7 @@ api_router.include_router(
 )
 api_router.include_router(
     dashboard.router, prefix="/dashboard", tags=["dashboard"], dependencies=[Depends(get_current_user)]
+)
+api_router.include_router(
+    reports.router, prefix="/alerts", tags=["reports"], dependencies=[Depends(get_current_user)]
 )

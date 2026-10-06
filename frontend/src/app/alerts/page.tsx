@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type React from "react";
+import { useSearchParams } from "next/navigation";
 import { 
   CircleAlert, 
   Clock3, 
@@ -22,7 +23,9 @@ import {
   Activity,
   Layers,
   Braces,
-  Radar
+  Radar,
+  Download,
+  FileDown
 } from "lucide-react";
 import ContextPanel from "@/components/investigation/ContextPanel";
 import EnrichmentPanel from "@/components/investigation/EnrichmentPanel";
@@ -68,6 +71,7 @@ function ageLabel(v: string) {
 }
 
 export default function AlertsPage() {
+  const searchParams = useSearchParams();
   const [alerts, setAlerts] = useState<AlertRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -93,7 +97,9 @@ export default function AlertsPage() {
       if (!r.ok) throw new Error("Unable to load alert queue");
       const next = (await r.json()) as AlertRecord[];
       setAlerts(next);
+      const requestedAlertId = searchParams.get("alert");
       setSelectedId((prev) => {
+        if (requestedAlertId && next.some((a) => a._id === requestedAlertId)) return requestedAlertId;
         if (prev && next.some((a) => a._id === prev)) return prev;
         return next.length > 0 ? next[0]._id : null;
       });
@@ -102,7 +108,7 @@ export default function AlertsPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, severity, status]);
+  }, [search, searchParams, severity, status]);
 
   useEffect(() => {
     const t = setTimeout(() => void load(), 0);
@@ -344,6 +350,43 @@ function AlertDetail({
   const [note, setNote] = useState("");
   const [jobs, setJobs] = useState<InvestigationJob[]>([]);
   const [message, setMessage] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState<"full" | "executive" | null>(null);
+
+  const downloadReport = async (type: "full" | "executive") => {
+    setDownloading(type);
+    setMessage(null);
+    try {
+      const endpoint =
+        type === "full"
+          ? `/api/v1/alerts/${alert._id}/report/full`
+          : `/api/v1/alerts/${alert._id}/report/executive`;
+      const res = await apiFetch(endpoint);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || "Report generation failed");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const disposition = res.headers.get("content-disposition") || "";
+      const match = disposition.match(/filename="?([^"]+)"?/);
+      a.download = match?.[1] ?? `forensiq_${type}_report.pdf`;
+      a.href = url;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setMessage(
+        type === "full"
+          ? "Full investigation report downloaded successfully."
+          : "Executive summary downloaded successfully."
+      );
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "Failed to generate report");
+    } finally {
+      setDownloading(null);
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -448,7 +491,7 @@ function AlertDetail({
           </div>
 
           {/* Action buttons */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             {(alert.status === "New" || alert.status === "Investigation Failed") && (
               <button
                 onClick={onInvestigate}
@@ -478,6 +521,39 @@ function AlertDetail({
             >
               Suppress
             </button>
+
+            {/* ── Report Export Buttons ── */}
+            <div className="flex items-center gap-1.5 border-l border-[#1E2E48] pl-2">
+              <button
+                id="btn-download-exec-summary"
+                onClick={() => void downloadReport("executive")}
+                disabled={downloading !== null}
+                title="Download one-page executive summary PDF"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-500/10 border border-violet-500/30 text-violet-300 hover:bg-violet-500/20 text-xs font-semibold cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {downloading === "executive" ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <FileDown className="h-3.5 w-3.5" />
+                )}
+                <span>{downloading === "executive" ? "Generating…" : "Exec Summary"}</span>
+              </button>
+
+              <button
+                id="btn-download-full-report"
+                onClick={() => void downloadReport("full")}
+                disabled={downloading !== null}
+                title="Download full investigation report PDF"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/20 text-xs font-semibold cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {downloading === "full" ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Download className="h-3.5 w-3.5" />
+                )}
+                <span>{downloading === "full" ? "Generating…" : "Full Report"}</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>

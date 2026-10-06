@@ -261,6 +261,9 @@ export default function DashboardPage() {
         />
       </section>
 
+      {/* ── SOC Situation Summary ── */}
+      <SituationSummary metrics={metrics} alerts={alerts} />
+
       {/* Main Grid: Triage Queue & Telemetry Health */}
       <section className="grid gap-5 lg:grid-cols-[minmax(0,1.75fr)_minmax(330px,0.95fr)]">
         {/* Triage Queue List */}
@@ -562,3 +565,81 @@ function SignalLine({
   );
 }
 
+function SituationSummary({
+  metrics,
+  alerts,
+}: {
+  metrics: {
+    new_alerts: number;
+    critical_alerts: number;
+    high_priority_alerts: number;
+    open_investigations: number;
+    investigated_alerts: number;
+    ai_confidence_avg: number;
+  } | null;
+  alerts: { severity: string; status: string }[];
+}) {
+  if (!metrics) return null;
+
+  const criticals = metrics.critical_alerts;
+  const highs = metrics.high_priority_alerts;
+  const pending = metrics.new_alerts;
+  const investigations = metrics.open_investigations;
+
+  let posture: "CRITICAL" | "ELEVATED" | "GUARDED" | "NOMINAL" = "NOMINAL";
+  let postureColor = "text-emerald-400";
+  let postureRing = "border-emerald-500/40 bg-emerald-500/[0.05]";
+
+  if (criticals > 0 || highs > 3) {
+    posture = "CRITICAL";
+    postureColor = "text-rose-400";
+    postureRing = "border-rose-500/40 bg-rose-500/[0.05]";
+  } else if (highs > 0 || pending > 5) {
+    posture = "ELEVATED";
+    postureColor = "text-amber-400";
+    postureRing = "border-amber-500/40 bg-amber-500/[0.05]";
+  } else if (pending > 0 || investigations > 0) {
+    posture = "GUARDED";
+    postureColor = "text-sky-400";
+    postureRing = "border-sky-500/40 bg-sky-500/[0.05]";
+  }
+
+  const summaryLines: string[] = [];
+  if (criticals > 0)
+    summaryLines.push(`${criticals} critical alert${criticals > 1 ? "s" : ""} require immediate escalation`);
+  if (highs > 0)
+    summaryLines.push(`${highs} high-severity threat${highs > 1 ? "s" : ""} pending analyst review`);
+  if (investigations > 0)
+    summaryLines.push(`${investigations} AI investigation${investigations > 1 ? "s" : ""} in progress`);
+  if (pending > 0 && criticals === 0 && highs === 0)
+    summaryLines.push(`${pending} new detection${pending > 1 ? "s" : ""} queued for triage`);
+  if (summaryLines.length === 0)
+    summaryLines.push("All alerts triaged \u2014 SOC queue clear. Continuous monitoring active.");
+
+  const postureIndicatorColor = postureColor.replace("text-", "bg-");
+
+  return (
+    <section
+      className={`flex flex-wrap items-center gap-4 rounded-xl border px-5 py-3.5 transition-all ${postureRing}`}
+      aria-label="SOC Situation Summary"
+    >
+      <div className="flex items-center gap-2.5 shrink-0">
+        <span className={`w-2.5 h-2.5 rounded-full animate-pulse ${postureIndicatorColor}`} />
+        <span className="font-mono text-xs font-bold tracking-widest text-slate-400">THREAT POSTURE</span>
+        <span className={`font-mono text-sm font-extrabold tracking-wider ${postureColor}`}>{posture}</span>
+      </div>
+      <div className="h-7 w-px bg-[#1E2E48] shrink-0" />
+      <p className="text-sm text-slate-200 font-medium flex-1 min-w-[200px] leading-snug">
+        {summaryLines.join("  \u00b7  ")}
+      </p>
+      <div className="flex items-center gap-4 font-mono text-xs shrink-0 ml-auto">
+        <span className="text-slate-400">
+          AI Confidence: <strong className="text-cyan-300">{metrics.ai_confidence_avg}%</strong>
+        </span>
+        <span className="text-slate-400">
+          Resolved: <strong className="text-emerald-300">{metrics.investigated_alerts}</strong>
+        </span>
+      </div>
+    </section>
+  );
+}
