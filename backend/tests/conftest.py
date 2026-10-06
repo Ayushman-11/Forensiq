@@ -5,18 +5,29 @@ Pytest Test Fixtures for Async FastAPI Backend Testing.
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
+from mongomock_motor import AsyncMongoMockClient
 from app.main import app
+from app.database.session import get_db
 from app.infrastructure.siem.splunk import SplunkClient
 
 
 @pytest_asyncio.fixture
 async def client():
-    """Async TestClient for FastAPI routes."""
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://testserver",
-    ) as ac:
-        yield ac
+    """Async TestClient for FastAPI routes, isolated from the real MongoDB."""
+    mock_db = AsyncMongoMockClient()["conftest_db"]
+
+    async def _db():
+        return mock_db
+
+    app.dependency_overrides[get_db] = _db
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as ac:
+            yield ac
+    finally:
+        app.dependency_overrides.pop(get_db, None)
 
 
 @pytest.fixture

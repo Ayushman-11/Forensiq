@@ -24,22 +24,22 @@ import { apiFetch } from '@/lib/api';
 const QUICK_QUERIES = [
   {
     label: 'Failed Windows Logins (4625)',
-    query: 'search index=windows EventCode=4625',
+    query: 'search EventCode=4625',
     category: 'Authentication'
   },
   {
     label: 'Process Creation (Sysmon 1)',
-    query: 'search index=windows EventCode=1 | head 50',
+    query: 'search EventCode=1 | head 50',
     category: 'Execution'
   },
   {
     label: 'Network Connections (Sysmon 3)',
-    query: 'search index=windows EventCode=3 | head 50',
+    query: 'search EventCode=3 | head 50',
     category: 'Network'
   },
   {
     label: 'Latest Windows Telemetry',
-    query: 'search index=windows | head 50',
+    query: 'search | head 50',
     category: 'Discovery'
   }
 ];
@@ -69,7 +69,7 @@ type SearchEvent = {
 };
 
 export default function SearchPage() {
-  const [query, setQuery] = useState('search index=windows | head 50');
+  const [query, setQuery] = useState('search | head 50');
   const [timeRange, setTimeRange] = useState('-24h');
   const [events, setEvents] = useState<SearchEvent[]>([]);
   const [loading, setLoading] = useState(false);
@@ -213,7 +213,7 @@ export default function SearchPage() {
             <span className="font-mono text-xs text-[var(--text-muted)]">&gt;_</span>
             <input
               type="text"
-              placeholder='search index=windows EventCode=4625'
+              placeholder='search EventCode=4625'
               className="w-full bg-transparent border-none outline-none font-mono text-xs text-[var(--text-primary)]"
               value={query}
               onChange={(e) => setQuery(e.target.value)}

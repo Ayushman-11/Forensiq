@@ -17,7 +17,7 @@ router = APIRouter()
 
 
 class SearchRequest(BaseModel):
-    query: str = Field(..., description="SPL query or keyword search string", json_schema_extra={"example": 'source="WinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=1'})
+    query: str = Field(..., max_length=4000, description="SPL query or keyword search string", json_schema_extra={"example": 'source="WinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=1'})
     earliest_time: str = Field(default="-24h", description="Earliest time bounds")
     latest_time: str = Field(default="now", description="Latest time bounds")
     limit: int = Field(default=50, ge=1, le=1000, description="Max results limit")
@@ -45,7 +45,7 @@ async def execute_search(
         validate_time_range(req.earliest_time, req.latest_time, settings.SEARCH_MAX_RANGE_DAYS)
         safe_query = validate_search(
             req.query,
-            allowed_indexes=settings.SPLUNK_ALLOWED_INDEXES,
+            allowed_indexes={*settings.SPLUNK_ALLOWED_INDEXES, settings.SPLUNK_DETECTION_INDEX},
             default_index=settings.SPLUNK_DETECTION_INDEX,
         )
     except SPLRejected as exc:
