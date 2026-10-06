@@ -5,7 +5,7 @@ async def record_audit(db, user: dict | None, action: str, entity_type: str, ent
     await db["audit_logs"].insert_one({
         "_id": str(uuid4()),
         "org_id": (user or {}).get("org_id", "default"),
-        "actor_id": str((user or {}).get("_id", "system")),
+        "actor_id": str((user or {}).get("id") or (user or {}).get("_id") or "system"),
         "actor_email": (user or {}).get("email", "system"),
         "action": action,
         "entity_type": entity_type,
