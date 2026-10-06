@@ -1,0 +1,34 @@
+# Noise suppression policy. Everything suppressed is counted per rule in
+# ingestion_runs.suppressed, so the policy is auditable. Keep entries narrow.
+
+# Registered domains whose subdomains are never worth a threat-intel lookup
+# or a DNS detection. Do not add file-hosting or paste domains here.
+benign_domains:
+  - microsoft.com
+  - windowsupdate.com
+  - windows.com
+  - msftconnecttest.com
+  - office.com
+  - office365.com
+  - live.com
+  - digicert.com
+  - symcd.com
+
+suppress:
+  # Machine accounts (NAME$) making explicit-credential logons is routine
+  # service behavior (service SIDs, virtual machine accounts).
+  - name: machine_account_explicit_logon
+    event_code: "4648"
+    where:
+      subject_user_endswith: "$"
+
+  - name: benign_dns_lookup
+    event_code: "22"
+    where:
+      domain_benign: true
+
+  # Telemetry shipping from the lab Splunk forwarder.
+  - name: splunk_forwarder_traffic
+    event_code: "3"
+    where:
+      process_in: [splunkd.exe, splunk-winevtlog.exe]
