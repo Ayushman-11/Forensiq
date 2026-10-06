@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import AppLayout from "@/components/AppLayout";
 import { AuthProvider } from "@/context/AuthContext";
+import { ThemeProvider } from "@/context/ThemeContext";
 import AuthGuard from "@/components/AuthGuard";
 import "./globals.css";
 
@@ -18,8 +19,8 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Forensiq - SOC Dashboard",
-  description: "AI Security Ops",
+  title: "FORENSIQ — AI Security Operations Platform",
+  description: "Real-time threat detection, investigation and response.",
 };
 
 export default function RootLayout({
@@ -31,15 +32,16 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${inter.variable} ${jetbrainsMono.variable} dark h-full antialiased`}
+      suppressHydrationWarning
     >
-      <body className="min-h-screen overflow-x-hidden selection:bg-cyan-500/30 selection:text-cyan-200 bg-[#070B12] text-slate-100 flex font-sans">
-        <AuthProvider>
-          <AuthGuard>
-            <AppLayout>
-              {children}
-            </AppLayout>
-          </AuthGuard>
-        </AuthProvider>
+      <body className="min-h-screen overflow-x-hidden bg-[var(--bg-app)] text-[var(--text-primary)] flex font-sans">
+        <ThemeProvider>
+          <AuthProvider>
+            <AuthGuard>
+              <AppLayout>{children}</AppLayout>
+            </AuthGuard>
+          </AuthProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

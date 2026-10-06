@@ -32,11 +32,13 @@ async def _issue_tokens(db: AsyncIOMotorDatabase, user_id: str, email: str, role
 @router.post("/login", response_model=TokenResponse)
 async def login(req: LoginRequest, db: AsyncIOMotorDatabase = Depends(get_db)):
     """Authenticates a user by email/password and issues an access + refresh token pair."""
-    user = await db["users"].find_one({"email": req.email})
+    email = req.email.strip().lower()
+    user = await db["users"].find_one({"email": email})
     if not user or not user.get("is_active", False) or not verify_password(req.password, user["password_hash"]):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
     return await _issue_tokens(db, user_id=str(user["_id"]), email=user["email"], role=user["role"])
+
 
 
 @router.post("/refresh", response_model=TokenResponse)
