@@ -4,6 +4,7 @@ Alert Ingestion and Listing endpoints.
 
 from typing import List, Dict, Any, Literal, Optional
 from datetime import datetime, timedelta, timezone
+import re
 import uuid
 import asyncio
 import json
@@ -31,29 +32,39 @@ class DispositionRequest(BaseModel):
 class NoteRequest(BaseModel):
     content: str = Field(min_length=1, max_length=5000)
 
+VALID_SEVERITIES = {"critical", "high", "medium", "low"}
+VALID_STATUSES = {
+    s.lower(): s
+    for s in ("New", "Investigating", "Investigated", "Investigation Failed", "Closed", "Escalated", "Suppressed")
+}
+
 @router.get("/", response_model=List[dict])
 async def list_alerts(
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=200),
     severity: str = Query(None, description="Filter by severity"),
     status: str = Query(None, description="Filter by status"),
-    search: str = Query(None, description="Search in title or host"),
+    search: str = Query(None, max_length=100, description="Search in title or host"),
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
     """Fetches recent alerts from MongoDB with optional filtering."""
+    conditions = []
+    if severity and severity.lower() != "all":
+        if severity.lower() not in VALID_SEVERITIES:
+            raise HTTPException(status_code=422, detail=f"severity must be one of {sorted(VALID_SEVERITIES)} or 'all'")
+        conditions.append({"severity": severity.lower()})
+    if status and status.lower() != "all":
+        canonical = VALID_STATUSES.get(status.lower())
+        if canonical is None:
+            raise HTTPException(status_code=422, detail=f"status must be one of {sorted(VALID_STATUSES.values())} or 'all'")
+        conditions.append({"status": canonical})
+    if search:
+        pattern = re.escape(search)
+        conditions.append({"$or": [
+            {"title": {"$regex": pattern, "$options": "i"}},
+            {"host": {"$regex": pattern, "$options": "i"}},
+        ]})
     try:
-        conditions = []
-        if severity and severity.lower() != "all":
-            conditions.append({"severity": severity.lower()})
-        if status and status.lower() != "all":
-            conditions.append({"status": status})
-            
-        if search:
-            conditions.append({"$or": [
-                {"title": {"$regex": search, "$options": "i"}},
-                {"host": {"$regex": search, "$options": "i"}}
-            ]})
-            
         alerts = []
         cursor = db["alerts"].find(scoped_query(user, *conditions), {"raw_events": 0}).sort("created_at", -1).limit(limit)
         async for document in cursor:
@@ -68,11 +79,11 @@ async def list_alerts(
         raise internal_error("alerts_list_failed", e)
 
 @router.get("/stats/by-rule")
-async def alerts_by_rule(db: AsyncIOMotorDatabase = Depends(get_db)):
+async def alerts_by_rule(db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
     """Returns count of alerts grouped by rule_name."""
     try:
         pipeline = [
-            {"$match": {"rule_name": {"$exists": True, "$ne": None}}},
+            {"$match": {"$and": [tenant_filter(user), {"rule_name": {"$exists": True, "$ne": None}}]}},
             {"$group": {"_id": "$rule_name", "count": {"$sum": 1}}},
             {"$sort": {"count": -1}}
         ]
@@ -85,12 +96,12 @@ async def alerts_by_rule(db: AsyncIOMotorDatabase = Depends(get_db)):
         return []
 
 @router.get("/stats/timeline")
-async def alerts_timeline(db: AsyncIOMotorDatabase = Depends(get_db)):
+async def alerts_timeline(db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
     """Returns alert counts grouped by hour for the last 24 hours."""
     try:
         twenty_four_hours_ago = datetime.utcnow() - timedelta(hours=24)
         pipeline = [
-            {"$match": {"created_at": {"$gte": twenty_four_hours_ago}}},
+            {"$match": {"$and": [tenant_filter(user), {"created_at": {"$gte": twenty_four_hours_ago}}]}},
             {"$group": {
                 "_id": {
                     "year": {"$year": "$created_at"},
@@ -517,10 +528,10 @@ def _sanitize_job(job: dict) -> dict:
 
 
 @router.get("/investigation/{job_id}", response_model=dict)
-async def get_investigation_status(job_id: str, db: AsyncIOMotorDatabase = Depends(get_db)):
+async def get_investigation_status(job_id: str, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
     """Polls the status of an ongoing investigation."""
     try:
-        job = await db["investigation_jobs"].find_one({"_id": job_id})
+        job = await db["investigation_jobs"].find_one(scoped_query(user, {"_id": job_id}))
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
             
