@@ -2,6 +2,8 @@
 Authentication endpoints: login, refresh, logout.
 """
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -52,7 +54,9 @@ async def login(req: LoginRequest, request: Request, db: AsyncIOMotorDatabase = 
         )
 
     user = await db["users"].find_one({"email": email})
-    password_ok = verify_password(req.password, user["password_hash"] if user else _DUMMY_HASH)
+    hash_to_check = user["password_hash"] if user else _DUMMY_HASH
+    # bcrypt is CPU-bound (~250 ms): keep it off the event loop. Exactly one verification per attempt.
+    password_ok = await asyncio.to_thread(verify_password, req.password, hash_to_check)
     if not user or not user.get("is_active", False) or not password_ok:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
