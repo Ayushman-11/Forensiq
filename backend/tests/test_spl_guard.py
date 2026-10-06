@@ -1,6 +1,13 @@
 import pytest
 
-from app.services.spl_guard import ALLOWED_COMMANDS, SPLRejected, validate_search, validate_time_range
+from app.services.spl_guard import (
+    ALLOWED_COMMANDS,
+    SPLRejected,
+    _INDEX_RE,
+    _split_pipeline,
+    validate_search,
+    validate_time_range,
+)
 
 KW = dict(allowed_indexes=["windows"], default_index="windows")
 
@@ -16,8 +23,8 @@ def test_adds_search_prefix_and_default_index():
 
 def test_explicit_allowed_index_is_kept_and_not_duplicated():
     out = ok('search index="windows" EventCode=3 | stats count by host | sort -count')
-    assert out.count("index=") == 1 and out.startswith("search ")
-    assert ok("index=WINDOWS | head 5").startswith("search index=WINDOWS")
+    assert out.startswith('search index=windows index="windows" EventCode=3')
+    assert ok("index=WINDOWS | head 5").startswith("search index=windows index=WINDOWS")
 
 
 @pytest.mark.parametrize("cmd", [
@@ -92,14 +99,30 @@ def test_tab_newline_cr_still_accepted():
 
 
 @pytest.mark.parametrize("q", [
-    "EventCode=1", "search EventCode=1 | head 5", "index=windows foo", 'index="windows" a=b | stats count',
-    "foo OR bar", "foo OR index=windows", "NOT index=windows foo", "not foo", "(a=1 OR b=2) c=3",
-    "((a=1))", 'x="a OR b"', "a=1 AND (b=2 OR NOT c=3) | sort -count", "index=WINDOWS OR foo",
-    "EventCode=1 | where (a=1 OR b=2)", "foo (bar OR index=windows) | head 1",
+    r"a \(b) OR (c \)", r"foo\)", r"\(x",
 ])
+def test_escaped_parentheses_rejected(q):
+    with pytest.raises(SPLRejected):
+        ok(q)
+
+
+SCOPED_INPUTS = [
+    "EventCode=1", "search EventCode=1 | head 5", "index=windows foo", 'index="windows" a=b | stats count',
+    '"index=windows" foo', "foo=index=windows", "foo.index=windows bar", "host:index=windows",
+    "foo OR bar", "foo OR index=windows", "NOT index=windows foo", "NOT index=windows", "not foo",
+    "(a OR b) c", "(a=1 OR b=2) c=3", "((a=1))", "x IN (1,2)", "index=windows", "index=WINDOWS OR foo",
+    'x="a OR b"', 'CommandLine="a | b [c]" | head 5', "a=1 AND (b=2 OR NOT c=3) | sort -count",
+    "EventCode=1 | where (a=1 OR b=2)", "foo (bar OR index=windows) | head 1",
+    "search", "EventCode=4688 | stats count by host | sort -count | head 10",
+    "EventCode=1\t| head 5\n", 'a="x" b="y z" | table a b',
+]
+
+
+@pytest.mark.parametrize("q", SCOPED_INPUTS)
 def test_every_accepted_query_is_scoped_to_allowed_index(q):
     out = ok(q)
-    assert out.replace('"', "").lower().startswith("search index=windows")
-    first = out.split(" | ")[0]
-    values = {v.lower() for _, v in __import__("re").findall(r'\bindex\s*(!=|=)\s*"?([^\s")|,]+)', first)}
+    assert out.startswith("search index=windows ") or out == "search index=windows"
+    first = _split_pipeline(out)[0]
+    assert first.startswith("search index=windows")
+    values = {v.lower() for _, v in _INDEX_RE.findall(first)}
     assert values == {"windows"}

@@ -85,8 +85,11 @@ def validate_search(query: str, *, allowed_indexes: Iterable[str], default_index
             raise SPLRejected(f"Command '{match.group(1).lower()}' is not allowed")
 
     for part in [body, *segments[1:]]:
+        blanked = _QUOTED_RE.sub('""', part)
+        if "\\(" in blanked or "\\)" in blanked:
+            raise SPLRejected("Escaped parentheses are not allowed")
         depth = 0
-        for ch in _QUOTED_RE.sub('""', part):
+        for ch in blanked:
             if ch == "(":
                 depth += 1
             elif ch == ")":
@@ -111,8 +114,8 @@ def validate_search(query: str, *, allowed_indexes: Iterable[str], default_index
     unq_body = _QUOTED_RE.sub('""', body)
     if _BOOLEAN_RE.search(unq_body) or "(" in unq_body or ")" in unq_body:
         body = f"index={default_index} ({body.strip()})"
-    elif not _INDEX_RE.search(body):
-        body = f"index={default_index} {body}".strip()
+    else:
+        body = f"index={default_index} {body.strip()}".strip()
     return " | ".join(["search " + body.strip(), *[s.strip() for s in segments[1:]]])
 
 
