@@ -3,7 +3,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.database.session import get_db
 from app.models.alert import DashboardMetrics
 from app.api.deps import get_current_user
-from app.core.tenancy import scoped_query, tenant_filter
+from app.core.tenancy import scoped_query, tenant_filter, tenant_id
 
 router = APIRouter()
 
@@ -26,7 +26,11 @@ async def get_dashboard_metrics(db: AsyncIOMotorDatabase = Depends(get_db), user
     else:
         ai_confidence_avg = 0
         
-    ingestion_state = await db["ingestion_state"].find_one({"_id": "last_ingested"})
+    org = tenant_id(user)
+    ingestion_state = await db["ingestion_state"].find_one({"_id": f"cursor:{org}:splunk"})
+    if not ingestion_state and org == "default":
+        # Legacy global doc predates tenancy and belongs to the default tenant only.
+        ingestion_state = await db["ingestion_state"].find_one({"_id": "last_ingested"})
     last_ingested_at = ingestion_state.get("ts") if ingestion_state else None
 
     return DashboardMetrics(
