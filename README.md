@@ -179,6 +179,21 @@ Forensiq ingests real-time alerts from Splunk and can also deploy dashboards bac
 
 ---
 
+## 🔄 Ingestion pipeline
+
+The backend poller (single instance, guarded by a Mongo lease) turns Splunk rows into alerts in a fixed flow:
+
+raw Splunk row -> `CanonicalEvent` (normalization) -> noise suppression -> detection rules -> dedup -> idempotent upsert into `alerts`.
+
+- **Cursor and pagination**: each cycle resumes from a stored cursor with a small overlap (`INGEST_OVERLAP_SECONDS`) and pages through results (`INGEST_PAGE_SIZE`, `INGEST_MAX_PAGES`); the first run looks back `INGEST_INITIAL_LOOKBACK_HOURS`.
+- **Noise policy**: `backend/config/noise.yaml` (path set by `NOISE_CONFIG_PATH`) lists what is suppressed as known-benign. Suppression is never silent: every suppressed event is counted per reason in the cycle's `ingestion_runs` document.
+- **Dedup**: repeated detections collapse per `INGEST_DEDUP_BUCKET_SECONDS`; failed-logon bursts raise an alert at `BRUTE_FORCE_THRESHOLD` per bucket and source.
+- **Other settings**: `INVESTIGATION_CONCURRENCY` bounds concurrent auto-investigations; `POLLER_LEASE_TTL_SECONDS` is the single-poller lease TTL.
+- **Health endpoint**: `GET /api/v1/dashboard/ingestion-health` returns the caller-tenant's last run, up to 20 recent runs (fetched, suppressed by reason, new/seen alerts, truncation, lag, errors) and aggregate totals. Run records expire after 30 days.
+- **Regenerating test fixtures**: from `backend/`, run `./venv/Scripts/python.exe scripts/export_fixture_rows.py` to re-export real rows per EventCode from the lab dump into `tests/fixtures/splunk_rows.json`.
+
+---
+
 ## 📖 Additional Documentation
 For deeper technical specifications, refer to the following:
 - [Backend Documentation](./backend/README.md)

@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.core.logging import setup_logging, logger
 from app.api.v1.router import api_router
+from app.database.indexes import ensure_indexes
 
 
 from app.database.session import connect_to_mongo, close_mongo_connection
@@ -39,6 +40,7 @@ async def lifespan(app: FastAPI):
         await db["ioc_cache"].create_index(
             "cached_at", expireAfterSeconds=int(settings.IOC_CACHE_TTL_HOURS * 3600)
         )
+        await ensure_indexes(db)
 
     global poller
     if db_config.client:
