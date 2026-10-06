@@ -6,18 +6,24 @@ import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   LayoutDashboard, 
-  Bell,
+  Bell, 
+  Search as SearchIcon, 
+  Sparkles, 
   Terminal, 
-  Search,
-  ChevronLeft,
+  FileText, 
+  Settings, 
+  ShieldAlert, 
+  Sun, 
+  Moon, 
+  LogOut, 
+  ChevronLeft, 
   ChevronRight,
-  UserCircle,
-  Shield,
-  Activity,
-  LogOut,
-  ChevronRight as ChevronIcon
+  Database,
+  User,
+  Activity
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
+import { useTheme } from "@/context/ThemeContext";
 import { roleLabel } from "@/lib/roles";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
@@ -25,6 +31,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const pathname = usePathname();
   const { user, logout } = useAuth();
+  const { theme, toggleTheme } = useTheme();
 
   if (pathname === "/login") {
     return <>{children}</>;
@@ -32,219 +39,182 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   const navItems = [
     { href: "/", icon: LayoutDashboard, label: "Dashboard", badge: null },
-    { href: "/alerts", icon: Bell, label: "Alerts Queue", badge: null },
-    { href: "/search", icon: Terminal, label: "Raw Logs (SPL)", badge: "SPL" },
+    { href: "/alerts", icon: Bell, label: "Alerts", badge: "3" },
+    { href: "/investigations", icon: ShieldAlert, label: "Investigations", badge: null },
+    { href: "/ai-extraction", icon: Sparkles, label: "AI Extraction", badge: "AI" },
+    { href: "/raw-logs", icon: Terminal, label: "Raw Logs", badge: "SPL" },
+    { href: "/reports", icon: FileText, label: "Reports", badge: null },
+    { href: "/admin", icon: Settings, label: "Administration", badge: null },
   ];
 
+  const userEmail = user?.email || "admin@forensiq.ai";
+  const userRole = user ? roleLabel(user.role) : "SPLUNK ADMIN";
+
   return (
-    <>
-      {/* Side Navigation Bar */}
+    <div className="min-h-screen flex w-full bg-[var(--bg-app)] text-[var(--text-primary)]">
+      {/* Sidebar */}
       <motion.aside 
         initial={false}
-        animate={{ width: isSidebarMinimized ? 68 : 248 }}
-        className="fixed left-0 top-0 h-full bg-[#0A101D] border-r border-[#1C2C44] flex flex-col z-50 transition-all duration-300 overflow-hidden shadow-2xl"
+        animate={{ width: isSidebarMinimized ? 64 : 240 }}
+        className="fixed left-0 top-0 h-full bg-[var(--sidebar-bg)] border-r border-[var(--sidebar-border)] flex flex-col z-50 transition-all duration-200 overflow-hidden"
       >
-        {/* Brand Header */}
-        <div className={`flex items-center gap-3 px-4 py-5 border-b border-[#16243A] ${isSidebarMinimized ? "justify-center px-0" : ""}`}>
-          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-cyan-500 via-sky-600 to-indigo-700 p-0.5 shadow-lg shadow-cyan-500/20 shrink-0 flex items-center justify-center">
-            <div className="w-full h-full bg-[#0A101D] rounded-[7px] flex items-center justify-center">
-              <Shield className="w-4 h-4 text-cyan-400" />
+        {/* Top Brand Header */}
+        <div className="flex items-center gap-2.5 px-4 h-14 border-b border-[var(--sidebar-border)] shrink-0">
+          <div className="w-6 h-6 rounded bg-[var(--text-primary)] text-[var(--bg-app)] flex items-center justify-center font-bold text-xs shrink-0">
+            F
+          </div>
+          {!isSidebarMinimized && (
+            <div className="flex flex-col whitespace-nowrap overflow-hidden">
+              <span className="text-xs font-bold tracking-tight text-[var(--text-primary)] leading-tight">
+                FORENSIQ
+              </span>
+              <span className="text-[9px] font-mono font-medium text-[var(--text-muted)] tracking-wider uppercase">
+                AI SECURITY OPS
+              </span>
             </div>
-          </div>
-          <AnimatePresence>
-            {!isSidebarMinimized && (
-              <motion.div 
-                initial={{ opacity: 0, x: -8 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -8 }}
-                className="whitespace-nowrap overflow-hidden flex flex-col"
-              >
-                <div className="flex items-center gap-1.5">
-                  <h1 className="text-base font-extrabold text-white tracking-tight leading-none">
-                    FORENSIQ
-                  </h1>
-                  <span className="text-[9px] px-1 py-0.2 rounded bg-cyan-500/20 text-cyan-300 font-mono font-bold">SOC</span>
-                </div>
-                <p className="text-[11px] text-slate-400 font-semibold mt-1 tracking-wider uppercase">
-                  AI Security Ops
-                </p>
-              </motion.div>
-            )}
-          </AnimatePresence>
+          )}
         </div>
-        
-        {/* Navigation Links */}
-        <nav className="flex flex-col gap-1.5 p-3 overflow-y-auto overflow-x-hidden flex-1">
-          <div className={`text-[10px] font-bold uppercase tracking-wider text-slate-400 px-3 py-1.5 ${isSidebarMinimized ? "hidden" : "block"}`}>
-            Navigation
-          </div>
+
+        {/* Navigation Items */}
+        <nav className="flex-1 py-3 px-2 flex flex-col gap-0.5 overflow-y-auto">
           {navItems.map((item) => {
-            const isActive = pathname === item.href;
+            // Match exactly or subpaths
+            const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
             return (
-              <Link 
+              <Link
                 key={item.label}
-                href={item.href} 
-                className={`relative rounded-lg py-2.5 flex items-center transition-all group overflow-hidden ${
-                  isSidebarMinimized ? "justify-center px-0" : "px-3.5 gap-3"
-                } ${
-                  isActive 
-                    ? "bg-gradient-to-r from-cyan-500/20 to-sky-500/10 text-white font-semibold border border-cyan-500/30 shadow-md shadow-cyan-950/40" 
-                    : "text-slate-300 hover:text-white hover:bg-[#131F33] border border-transparent"
-                }`}
+                href={item.href}
                 title={isSidebarMinimized ? item.label : undefined}
+                className={`relative flex items-center h-8 rounded px-2.5 text-xs font-medium transition-colors group ${
+                  isActive
+                    ? "bg-[var(--sidebar-active-bg)] text-[var(--text-primary)] font-semibold"
+                    : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)]"
+                }`}
               >
                 {isActive && (
-                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r bg-cyan-400 shadow-[0_0_8px_#22d3ee]" />
+                  <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-[var(--text-primary)]" />
                 )}
-                <item.icon className={`w-4 h-4 shrink-0 transition-colors ${
-                  isActive ? "text-cyan-400" : "text-slate-400 group-hover:text-cyan-300"
-                }`} />
+
+                <item.icon className={`w-4 h-4 shrink-0 mr-2.5 ${isActive ? "text-[var(--text-primary)]" : "text-[var(--text-muted)] group-hover:text-[var(--text-primary)]"}`} />
                 
-                <AnimatePresence>
-                  {!isSidebarMinimized && (
-                    <motion.div 
-                      initial={{ opacity: 0, width: 0 }}
-                      animate={{ opacity: 1, width: 'auto' }}
-                      exit={{ opacity: 0, width: 0 }}
-                      className="flex items-center justify-between flex-1 whitespace-nowrap overflow-hidden"
-                    >
-                      <span className={`text-[13px] ${isActive ? "text-white font-bold" : "text-slate-200 font-medium"}`}>
-                        {item.label}
+                {!isSidebarMinimized && (
+                  <div className="flex items-center justify-between flex-1 truncate">
+                    <span className="truncate">{item.label}</span>
+                    {item.badge && (
+                      <span className={`ml-auto font-mono text-[9px] px-1.5 py-0.2 rounded border font-semibold ${
+                        item.badge === "3" 
+                          ? "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30"
+                          : "bg-[var(--surface-elevated)] text-[var(--text-muted)] border-[var(--border-color)]"
+                      }`}>
+                        {item.badge}
                       </span>
-                      {item.badge && (
-                        <span className="font-mono text-[9px] px-1.5 py-0.5 rounded bg-[#1A2A42] text-cyan-300 border border-[#2B4063]">
-                          {item.badge}
-                        </span>
-                      )}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+                    )}
+                  </div>
+                )}
               </Link>
             );
           })}
         </nav>
-        
-        {/* Toggle Collapse Button */}
-        <div className="p-3 border-t border-[#16243A]">
-          <button 
+
+        {/* Sidebar Footer - User Profile */}
+        <div className="p-2 border-t border-[var(--sidebar-border)] flex flex-col gap-1 shrink-0">
+          <div className="flex items-center justify-between px-2 py-1.5 rounded hover:bg-[var(--surface-hover)] transition-colors">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-6 h-6 rounded-full bg-[var(--surface-elevated)] border border-[var(--border-color)] flex items-center justify-center text-[10px] font-bold text-[var(--text-primary)] shrink-0">
+                {userEmail.charAt(0).toUpperCase()}
+              </div>
+              {!isSidebarMinimized && (
+                <div className="flex flex-col min-w-0">
+                  <span className="text-xs font-medium text-[var(--text-primary)] truncate">
+                    {userEmail}
+                  </span>
+                  <span className="text-[9px] font-mono text-[var(--text-muted)] uppercase tracking-wider font-semibold truncate">
+                    {userRole}
+                  </span>
+                </div>
+              )}
+            </div>
+            {!isSidebarMinimized && (
+              <button
+                onClick={logout}
+                title="Sign Out"
+                className="text-[var(--text-muted)] hover:text-[#EF4444] transition-colors p-1"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          <button
             onClick={() => setIsSidebarMinimized(!isSidebarMinimized)}
-            className="w-full py-2 px-2.5 rounded-lg border border-[#1E2E48] bg-[#0E1726] text-slate-400 hover:text-white hover:border-cyan-500/40 hover:bg-[#152238] transition-all flex justify-center items-center cursor-pointer shadow-sm"
+            className="w-full flex items-center justify-center h-7 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)] transition-colors text-xs font-medium"
             title={isSidebarMinimized ? "Expand sidebar" : "Collapse sidebar"}
           >
-            {isSidebarMinimized ? <ChevronRight className="w-4 h-4" /> : <div className="flex items-center gap-2 text-xs font-semibold text-slate-300"><ChevronLeft className="w-4 h-4" /><span>Collapse Sidebar</span></div>}
+            {isSidebarMinimized ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronLeft className="w-3.5 h-3.5" />}
           </button>
         </div>
       </motion.aside>
 
-      {/* Main Content Area */}
-      <motion.div 
-        animate={{ marginLeft: isSidebarMinimized ? 68 : 248 }}
-        className="flex-1 flex flex-col min-h-screen transition-all duration-300 bg-[#070B12]"
+      {/* Main Container */}
+      <motion.div
+        animate={{ marginLeft: isSidebarMinimized ? 64 : 240 }}
+        className="flex-1 flex flex-col min-h-screen bg-[var(--bg-app)] transition-all duration-200"
       >
         {/* Top Header */}
-        <header className="sticky top-0 h-[60px] z-40 bg-[#0A101D]/90 backdrop-blur-md border-b border-[#1C2C44] flex justify-between items-center px-6 w-full shadow-sm">
+        <header className="sticky top-0 h-14 z-40 bg-[var(--header-bg)] backdrop-blur border-b border-[var(--border-color)] flex items-center justify-between px-6">
           {/* Global Search Bar */}
-          <div className="flex items-center gap-3 flex-1 max-w-lg">
-            <Link 
-              href="/search" 
-              className="flex items-center justify-between w-full h-9 px-3.5 rounded-lg bg-[#0E1726] border border-[#1E2E48] hover:border-cyan-500/50 hover:bg-[#131F33] text-slate-300 text-xs font-medium transition-all group"
+          <div className="flex items-center gap-2 max-w-md flex-1">
+            <Link
+              href="/search"
+              className="flex items-center gap-2.5 w-full h-8 px-3 rounded-md bg-[var(--surface-secondary)] border border-[var(--border-color)] text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:border-[var(--border-active)] transition-colors"
             >
-              <div className="flex items-center gap-2.5">
-                <Search className="w-4 h-4 text-cyan-400 group-hover:text-cyan-300 transition-colors" />
-                <span className="text-slate-300">Search telemetry, indicators, hosts...</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <kbd className="hidden sm:inline-block px-1.5 py-0.5 rounded bg-[#16243A] border border-[#2B3E5E] text-[10px] font-mono text-slate-400 font-semibold">
-                  Ctrl K
-                </kbd>
-                <span className="rounded bg-cyan-950/80 border border-cyan-800/50 px-1.5 py-0.5 font-mono text-[9px] text-cyan-300 font-bold">
-                  SPL
-                </span>
-              </div>
+              <SearchIcon className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">Search telemetry (IP, hash, hostname, user, SPL...)</span>
+              <kbd className="ml-auto text-[10px] font-mono bg-[var(--surface-elevated)] border border-[var(--border-color)] px-1.5 py-0.2 rounded text-[var(--text-muted)]">
+                Ctrl K
+              </kbd>
             </Link>
           </div>
 
-          {/* Right Header Status & Profile */}
+          {/* Header Right Status & Actions */}
           <div className="flex items-center gap-4">
-            {/* Live Status indicator */}
-            <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#0E1829] border border-[#1C2E4A]">
+            {/* Splunk Status */}
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[var(--surface-secondary)] border border-[var(--border-color)] text-[11px] font-mono font-medium">
               <span className="dot-live" />
-              <span className="text-[11px] font-mono font-semibold text-emerald-400 tracking-wide">
-                SPLUNK LIVE
-              </span>
+              <span className="text-[var(--text-secondary)]">Splunk Connected</span>
             </div>
 
-            {/* User Profile */}
-            <div className="relative">
-              <button
-                aria-label="Account"
-                onClick={() => setIsUserMenuOpen((v) => !v)}
-                className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg bg-[#0E1726] border border-[#1E2E48] hover:border-cyan-500/40 hover:bg-[#131F33] transition-all cursor-pointer"
-              >
-                <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-cyan-600 to-indigo-600 flex items-center justify-center text-white text-[11px] font-bold">
-                  {user?.email?.charAt(0).toUpperCase() || "A"}
-                </div>
-                <div className="hidden sm:flex flex-col text-left">
-                  <span className="text-xs font-semibold text-slate-200 leading-tight">
-                    {user?.email?.split('@')[0] || "Analyst"}
-                  </span>
-                  <span className="text-[9px] font-mono font-bold text-cyan-400 uppercase tracking-wider">
-                    {user ? roleLabel(user.role) : "SOC Team"}
-                  </span>
-                </div>
-              </button>
+            {/* Notifications Icon */}
+            <Link 
+              href="/alerts" 
+              className="relative p-1.5 rounded hover:bg-[var(--surface-hover)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+              title="Notifications"
+            >
+              <Bell className="w-4 h-4" />
+              <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-[#EF4444]" />
+            </Link>
 
-              <AnimatePresence>
-                {isUserMenuOpen && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -6, scale: 0.98 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: -6, scale: 0.98 }}
-                    className="absolute right-0 top-12 w-64 bg-[#0E1626] border border-[#23354E] rounded-xl shadow-2xl p-3 flex flex-col gap-2.5 z-50 backdrop-blur-xl"
-                  >
-                    <div className="flex flex-col gap-1 pb-2.5 border-b border-[#1E2E48] px-1">
-                      <span className="text-xs font-bold text-white truncate">
-                        {user?.email}
-                      </span>
-                      <span className="text-[10px] text-cyan-400 uppercase tracking-widest font-mono font-bold">
-                        {user ? roleLabel(user.role) : ""}
-                      </span>
-                    </div>
+            {/* Theme Switcher Toggle */}
+            <button
+              onClick={toggleTheme}
+              className="p-1.5 rounded hover:bg-[var(--surface-hover)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+              title={`Switch to ${theme === "dark" ? "Light" : "Dark"} Mode`}
+            >
+              {theme === "dark" ? <Sun className="w-4 h-4 text-[#F59E0B]" /> : <Moon className="w-4 h-4 text-[var(--text-primary)]" />}
+            </button>
 
-                    <button
-                      onClick={() => {
-                        setIsUserMenuOpen(false);
-                        logout();
-                      }}
-                      className="flex items-center gap-2 text-left text-xs font-semibold text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-lg px-2.5 py-2 transition-colors cursor-pointer"
-                    >
-                      <LogOut className="w-4 h-4" />
-                      Sign Out
-                    </button>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+            {/* User Avatar */}
+            <div className="w-7 h-7 rounded-full bg-[var(--surface-elevated)] border border-[var(--border-color)] flex items-center justify-center text-xs font-bold text-[var(--text-primary)] cursor-pointer">
+              {userEmail.charAt(0).toUpperCase()}
             </div>
           </div>
         </header>
 
-        {/* Subheader / Breadcrumbs */}
-        <div className="bg-[#090F1C] px-6 py-2.5 border-b border-[#16243A] flex items-center gap-2 text-xs font-medium text-slate-400">
-          <Link href="/" className="text-slate-400 hover:text-cyan-400 transition-colors font-semibold uppercase tracking-wider text-[11px]">
-            SOC Console
-          </Link>
-          <ChevronIcon className="w-3.5 h-3.5 text-slate-600" />
-          <span className="text-slate-200 font-bold uppercase tracking-wider text-[11px]">
-            {pathname === "/" ? "Dashboard" : pathname.replace("/", "").toUpperCase()}
-          </span>
-        </div>
-        
-        {/* Main Content Body */}
-        <main className="flex-1 p-6 relative z-20">
+        {/* Main Content Area */}
+        <main className="flex-1 p-6">
           {children}
         </main>
       </motion.div>
-    </>
+    </div>
   );
 }
-
