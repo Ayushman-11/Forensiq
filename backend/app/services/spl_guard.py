@@ -27,7 +27,7 @@ class SPLRejected(ValueError):
 
 
 def _split_pipeline(query: str) -> list[str]:
-    """Split on `|` outside double quotes; reject subsearch brackets and macro backticks outside quotes."""
+    """Split on `|` outside double quotes; reject subsearch brackets, macro backticks and backslashes outside quotes."""
     segments: list[str] = []
     current: list[str] = []
     in_quote = False
@@ -45,6 +45,9 @@ def _split_pipeline(query: str) -> list[str]:
         if ch == '"':
             in_quote = True
             current.append(ch)
+        elif ch == "\\":
+            # Splunk treats an escaped quote/pipe outside quotes as a literal, which desyncs this scanner.
+            raise SPLRejected("Backslashes are only allowed inside quoted strings")
         elif ch in "[]`":
             raise SPLRejected("Subsearches and macros are not allowed")
         elif ch == "|":

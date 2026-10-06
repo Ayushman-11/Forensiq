@@ -126,3 +126,21 @@ def test_every_accepted_query_is_scoped_to_allowed_index(q):
     assert first.startswith("search index=windows")
     values = {v.lower() for _, v in _INDEX_RE.findall(first)}
     assert values == {"windows"}
+
+
+@pytest.mark.parametrize("q", [
+    r'foo \" | outputlookup evil.csv | eval a="x\" "',
+    r'foo \" | sendemail to=a@b.c | eval a="x\" "',
+    r'foo \" | map search="search sourcetype=*" | eval a="x\" "',
+    r"CommandLine=C:\Windows\foo",
+])
+def test_backslash_outside_quotes_rejected(q):
+    with pytest.raises(SPLRejected, match="Backslashes are only allowed inside quoted strings"):
+        ok(q)
+
+
+def test_backslashes_inside_quotes_still_accepted_and_unchanged():
+    q1 = r'CommandLine="C:\\Windows\\System32\\cmd.exe" | head 5'
+    assert ok(q1) == "search index=windows " + q1
+    q2 = r'TargetObject="*CurrentVersion\\Run*"'
+    assert ok(q2) == "search index=windows " + q2
