@@ -50,6 +50,8 @@ async def ingestion_health(db: AsyncIOMotorDatabase = Depends(get_db), user: dic
         for key in ("started_at", "finished_at"):
             if hasattr(run.get(key), "isoformat"):
                 run[key] = run[key].isoformat()
+        # Drop any raw error text (legacy rows stored str(exc)); keep only stage + ref.
+        run["errors"] = [{"stage": e.get("stage"), "ref": e.get("ref")} for e in (run.get("errors") or []) if isinstance(e, dict)]
         runs.append(run)
     totals = {
         "fetched": sum(r.get("fetched", 0) for r in runs),

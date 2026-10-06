@@ -20,6 +20,7 @@ from typing import Callable, List, Optional
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.config import settings
+from app.core.errors import new_request_id
 from app.core.logging import logger
 from app.infrastructure.siem.splunk import SplunkClient
 from app.normalization.alerts import build_alert_doc
@@ -206,9 +207,10 @@ class IngestionService:
                 run["lag_seconds"] = max(0, int((datetime.now(timezone.utc) - newest).total_seconds()))
         except Exception as exc:
             run["status"] = "error"
-            self.errors.append({"stage": stage, "error": str(exc)})
+            ref = new_request_id()
+            self.errors.append({"stage": stage, "error": "ingestion_failed", "ref": ref})
             run["errors"] = list(self.errors)
-            logger.error("ingestion_cycle_failed", stage=stage, error=str(exc))
+            logger.error("ingestion_cycle_failed", stage=stage, request_id=ref, error=str(exc))
         finally:
             await splunk.close()
             run["finished_at"] = datetime.now(timezone.utc)

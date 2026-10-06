@@ -509,6 +509,13 @@ async def investigate_alert(
     except Exception as e:
         raise internal_error("alerts_endpoint_failed", e, alert_id=alert_id)
 
+def _sanitize_job(job: dict) -> dict:
+    """Legacy job rows stored str(exception) in `error`; hide it unless it is a sanitized row (has error_ref)."""
+    if job.get("error") and not job.get("error_ref"):
+        job["error"] = "investigation_failed"
+    return job
+
+
 @router.get("/investigation/{job_id}", response_model=dict)
 async def get_investigation_status(job_id: str, db: AsyncIOMotorDatabase = Depends(get_db)):
     """Polls the status of an ongoing investigation."""
@@ -523,7 +530,7 @@ async def get_investigation_status(job_id: str, db: AsyncIOMotorDatabase = Depen
             if key in job and isinstance(job[key], datetime):
                 job[key] = job[key].isoformat()
                 
-        return job
+        return _sanitize_job(job)
     except HTTPException:
         raise
     except Exception as e:
@@ -538,7 +545,7 @@ async def investigation_history(alert_id: str, db: AsyncIOMotorDatabase = Depend
         job["_id"] = str(job["_id"])
         for key in ("created_at", "started_at", "completed_at"):
             if isinstance(job.get(key), datetime): job[key] = job[key].isoformat()
-        jobs.append(job)
+        jobs.append(_sanitize_job(job))
     return jobs
 
 @router.patch("/{alert_id:path}/disposition")

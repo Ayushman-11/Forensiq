@@ -73,3 +73,62 @@ async def test_ingest_502_is_not_rewrapped_as_500():
         with pytest.raises(HTTPException) as info:
             await alerts_module.ingest_from_splunk(db=object(), _user={"org_id": "default", "role": "admin"})
     assert info.value.status_code == 502
+
+
+# ---- fix round 1: ingestion / stored-error sanitization ----
+from mongomock_motor import AsyncMongoMockClient  # noqa: E402
+
+from app.api.v1.endpoints.dashboard import ingestion_health  # noqa: E402
+from app.core.config import settings  # noqa: E402
+from app.normalization.noise import NoiseFilter  # noqa: E402
+from app.services.ingestion import IngestionService  # noqa: E402
+
+_SECRET = "splunk down at https://secret-host:8089"
+
+
+class _RaisingSplunk:
+    async def search_raw_pages(self, *a, **k):
+        raise RuntimeError(_SECRET)
+        yield  # pragma: no cover
+
+    async def close(self):
+        pass
+
+
+def _real_service(db):
+    return IngestionService(db, "default", splunk_factory=lambda: _RaisingSplunk(),
+                            noise=NoiseFilter.from_yaml(settings.NOISE_CONFIG_PATH))
+
+
+@pytest.mark.asyncio
+async def test_ingest_502_detail_hides_underlying_exception_text():
+    db = AsyncMongoMockClient()["forensiq_test"]
+    with patch.object(alerts_module, "IngestionService", lambda d, t: _real_service(d)):
+        with pytest.raises(HTTPException) as info:
+            await alerts_module.ingest_from_splunk(db=db, _user={"org_id": "default", "role": "admin"})
+    assert info.value.status_code == 502
+    assert "secret-host" not in repr(info.value.detail)
+    err = info.value.detail["errors"][0]
+    assert err["error"] == "ingestion_failed" and re.fullmatch(r"[0-9a-f]{12}", err["ref"])
+    run = await db["ingestion_runs"].find_one({})
+    assert "secret-host" not in repr(run["errors"])
+
+
+@pytest.mark.asyncio
+async def test_ingestion_health_strips_legacy_raw_error_text():
+    db = AsyncMongoMockClient()["forensiq_test"]
+    await db["ingestion_runs"].insert_one({
+        "org_id": "default", "fetched": 0, "status": "error",
+        "errors": [{"stage": "fetch", "error": "secret-host exploded"}],
+    })
+    body = await ingestion_health(db=db, user={"org_id": "default"})
+    assert "secret-host" not in repr(body)
+    assert body["last_run"]["errors"] == [{"stage": "fetch", "ref": None}]
+
+
+def test_sanitize_job_hides_legacy_error_but_keeps_ref_rows():
+    legacy = alerts_module._sanitize_job({"error": "secret-host exploded"})
+    assert legacy["error"] == "investigation_failed"
+    fresh = {"error": "investigation_failed", "error_ref": "abc123abc123"}
+    assert alerts_module._sanitize_job(dict(fresh)) == fresh
+    assert alerts_module._sanitize_job({"status": "ok"}) == {"status": "ok"}
