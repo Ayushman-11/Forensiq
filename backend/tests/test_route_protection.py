@@ -30,7 +30,7 @@ async def test_dashboard_metrics_requires_auth(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_search_requires_auth(client: AsyncClient):
-    resp = await client.post("/api/v1/search/search", json={"query": "index=main"})
+    resp = await client.post("/api/v1/search", json={"query": "index=main"})
     assert resp.status_code == 401
 
 
