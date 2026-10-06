@@ -43,7 +43,7 @@ cp .env.example .env
 uv pip install -e .
 
 # 4. Run server
-uvicorn app.main:app --reload --port 8001
+python -m uvicorn app.main:app --port 8001 --reload
 ```
 
 ### Running via Docker Compose

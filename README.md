@@ -114,7 +114,7 @@ Ensure you have the following installed on your machine:
    ```
 3. Start the backend server:
    ```bash
-   uvicorn app.main:app --reload --port 8001
+   python -m uvicorn app.main:app --port 8001 --reload
    ```
 
 ### 3. Frontend Setup (Next.js)
