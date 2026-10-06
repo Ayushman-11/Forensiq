@@ -18,6 +18,7 @@ _TIME_MODIFIER_RE = re.compile(r"\b(?:earliest|latest|_index_earliest|_index_lat
 _SEARCH_PREFIX_RE = re.compile(r"(?is)^search(?:\s+(.*))?$")
 _COMMAND_RE = re.compile(r"^([A-Za-z_]+)(?=\s|$)")
 _REL_TIME_RE = re.compile(r"^-(\d+)(s|m|h|d|w)$")
+_BOOLEAN_RE = re.compile(r"\b(?:OR|NOT)\b", re.I)
 _UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
 
 
@@ -58,6 +59,8 @@ def _split_pipeline(query: str) -> list[str]:
 
 
 def validate_search(query: str, *, allowed_indexes: Iterable[str], default_index: str) -> str:
+    if any(ord(c) < 32 and c not in "\t\n\r" for c in (query or "")):
+        raise SPLRejected("Query contains control characters")
     text = (query or "").strip()
     if not text:
         raise SPLRejected("Query must not be empty")
@@ -81,6 +84,18 @@ def validate_search(query: str, *, allowed_indexes: Iterable[str], default_index
         if match.group(1).lower() not in ALLOWED_COMMANDS:
             raise SPLRejected(f"Command '{match.group(1).lower()}' is not allowed")
 
+    for part in [body, *segments[1:]]:
+        depth = 0
+        for ch in _QUOTED_RE.sub('""', part):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth < 0:
+                    break
+        if depth != 0:
+            raise SPLRejected("Unbalanced parentheses in query")
+
     allowed = {i.lower() for i in allowed_indexes}
     for part in [body, *segments[1:]]:
         if _TIME_MODIFIER_RE.search(_QUOTED_RE.sub('""', part)):
@@ -93,7 +108,10 @@ def validate_search(query: str, *, allowed_indexes: Iterable[str], default_index
             if value.lower() not in allowed:
                 raise SPLRejected(f"Index '{value}' is not allowed")
 
-    if not _INDEX_RE.search(body):
+    unq_body = _QUOTED_RE.sub('""', body)
+    if _BOOLEAN_RE.search(unq_body) or "(" in unq_body or ")" in unq_body:
+        body = f"index={default_index} ({body.strip()})"
+    elif not _INDEX_RE.search(body):
         body = f"index={default_index} {body}".strip()
     return " | ".join(["search " + body.strip(), *[s.strip() for s in segments[1:]]])
 

@@ -65,3 +65,41 @@ def test_time_range_accepts_relative_within_limit():
 def test_time_range_rejections(earliest, latest):
     with pytest.raises(SPLRejected):
         validate_time_range(earliest, latest, 30)
+
+
+def test_boolean_operators_and_parentheses_are_wrapped_under_default_index():
+    assert ok("foo OR index=windows") == "search index=windows (foo OR index=windows)"
+    assert ok("NOT index=windows foo") == "search index=windows (NOT index=windows foo)"
+    assert ok("(EventCode=1 OR EventCode=3) host=x | head 5") == "search index=windows ((EventCode=1 OR EventCode=3) host=x) | head 5"
+    assert ok("not index=windows") == "search index=windows (not index=windows)"
+
+
+def test_quoted_or_does_not_wrap():
+    assert ok('CommandLine="a OR b"') == 'search index=windows CommandLine="a OR b"'
+
+
+@pytest.mark.parametrize("q", [
+    "foo) OR (bar", "(foo", "foo)", "x | where (a=1", "EventCode=1\x00", "EventCode=1\x1b[0m",
+])
+def test_unbalanced_parens_and_control_chars_rejected(q):
+    with pytest.raises(SPLRejected):
+        ok(q)
+
+
+def test_tab_newline_cr_still_accepted():
+    ok("EventCode=1\t| head 5\n")
+    ok("EventCode=1\r\n| head 5")
+
+
+@pytest.mark.parametrize("q", [
+    "EventCode=1", "search EventCode=1 | head 5", "index=windows foo", 'index="windows" a=b | stats count',
+    "foo OR bar", "foo OR index=windows", "NOT index=windows foo", "not foo", "(a=1 OR b=2) c=3",
+    "((a=1))", 'x="a OR b"', "a=1 AND (b=2 OR NOT c=3) | sort -count", "index=WINDOWS OR foo",
+    "EventCode=1 | where (a=1 OR b=2)", "foo (bar OR index=windows) | head 1",
+])
+def test_every_accepted_query_is_scoped_to_allowed_index(q):
+    out = ok(q)
+    assert out.replace('"', "").lower().startswith("search index=windows")
+    first = out.split(" | ")[0]
+    values = {v.lower() for _, v in __import__("re").findall(r'\bindex\s*(!=|=)\s*"?([^\s")|,]+)', first)}
+    assert values == {"windows"}
