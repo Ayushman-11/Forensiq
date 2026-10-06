@@ -2,8 +2,6 @@
 Authentication endpoints: login, refresh, logout.
 """
 
-import functools
-
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -18,7 +16,7 @@ from app.core.security import (
     TokenError,
 )
 
-from app.services.login_throttle import clear_failures, locked_for, record_failure, throttle_key
+from app.services.login_throttle import clear_failures, reserve_attempt, throttle_key
 
 router = APIRouter()
 
@@ -34,10 +32,8 @@ async def _issue_tokens(db: AsyncIOMotorDatabase, user_id: str, email: str, role
     return TokenResponse(access_token=access_token, refresh_token=refresh_token)
 
 
-@functools.lru_cache(maxsize=1)
-def _dummy_hash() -> str:
-    """Valid bcrypt hash so unknown emails cost the same as a real verification."""
-    return hash_password("forensiq-dummy-password-for-timing")
+# Valid bcrypt hash so unknown emails cost the same as a real verification.
+_DUMMY_HASH = hash_password("forensiq-dummy-password-for-timing")
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -47,7 +43,7 @@ async def login(req: LoginRequest, request: Request, db: AsyncIOMotorDatabase = 
     ip = request.client.host if request.client else "unknown"
     key = throttle_key(email, ip)
 
-    retry_after = await locked_for(db, key)
+    retry_after = await reserve_attempt(db, key)
     if retry_after:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -56,9 +52,8 @@ async def login(req: LoginRequest, request: Request, db: AsyncIOMotorDatabase = 
         )
 
     user = await db["users"].find_one({"email": email})
-    password_ok = verify_password(req.password, user["password_hash"] if user else _dummy_hash())
+    password_ok = verify_password(req.password, user["password_hash"] if user else _DUMMY_HASH)
     if not user or not user.get("is_active", False) or not password_ok:
-        await record_failure(db, key)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
     await clear_failures(db, key)

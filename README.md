@@ -117,6 +117,8 @@ Ensure you have the following installed on your machine:
    python -m uvicorn app.main:app --port 8001 --reload
    ```
 
+   Login throttling keys on the client IP; behind a reverse proxy run uvicorn with `--proxy-headers --forwarded-allow-ips=<proxy ip>` so the real client IP is used.
+
 ### 3. Frontend Setup (Next.js)
 1. Open a new terminal and navigate to the `frontend` directory:
    ```bash

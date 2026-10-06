@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime, timedelta, timezone
 
+from pymongo import ReturnDocument
+
 from app.core.config import settings
 
 COLLECTION = "login_attempts"
@@ -18,24 +20,25 @@ def throttle_key(email: str, ip: str) -> str:
     return hashlib.sha256(f"{email.strip().lower()}|{ip}".encode()).hexdigest()
 
 
-async def locked_for(db, key: str) -> int:
-    """Seconds until the key unlocks; 0 when not locked."""
-    doc = await db[COLLECTION].find_one({"_id": key})
-    if not doc or doc.get("failures", 0) < settings.LOGIN_MAX_FAILURES:
-        return 0
-    remaining = (doc["expires_at"] - _now()).total_seconds()
-    return int(remaining) + 1 if remaining > 0 else 0
+async def reserve_attempt(db, key: str) -> int:
+    """Atomically count this attempt. Returns 0 when allowed, else seconds until the window ends.
 
-
-async def record_failure(db, key: str) -> None:
+    The window is fixed from the first attempt (expires_at is set only on insert), so locked
+    requests never extend it. Counting before verification closes the check-then-act race.
+    """
     now = _now()
-    # The TTL monitor runs about once a minute, so drop an expired window explicitly before counting.
+    # The TTL monitor runs about once a minute, so drop an expired window explicitly.
     await db[COLLECTION].delete_one({"_id": key, "expires_at": {"$lte": now}})
-    await db[COLLECTION].update_one(
+    doc = await db[COLLECTION].find_one_and_update(
         {"_id": key},
-        {"$inc": {"failures": 1}, "$set": {"expires_at": now + timedelta(minutes=settings.LOGIN_LOCKOUT_MINUTES)}},
+        {"$inc": {"attempts": 1},
+         "$setOnInsert": {"expires_at": now + timedelta(minutes=settings.LOGIN_LOCKOUT_MINUTES)}},
         upsert=True,
+        return_document=ReturnDocument.AFTER,
     )
+    if doc["attempts"] <= settings.LOGIN_MAX_FAILURES:
+        return 0
+    return max(1, int((doc["expires_at"] - now).total_seconds()) + 1)
 
 
 async def clear_failures(db, key: str) -> None:
