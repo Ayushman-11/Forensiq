@@ -16,3 +16,4 @@ async def ensure_indexes(db) -> None:
     runs = db["ingestion_runs"]
     await runs.create_index([("org_id", 1), ("started_at", -1)])
     await runs.create_index("started_at", expireAfterSeconds=RUNS_TTL_SECONDS)
+    await db["login_attempts"].create_index("expires_at", expireAfterSeconds=0)
