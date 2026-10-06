@@ -13,6 +13,9 @@ DEFAULT_SECRET_KEY = "default-development-secret-key-must-change-in-prod-min-32-
 DEFAULT_SPLUNK_PASSWORD = "ChangedPassword123!"
 
 
+_NON_PRODUCTION_ENVS = frozenset({"development", "dev", "test", "testing", "local"})
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="FORENSIQ_",
@@ -113,8 +116,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _reject_insecure_production_settings(self) -> "Settings":
-        """Fail fast at startup if production runs with insecure defaults. Development/test are unaffected."""
-        if self.ENV.strip().lower() != "production":
+        """Fail fast at startup if any non-development environment runs with insecure defaults."""
+        if self.ENV.strip().lower() in _NON_PRODUCTION_ENVS:
             return self
         problems = []
         if self.SECRET_KEY == DEFAULT_SECRET_KEY:

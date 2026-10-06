@@ -34,3 +34,19 @@ def test_production_rejects_insecure_values(override):
 def test_development_is_not_blocked():
     s = Settings(_env_file=None, ENV="development", SECRET_KEY=DEFAULT_SECRET_KEY, DEBUG=True)
     assert s.DEBUG is True
+
+
+def test_prod_alias_with_short_secret_rejected():
+    with pytest.raises(ValueError):
+        Settings(**{**GOOD, "ENV": "prod", "SECRET_KEY": "short"})
+
+
+def test_staging_with_insecure_values_rejected():
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, ENV="staging", SECRET_KEY=DEFAULT_SECRET_KEY, SPLUNK_PASSWORD=DEFAULT_SPLUNK_PASSWORD, DEBUG=True)
+
+
+@pytest.mark.parametrize("env", ["development", "dev", "test", "testing", "local", " LOCAL "])
+def test_non_production_envs_unaffected(env):
+    s = Settings(_env_file=None, ENV=env, SECRET_KEY=DEFAULT_SECRET_KEY, DEBUG=True)
+    assert s.DEBUG is True
