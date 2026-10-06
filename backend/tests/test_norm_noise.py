@@ -38,6 +38,30 @@ def test_where_conditions_are_all_required():
         "name": "x", "event_code": "1",
         "where": {"process_in": ["a.exe"], "command_line_regex": "^safe"},
     }]})
-    base = {"_time": "2026-08-11T06:37:25Z", "EventCode": "1", "Image": "C:\\a.exe"}
+    base = {"_time": "2026-08-11T06:37:25Z", "EventCode": "1", "Image": r"C:\\a.exe"}
     assert noise.reason(to_canonical({**base, "CommandLine": "safe run"})) == "x"
     assert noise.reason(to_canonical({**base, "CommandLine": "evil run"})) is None
+
+
+_FWD = {"_time": "2026-08-11T06:37:25Z", "EventCode": "3", "DestinationIp": "8.8.8.8"}
+
+
+def test_forwarder_in_install_path_is_suppressed():
+    noise = _filter()
+    ev = to_canonical({**_FWD, "Image": r"C:\Program Files\SplunkUniversalForwarder\bin\splunkd.exe"})
+    assert noise.reason(ev) == "splunk_forwarder_traffic"
+
+
+def test_forwarder_basename_outside_install_path_is_not_suppressed():
+    noise = _filter()
+    ev = to_canonical({**_FWD, "Image": r"C:\Users\x\Temp\splunkd.exe"})
+    assert noise.reason(ev) is None
+
+
+def test_process_path_startswith_is_case_insensitive():
+    noise = NoiseFilter.from_dict({"suppress": [{
+        "name": "p", "event_code": "3",
+        "where": {"process_path_startswith": [r"C:\Program Files\Splunk" "\\"]},
+    }]})
+    ev = to_canonical({**_FWD, "Image": r"c:\program files\SPLUNK\bin\splunkd.exe"})
+    assert noise.reason(ev) == "p"

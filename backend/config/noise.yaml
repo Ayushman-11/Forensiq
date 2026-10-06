@@ -27,8 +27,12 @@ suppress:
     where:
       domain_benign: true
 
-  # Telemetry shipping from the lab Splunk forwarder.
+  # Telemetry shipping from the lab Splunk forwarder. Requires the install path
+  # too, so a same-named binary elsewhere (e.g. Temp) stays visible.
   - name: splunk_forwarder_traffic
     event_code: "3"
     where:
       process_in: [splunkd.exe, splunk-winevtlog.exe]
+      process_path_startswith:
+        - "C:\\Program Files\\SplunkUniversalForwarder\\"
+        - "C:\\Program Files\\Splunk\\"

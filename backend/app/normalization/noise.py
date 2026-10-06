@@ -41,6 +41,10 @@ class NoiseFilter:
             return False
         if "process_in" in where and (ev.process or "") not in [p.lower() for p in where["process_in"]]:
             return False
+        if "process_path_startswith" in where:
+            path = (ev.process_path or "").lower()
+            if not path or not any(path.startswith(x.lower()) for x in where["process_path_startswith"]):
+                return False
         if "parent_in" in where and (ev.parent or "") not in [p.lower() for p in where["parent_in"]]:
             return False
         if "command_line_regex" in where and not re.search(where["command_line_regex"], ev.command_line or ""):
