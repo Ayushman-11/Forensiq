@@ -66,27 +66,28 @@ class IngestionService:
     def _cursor_id(self) -> str:
         return f"cursor:{self.org_id}:splunk"
 
-    async def _load_cursor(self) -> tuple[Optional[datetime], bool]:
+    async def _load_cursor(self) -> tuple[Optional[datetime], bool, int]:
         for doc_id in (self._cursor_id, "last_ingested"):  # legacy doc keeps existing installs from re-ingesting
             doc = await self.db[self.STATE_COLLECTION].find_one({"_id": doc_id})
             if doc and doc.get("ts"):
                 parsed = parse_ts(doc["ts"])
                 if parsed:
-                    return parsed, bool(doc.get("truncated", False))
-        return None, False
+                    return parsed, bool(doc.get("truncated", False)), int(doc.get("fetched", 0))
+        return None, False, 0
 
-    async def _save_cursor(self, newest: Optional[datetime], truncated: bool) -> None:
+    async def _save_cursor(self, newest: Optional[datetime], truncated: bool, fetched: int = 0) -> None:
         if newest is None:
             return
         for doc_id in (self._cursor_id, "last_ingested"):
             existing = await self.db[self.STATE_COLLECTION].find_one({"_id": doc_id})
             prev = parse_ts(existing["ts"]) if existing and existing.get("ts") else None
             ts = max(prev, newest) if prev else newest  # never move the cursor backwards
-            await self.db[self.STATE_COLLECTION].update_one(
-                {"_id": doc_id}, {"$set": {"ts": ts.isoformat(), "truncated": truncated}}, upsert=True
-            )
+            fields = {"ts": ts.isoformat(), "truncated": truncated}
+            if doc_id == self._cursor_id:
+                fields["fetched"] = fetched
+            await self.db[self.STATE_COLLECTION].update_one({"_id": doc_id}, {"$set": fields}, upsert=True)
 
-    def _earliest_epoch(self, cursor: Optional[datetime], truncated: bool = False) -> str:
+    def _earliest_epoch(self, cursor: Optional[datetime], truncated: bool = False, prev_fetched: int = 0) -> str:
         if cursor is None:
             start = datetime.now(timezone.utc) - timedelta(hours=settings.INGEST_INITIAL_LOOKBACK_HOURS)
             return str(int(start.timestamp()))
@@ -94,11 +95,16 @@ class IngestionService:
             # Previous cycle hit the page cap: resume exactly at the cursor so progress is guaranteed.
             logger.warning("ingestion_truncated", cursor=cursor.isoformat())
             return str(int(cursor.timestamp()))
-        start = cursor - timedelta(seconds=settings.INGEST_OVERLAP_SECONDS)
-        epoch = int(start.timestamp())
+        epoch = int((cursor - timedelta(seconds=settings.INGEST_OVERLAP_SECONDS)).timestamp())
         bucket = settings.INGEST_DEDUP_BUCKET_SECONDS
-        # Align to the dedup bucket start so every cycle sees in-flight buckets completely.
-        return str(epoch - epoch % bucket)
+        # Aligning to the dedup bucket start lets every cycle see in-flight buckets completely, but it can
+        # widen the window ~3.5x (overlap + bucket). That is only safe when the previous cycle used under a
+        # quarter of the page cap; under high load we keep the plain overlap window to avoid truncation
+        # flip-flop, and cross-cycle brute-force counts become best-effort.
+        if prev_fetched < (settings.INGEST_PAGE_SIZE * settings.INGEST_MAX_PAGES) // 4:
+            return str(epoch - epoch % bucket)
+        logger.info("ingestion_alignment_disabled", previous_fetched=prev_fetched)
+        return str(epoch)
 
     # -- pipeline stages ------------------------------------------------
 
@@ -187,15 +193,15 @@ class IngestionService:
         stage = "fetch"
         splunk = self._splunk_factory()
         try:
-            cursor, was_truncated = await self._load_cursor()
-            events, newest = await self._collect(splunk, self._earliest_epoch(cursor, was_truncated), run)
+            cursor, was_truncated, prev_fetched = await self._load_cursor()
+            events, newest = await self._collect(splunk, self._earliest_epoch(cursor, was_truncated, prev_fetched), run)
             stage = "detect"
             hits = self._detect(events, run)
             run["hits"] = len(hits)
             stage = "store"
             groups = group_hits(hits, self.org_id, settings.INGEST_DEDUP_BUCKET_SECONDS)
             await self._store(groups, run, new_alerts)
-            await self._save_cursor(newest, run["truncated"])  # only reached when every stage succeeded
+            await self._save_cursor(newest, run["truncated"], run["fetched"])  # only reached when every stage succeeded
             if newest:
                 run["lag_seconds"] = max(0, int((datetime.now(timezone.utc) - newest).total_seconds()))
         except Exception as exc:

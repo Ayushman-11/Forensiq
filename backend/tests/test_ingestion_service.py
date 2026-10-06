@@ -147,8 +147,10 @@ class GrowingSplunk(FakeSplunk):
 
     async def search_raw_pages(self, query, earliest_time, latest_time="now", page_size=500, max_pages=20):
         self.queries.append((query, earliest_time))
-        yield [r for r in self.rows
-               if datetime.fromisoformat(r["_time"]).timestamp() >= int(earliest_time)]
+        matching = [r for r in self.rows if datetime.fromisoformat(r["_time"]).timestamp() >= int(earliest_time)]
+        matching = matching[: page_size * max_pages]  # Splunk boundary honors the page cap, oldest first
+        for i in range(0, len(matching), page_size):
+            yield matching[i:i + page_size]
 
 
 def _fail_row(base, i, ip="45.33.32.156"):
@@ -220,8 +222,9 @@ async def test_partial_store_failure_still_reports_stored_alerts(db, monkeypatch
 
 @pytest.mark.asyncio
 async def test_slow_brute_force_counts_across_cycles(db, monkeypatch):
-    monkeypatch.setattr(settings, "INGEST_INITIAL_LOOKBACK_HOURS", 24 * 365)
-    base = datetime(2026, 8, 11, 6, 0, 0, tzinfo=timezone.utc)  # bucket-aligned start
+    bucket = settings.INGEST_DEDUP_BUCKET_SECONDS
+    now_epoch = int(datetime.now(timezone.utc).timestamp())
+    base = datetime.fromtimestamp(now_epoch - now_epoch % bucket - 2 * bucket, tz=timezone.utc)  # bucket-aligned
     rows, reported = [], []
     for i in range(6):
         rows.append(_fail_row(base, i * 50))
@@ -230,3 +233,45 @@ async def test_slow_brute_force_counts_across_cycles(db, monkeypatch):
     stored = await db["alerts"].find({"rule_name": "brute_force_login"}).to_list(10)
     assert len(stored) == 1 and stored[0]["count"] == 6
     assert len(reported) == 1
+
+
+async def _seed_cursor(db, ts, fetched, truncated=False):
+    await db["ingestion_state"].insert_one(
+        {"_id": "cursor:default:splunk", "ts": ts.isoformat(), "truncated": truncated, "fetched": fetched})
+
+
+@pytest.mark.asyncio
+async def test_alignment_only_when_previous_load_is_low(db, monkeypatch):
+    monkeypatch.setattr(settings, "INGEST_PAGE_SIZE", 40)
+    monkeypatch.setattr(settings, "INGEST_MAX_PAGES", 1)  # cap 40, quarter = 10
+    cursor = datetime(2026, 8, 11, 6, 4, 50, tzinfo=timezone.utc)
+    plain = int((cursor - timedelta(seconds=settings.INGEST_OVERLAP_SECONDS)).timestamp())
+
+    await _seed_cursor(db, cursor, fetched=10)
+    s1 = FakeSplunk([])
+    await _service(db, s1).fetch_and_store_alerts()
+    assert int(s1.queries[0][1]) == plain  # busy: not aligned
+    assert plain % settings.INGEST_DEDUP_BUCKET_SECONDS != 0
+
+    await db["ingestion_state"].update_one({"_id": "cursor:default:splunk"}, {"$set": {"fetched": 9}})
+    s2 = FakeSplunk([])
+    await _service(db, s2).fetch_and_store_alerts()
+    assert int(s2.queries[0][1]) == plain - plain % settings.INGEST_DEDUP_BUCKET_SECONDS  # quiet: aligned
+
+
+@pytest.mark.asyncio
+async def test_sustained_load_does_not_flip_flop_truncation(db, monkeypatch):
+    monkeypatch.setattr(settings, "INGEST_PAGE_SIZE", 20)
+    monkeypatch.setattr(settings, "INGEST_MAX_PAGES", 1)  # cap 20
+    monkeypatch.setattr(settings, "INGEST_INITIAL_LOOKBACK_HOURS", 24 * 365 * 10)
+    base = datetime(2026, 8, 11, 6, 0, 0, tzinfo=timezone.utc)
+    # one row per 10 s for 15 minutes: the 120 s overlap window holds ~12 rows (fits), a 420 s window ~42 (does not)
+    rows = [_fail_row(base, i * 10, f"10.0.{i % 250}.{i // 250}") for i in range(90)]
+    cursors, flags = [], []
+    for _ in range(14):
+        await _service(db, GrowingSplunk(rows)).fetch_and_store_alerts()
+        cursors.append(datetime.fromisoformat((await _cursor(db))["ts"]))
+        flags.append((await _cursor(db))["truncated"])
+    assert cursors == sorted(cursors)
+    assert cursors[-1] == datetime.fromisoformat(rows[-1]["_time"])
+    assert flags[-6:] == [False] * 6
