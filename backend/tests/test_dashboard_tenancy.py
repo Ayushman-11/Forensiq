@@ -62,3 +62,15 @@ async def test_default_tenant_falls_back_to_legacy_doc():
     assert await last_ingested(db, "default") == "2025-12-12T00:00:00Z"
     await db["ingestion_state"].insert_one({"_id": "cursor:default:splunk", "ts": "2026-03-03T00:00:00Z"})
     assert await last_ingested(db, "default") == "2026-03-03T00:00:00Z"
+
+
+@pytest.mark.asyncio
+async def test_metrics_tolerate_alerts_without_ai_confidence():
+    db = AsyncMongoMockClient()["dash_noconf"]
+    await db["alerts"].insert_many([
+        {"_id": "a1", "org_id": "default", "severity": "high", "status": "New"},
+        {"_id": "a2", "org_id": "default", "severity": "low", "status": "New"},
+    ])
+    metrics = await dashboard_module.get_dashboard_metrics(db=db, user={"org_id": "default"})
+    assert metrics.total_alerts == 2
+    assert metrics.ai_confidence_avg == 0

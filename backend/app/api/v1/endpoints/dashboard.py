@@ -22,7 +22,7 @@ async def get_dashboard_metrics(db: AsyncIOMotorDatabase = Depends(get_db), user
         pipeline = [{"$match": scope}, {"$group": {"_id": None, "avg_conf": {"$avg": "$ai_confidence"}}}]
         cursor = db["alerts"].aggregate(pipeline)
         result = await cursor.to_list(length=1)
-        ai_confidence_avg = int(result[0]["avg_conf"]) if result else 0
+        ai_confidence_avg = int(result[0]["avg_conf"] or 0) if result else 0
     else:
         ai_confidence_avg = 0
         
