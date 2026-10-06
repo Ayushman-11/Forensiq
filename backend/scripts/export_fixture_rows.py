@@ -25,7 +25,13 @@ def _iso(value) -> str:
 
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
-_SID_RE = re.compile(r"S-1-5-21-4283746528-2832981674-120407787")
+_SID_RE = re.compile(r"S-1-5-21-\d+-\d+-\d+")
+_OCT = r"(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
+_PRIVATE_IP_RE = re.compile(
+    r"(?<![\d.])(?:10\." + _OCT + r"\." + _OCT + r"\." + _OCT
+    + r"|172\.(?:1[6-9]|2\d|3[01])\." + _OCT + r"\." + _OCT
+    + r"|192\.168\." + _OCT + r"\." + _OCT + r")(?!\d|\.\d)"
+)
 _NAME_RE = re.compile(r"ayush[a-z0-9]*", re.I)
 
 
@@ -42,7 +48,7 @@ def pseudonymize(text: str) -> str:
     """Replace personal identifiers from the lab machine with neutral stand-ins (applied before fixtures are written)."""
     text = _EMAIL_RE.sub("analyst@example.test", text)
     text = _SID_RE.sub("S-1-5-21-1000000000-2000000000-3000000000", text)
-    text = text.replace("10.143.71.72", "10.0.0.5")
+    text = _PRIVATE_IP_RE.sub("10.0.0.5", text)
     return _NAME_RE.sub(_case_like, text)
 
 

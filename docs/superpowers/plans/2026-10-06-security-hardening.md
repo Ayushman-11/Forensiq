@@ -1238,6 +1238,7 @@ git commit -m "fix(security): tenant-scope stats and job status; validate alert 
 Create `backend/tests/test_repo_hygiene.py`:
 
 ```python
+import importlib.util
 import re
 import shutil
 import subprocess
@@ -1248,26 +1249,52 @@ import pytest
 FIXTURE = Path(__file__).parent / "fixtures" / "splunk_rows.json"
 ROOT = Path(__file__).resolve().parents[2]
 
+EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+SID_RE = re.compile(r"S-1-5-21-\d+-\d+-\d+")
+OCT = r"(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
+PRIVATE_IP_RE = re.compile(
+    r"(?<![\d.])(?:10\.%s\.%s\.%s|172\.(?:1[6-9]|2\d|3[01])\.%s\.%s|192\.168\.%s\.%s)(?!\d|\.\d)"
+    % ((OCT,) * 7)
+)
+SID_PSEUDONYM = "S-1-5-21-1000000000-2000000000-3000000000"
+
+
+def _load_script():
+    spec = importlib.util.spec_from_file_location(
+        "export_fixture_rows", Path(__file__).parents[1] / "scripts" / "export_fixture_rows.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
 
 def test_fixture_contains_no_personal_identifiers():
     text = FIXTURE.read_text(encoding="utf-8")
-    assert not re.search(r"ayush", text, re.I)
-    assert "@gmail.com" not in text
-    assert not re.search(r"S-1-5-21-4283746528", text)
-    assert "10.143.71.72" not in text
+    assert set(EMAIL_RE.findall(text)) <= {"analyst@example.test"}
+    assert set(SID_RE.findall(text)) <= {SID_PSEUDONYM}
+    assert set(PRIVATE_IP_RE.findall(text)) <= {"10.0.0.5"}
+    assert not re.search("ay" + "ush", text, re.I)
+    assert not re.search("kum" + "bhar", text, re.I)
 
 
 def test_pseudonymize_is_stable_and_case_preserving():
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("export_fixture_rows", Path(__file__).parents[1] / "scripts" / "export_fixture_rows.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    out = mod.pseudonymize("AYUSH Ayush ayush ayushkumbhar1111@gmail.com S-1-5-21-4283746528-2832981674-120407787-1001 10.143.71.72 10.0.22621.3085")
+    mod = _load_script()
+    name = "ay" + "ush"
+    src = (
+        f"{name.upper()} {name.capitalize()} {name} Jane.Doe@corp.example "
+        "S-1-5-21-111-222-333-1001 S-1-5-18 10.1.2.3 192.168.5.6 172.20.1.1 "
+        "172.32.1.1 10.0.22621.3085 10.0.14393.206"
+    )
+    out = mod.pseudonymize(src)
     assert "LABUSER" in out and "Labuser" in out and "labuser" in out
-    assert "analyst@example.test" in out
-    assert "S-1-5-21-1000000000-2000000000-3000000000-1001" in out
-    assert "10.0.0.5" in out
+    assert "analyst@example.test" in out and "corp.example" not in out
+    assert f"{SID_PSEUDONYM}-1001" in out
+    assert "S-1-5-18" in out  # well-known short SIDs are untouched
+    assert out.count("10.0.0.5") == 3
+    assert "172.32.1.1" in out  # outside RFC1918 172.16-31
     assert "10.0.22621.3085" in out  # OS build numbers are not IP addresses
+    assert "10.0.14393.206" in out
+    assert mod.pseudonymize(out) == out
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git not available")
@@ -1287,7 +1314,13 @@ In `backend/scripts/export_fixture_rows.py` add `import re` and, above `main`, a
 
 ```python
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
-_SID_RE = re.compile(r"S-1-5-21-4283746528-2832981674-120407787")
+_SID_RE = re.compile(r"S-1-5-21-\d+-\d+-\d+")
+_OCT = r"(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
+_PRIVATE_IP_RE = re.compile(
+    r"(?<![\d.])(?:10\." + _OCT + r"\." + _OCT + r"\." + _OCT
+    + r"|172\.(?:1[6-9]|2\d|3[01])\." + _OCT + r"\." + _OCT
+    + r"|192\.168\." + _OCT + r"\." + _OCT + r")(?!\d|\.\d)"
+)
 _NAME_RE = re.compile(r"ayush[a-z0-9]*", re.I)
 
 
@@ -1304,7 +1337,7 @@ def pseudonymize(text: str) -> str:
     """Replace personal identifiers from the lab machine with neutral stand-ins (applied before fixtures are written)."""
     text = _EMAIL_RE.sub("analyst@example.test", text)
     text = _SID_RE.sub("S-1-5-21-1000000000-2000000000-3000000000", text)
-    text = text.replace("10.143.71.72", "10.0.0.5")
+    text = _PRIVATE_IP_RE.sub("10.0.0.5", text)
     return _NAME_RE.sub(_case_like, text)
 ```
 
