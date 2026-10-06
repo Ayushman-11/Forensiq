@@ -1,341 +1,210 @@
 """
-IngestionService – pulls real telemetry events from Splunk using detection rules,
-normalises them into Forensiq alert documents, and stores them in MongoDB.
+IngestionService – pulls real telemetry from Splunk, cleans and normalizes it,
+applies detection rules, collapses repeats and upserts alerts idempotently.
 
-Key design decisions:
-  - Incremental polling: tracks last_ingested_time in `ingestion_state` collection
-  - Deterministic _id: SHA-256 of Splunk's _cd (bucket:event offset) field
-  - Zero mock data: all field values come from actual Splunk event payloads
-  - IOC extraction: IPs, domains and file hashes are parsed from raw fields
-  - Deduplication: skips events already in MongoDB before inserting
+Design (see docs/superpowers/specs/2026-10-06-forensiq-usp-pipeline-design.md):
+  - One broad query per cycle, ordered by time, paginated.
+  - Cursor = newest event time actually processed; re-queried with an overlap
+    window so late-indexed events are caught. Stable alert IDs make that safe.
+  - Cursor advances only when the whole cycle succeeds.
+  - Writes are upserts ($setOnInsert), never find-then-insert.
+  - One `ingestion_runs` document per cycle (counts, suppression reasons, lag).
 """
 
 from __future__ import annotations
 
-import hashlib
-import re
-from datetime import datetime, timezone
-from typing import Dict, List, Optional
+import uuid
+from datetime import datetime, timedelta, timezone
+from typing import Callable, List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.config import settings
 from app.core.logging import logger
 from app.infrastructure.siem.splunk import SplunkClient
-from app.services.detection_rules import DetectionRule, DetectionRuleEngine
-from app.core.config import settings
+from app.normalization.alerts import build_alert_doc
+from app.normalization.canonical import CanonicalEvent
+from app.normalization.clean import parse_ts
+from app.normalization.dedup import RuleHit, aggregate_failed_logons, group_hits
+from app.normalization.mappers import to_canonical
+from app.normalization.noise import NoiseFilter
+from app.services.detection_rules import DetectionRuleEngine
 
-# ---------------------------------------------------------------------------
-# IOC helpers
-# ---------------------------------------------------------------------------
-
-_PRIVATE_IP_RE = re.compile(
-    r"^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.|\:\:1)"
-)
-_IPV4_RE = re.compile(
-    r"\b((?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?))\b"
-)
-_HASH_RE = re.compile(r"\b([A-Fa-f0-9]{32}|[A-Fa-f0-9]{40}|[A-Fa-f0-9]{64})\b")
-# Simple domain heuristic — avoid matching plain hostnames like "AYUSH"
-_DOMAIN_RE = re.compile(
-    r"\b((?:[a-zA-Z0-9-]{1,63}\.){2,}(?:com|net|org|io|gov|edu|co|uk|de|ru|cn|xyz|top|info|biz|me|us|cloud|ai|app|dev))\b"
-)
+BRUTE_FORCE_RULE = "brute_force_login"
+EVENT_CODES = ("1", "3", "13", "22", "4104", "4625", "4648", "4688")
 
 
-def _is_private(ip: str) -> bool:
-    return bool(_PRIVATE_IP_RE.match(ip))
+def build_query() -> str:
+    codes = " OR ".join(f"EventCode={c}" for c in EVENT_CODES)
+    return f"search index={settings.SPLUNK_DETECTION_INDEX} | spath | search ({codes}) | sort 0 _time"
 
-
-def extract_iocs(raw: dict) -> List[str]:
-    """
-    Extract unique, non-private IOCs from a raw Splunk event.
-    Returns a deduplicated list of strings (IPs, domains, hashes).
-    """
-    seen: set = set()
-    iocs: List[str] = []
-
-    def _add(val: str) -> None:
-        if val and val not in seen:
-            seen.add(val)
-            iocs.append(val)
-
-    # --- IPs from named fields -------------------------------------------------
-    for field in ("DestinationIp", "SourceIp", "IpAddress"):
-        ip = str(raw.get(field) or "").strip()
-        if ip and ip not in ("-", "") and not _is_private(ip):
-            _add(ip)
-
-    # --- Domains from DNS query field ------------------------------------------
-    qname = str(raw.get("QueryName") or "").strip()
-    if qname and qname not in ("-", ""):
-        _add(qname)
-
-    # --- QueryResults: may contain semicolon-separated IPs --------------------
-    qresults = str(raw.get("QueryResults") or "")
-    for part in qresults.split(";"):
-        part = part.strip()
-        # strip IPv6-mapped-IPv4 prefix
-        if part.startswith("::ffff:"):
-            part = part[7:]
-        m = _IPV4_RE.match(part)
-        if m and not _is_private(m.group(1)):
-            _add(m.group(1))
-
-    # --- Hashes from Sysmon Hashes field (MD5=...,SHA256=...) -----------------
-    hashes_field = str(raw.get("Hashes") or "")
-    for segment in hashes_field.split(","):
-        if "=" in segment:
-            hash_val = segment.split("=", 1)[1].strip()
-            if _HASH_RE.fullmatch(hash_val):
-                _add(hash_val)
-
-    # --- Fallback: scan CommandLine for embedded IPs --------------------------
-    for field in ("CommandLine", "ParentCommandLine", "ScriptBlockText"):
-        text = str(raw.get(field) or "")
-        for m in _IPV4_RE.finditer(text):
-            ip = m.group(1)
-            if not _is_private(ip):
-                _add(ip)
-        for m in _DOMAIN_RE.finditer(text):
-            _add(m.group(1))
-
-    return iocs
-
-
-# ---------------------------------------------------------------------------
-# Normalisation
-# ---------------------------------------------------------------------------
-
-_SEVERITY_MAP = {
-    "critical": "critical",
-    "high": "high",
-    "medium": "medium",
-    "low": "low",
-}
-
-
-def _parse_ts(raw: dict) -> datetime:
-    raw_time = raw.get("_time", "")
-    try:
-        return datetime.fromisoformat(str(raw_time).replace("Z", "+00:00"))
-    except Exception:
-        return datetime.now(timezone.utc)
-
-
-def _event_id(raw: dict) -> str:
-    """Deterministic ID from Splunk's _cd field (bucket:offset) or fallback."""
-    cd = raw.get("_cd") or raw.get("_bkt", "") + "_" + str(raw.get("_serial", ""))
-    return hashlib.sha256(cd.encode()).hexdigest()[:32]
-
-
-def _title_for(rule: DetectionRule, raw: dict) -> str:
-    """Build a human-readable alert title from the rule + key event fields."""
-    severity_tag = f"[{rule.severity.upper()}]"
-    host = raw.get("host") or raw.get("Computer") or "Unknown"
-
-    ec = str(raw.get("EventCode", ""))
-    if ec == "1":
-        proc = raw.get("Image", "").split("\\")[-1]
-        return f"{severity_tag} {rule.alert_type} – {proc} on {host}"
-    if ec == "3":
-        dest = raw.get("DestinationIp", "?")
-        port = raw.get("DestinationPort", "?")
-        return f"{severity_tag} {rule.alert_type} – {dest}:{port} from {host}"
-    if ec == "13":
-        key = (raw.get("TargetObject") or "").split("\\")[-1]
-        return f"{severity_tag} {rule.alert_type} – {key} on {host}"
-    if ec == "22":
-        return f"{severity_tag} {rule.alert_type} – {raw.get('QueryName', '?')} on {host}"
-    if ec == "4625":
-        return f"{severity_tag} {rule.alert_type} – {raw.get('TargetUserName', '?')} from {raw.get('IpAddress', '?')}"
-    if ec == "4648":
-        return f"{severity_tag} {rule.alert_type} – {raw.get('SubjectUserName', '?')} → {raw.get('TargetUserName', '?')}"
-    if ec == "4688":
-        proc = (raw.get("NewProcessName") or "").split("\\")[-1]
-        parent = (raw.get("ParentProcessName") or "").split("\\")[-1]
-        return f"{severity_tag} {rule.alert_type} – {parent} → {proc} on {host}"
-    if ec == "4104":
-        return f"{severity_tag} {rule.alert_type} – Script Block on {host}"
-    # Brute-force aggregate row
-    ip = raw.get("IpAddress") or raw.get("SourceIp", "?")
-    count = raw.get("count", "?")
-    return f"{severity_tag} {rule.alert_type} – {count} failures from {ip}"
-
-
-def normalize_event(raw: dict, rule: DetectionRule) -> dict:
-    """Convert a raw Splunk result dict + matched rule into a Forensiq alert doc."""
-    ec = str(raw.get("EventCode", ""))
-    host = str(raw.get("host") or raw.get("Computer") or "Unknown")
-    user = str(
-        raw.get("User")
-        or raw.get("SubjectUserName")
-        or raw.get("TargetUserName")
-        or "Unknown"
-    )
-    ts = _parse_ts(raw)
-
-    doc: Dict = {
-        "_id": _event_id(raw),
-        "title": _title_for(rule, raw),
-        "description": rule.description,
-        "severity": rule.severity,
-        "alert_type": rule.alert_type,
-        "rule_name": rule.name,
-        "mitre_technique": rule.mitre_technique,
-        "mitre_tactic": rule.mitre_tactic,
-        "host": host,
-        "user": user,
-        "status": "New",
-        "ai_confidence": 0,
-        "source_siem": "splunk",
-        "event_code": ec,
-        "created_at": ts,
-        "detected_at": datetime.now(timezone.utc),
-        "extracted_iocs": extract_iocs(raw),
-        # Per-event-type fields
-        "process_name": (raw.get("Image") or raw.get("NewProcessName") or "").split("\\")[-1] or None,
-        "command_line": raw.get("CommandLine") or raw.get("ScriptBlockText") or None,
-        "parent_process": (raw.get("ParentImage") or raw.get("ParentProcessName") or "").split("\\")[-1] or None,
-        "source_ip": raw.get("SourceIp") or None,
-        "dest_ip": raw.get("DestinationIp") or None,
-        "dest_port": raw.get("DestinationPort") or None,
-        "protocol": raw.get("Protocol") or None,
-        "registry_key": raw.get("TargetObject") or None,
-        "registry_details": raw.get("Details") or None,
-        "dns_query": raw.get("QueryName") or None,
-        "hashes": raw.get("Hashes") or None,
-        "logon_type": raw.get("LogonType") or None,
-        "failure_reason": raw.get("FailureReason") or None,
-        "raw_event": {k: v for k, v in raw.items() if not k.startswith("_")},
-    }
-    return doc
-
-
-# ---------------------------------------------------------------------------
-# IngestionService
-# ---------------------------------------------------------------------------
 
 class IngestionService:
-    """
-    Runs each DetectionRule's SPL query against Splunk, normalises the results
-    into Forensiq alert documents, deduplicates against MongoDB, and persists
-    new alerts.  Tracks the last ingestion timestamp for incremental polling.
-    """
-
     STATE_COLLECTION = "ingestion_state"
     ALERTS_COLLECTION = "alerts"
+    RUNS_COLLECTION = "ingestion_runs"
 
-    def __init__(self, db: AsyncIOMotorDatabase, org_id: str = "default") -> None:
+    def __init__(
+        self,
+        db: AsyncIOMotorDatabase,
+        org_id: str = "default",
+        splunk_factory: Callable[[], SplunkClient] = SplunkClient,
+        noise: Optional[NoiseFilter] = None,
+    ) -> None:
         self.db = db
         self.org_id = org_id
-        self.engine = DetectionRuleEngine()
+        self._splunk_factory = splunk_factory
+        self.noise = noise or NoiseFilter.from_yaml(settings.NOISE_CONFIG_PATH)
+        self.rules = DetectionRuleEngine().get_all_rules()
         self.errors: List[dict] = []
         self.total_fetched = 0
         self.rules_run = 0
 
-    # ------------------------------------------------------------------
-    # State helpers
-    # ------------------------------------------------------------------
+    # -- cursor ---------------------------------------------------------
 
-    async def _get_last_ingested_time(self) -> str:
-        doc = await self.db[self.STATE_COLLECTION].find_one({"_id": "last_ingested"})
-        if doc and doc.get("ts"):
-            return doc["ts"]
-        return "-7d"  # first run: look back 7 days
+    @property
+    def _cursor_id(self) -> str:
+        return f"cursor:{self.org_id}:splunk"
 
-    async def _update_last_ingested_time(self) -> None:
-        now_iso = datetime.now(timezone.utc).isoformat()
-        await self.db[self.STATE_COLLECTION].update_one(
-            {"_id": "last_ingested"},
-            {"$set": {"ts": now_iso}},
-            upsert=True,
-        )
+    async def _load_cursor(self) -> Optional[datetime]:
+        for doc_id in (self._cursor_id, "last_ingested"):  # legacy doc keeps existing installs from re-ingesting
+            doc = await self.db[self.STATE_COLLECTION].find_one({"_id": doc_id})
+            if doc and doc.get("ts"):
+                parsed = parse_ts(doc["ts"])
+                if parsed:
+                    return parsed
+        return None
 
-    # ------------------------------------------------------------------
-    # Main ingestion method
-    # ------------------------------------------------------------------
+    async def _save_cursor(self, newest: Optional[datetime]) -> None:
+        if newest is None:
+            return
+        iso = newest.isoformat()
+        await self.db[self.STATE_COLLECTION].update_one({"_id": self._cursor_id}, {"$set": {"ts": iso}}, upsert=True)
+        await self.db[self.STATE_COLLECTION].update_one({"_id": "last_ingested"}, {"$set": {"ts": iso}}, upsert=True)
 
-    async def fetch_and_store_alerts(self, limit: int = 100) -> List[dict]:
-        """
-        For each detection rule:
-          1. Run its SPL query against Splunk (from last_ingested_time)
-          2. Evaluate each result event against the rule's match_fn
-          3. Normalise matching events into alert docs
-          4. Deduplicate and insert into MongoDB
-        Returns the list of newly inserted alert documents.
-        """
-        earliest = await self._get_last_ingested_time()
-        rules = self.engine.get_all_rules()
-        new_alerts: List[dict] = []
+    def _earliest_epoch(self, cursor: Optional[datetime]) -> str:
+        if cursor is None:
+            start = datetime.now(timezone.utc) - timedelta(hours=settings.INGEST_INITIAL_LOOKBACK_HOURS)
+        else:
+            start = cursor - timedelta(seconds=settings.INGEST_OVERLAP_SECONDS)
+        return str(int(start.timestamp()))
 
-        splunk = SplunkClient()
-        try:
-            for rule in rules:
+    # -- pipeline stages ------------------------------------------------
+
+    async def _collect(self, splunk: SplunkClient, earliest: str, run: dict):
+        events: List[CanonicalEvent] = []
+        newest: Optional[datetime] = None
+        pages = 0
+        last_page_len = 0
+        async for page in splunk.search_raw_pages(
+            build_query(), earliest_time=earliest, latest_time="now",
+            page_size=settings.INGEST_PAGE_SIZE, max_pages=settings.INGEST_MAX_PAGES,
+        ):
+            pages += 1
+            last_page_len = len(page)
+            for row in page:
+                run["fetched"] += 1
+                ts = parse_ts(row.get("_time"))
+                if ts and (newest is None or ts > newest):
+                    newest = ts
                 try:
-                    self.rules_run += 1
-                    logger.info(
-                        "ingestion_rule_start",
-                        rule=rule.name,
-                        earliest=earliest,
-                    )
-                    query = rule.spl_query.replace("index=windows", f"index={settings.SPLUNK_DETECTION_INDEX}")
-                    raw_events = await splunk.search(
-                        query=query,
-                        earliest_time=earliest,
-                        latest_time="now",
-                        limit=limit,
-                    )
-                    self.total_fetched += len(raw_events)
-
-                    for norm_event in raw_events:
-                        # norm_event is a NormalizedEvent; grab the raw_payload dict
-                        raw = norm_event.raw_payload if hasattr(norm_event, "raw_payload") else {}
-                        if not raw:
-                            continue
-
-                        # Validate against local match_fn (belt-and-suspenders)
-                        if rule.match_fn and not rule.match_fn(raw):
-                            continue
-
-                        alert_doc = normalize_event(raw, rule)
-                        alert_doc["org_id"] = self.org_id
-                        alert_id = alert_doc["_id"]
-
-                        # Deduplication check
-                        existing = await self.db[self.ALERTS_COLLECTION].find_one(
-                            {"_id": alert_id}, {"_id": 1}
-                        )
-                        if existing:
-                            continue
-
-                        await self.db[self.ALERTS_COLLECTION].insert_one(alert_doc)
-                        new_alerts.append(alert_doc)
-
-                    logger.info(
-                        "ingestion_rule_complete",
-                        rule=rule.name,
-                        fetched=len(raw_events),
-                        inserted=len([a for a in new_alerts if a.get("rule_name") == rule.name]),
-                    )
-
-                except Exception as rule_err:
-                    # Never abort the whole pipeline for a single rule failure
-                    logger.error(
-                        "ingestion_rule_error",
-                        rule=rule.name,
-                        error=str(rule_err),
-                    )
-                    self.errors.append({"rule": rule.name, "error": str(rule_err)})
+                    event = to_canonical(row)
+                except Exception as exc:  # a malformed row must not fail the cycle
+                    logger.warning("ingestion_row_unmappable", error=str(exc))
+                    event = None
+                if event is None:
+                    run["unmapped"] += 1
                     continue
+                reason = self.noise.reason(event)
+                if reason:
+                    run["suppressed"][reason] = run["suppressed"].get(reason, 0) + 1
+                    continue
+                events.append(event)
+        run["truncated"] = pages >= settings.INGEST_MAX_PAGES and last_page_len >= settings.INGEST_PAGE_SIZE
+        return events, newest
 
+    def _detect(self, events: List[CanonicalEvent], run: dict) -> List[RuleHit]:
+        hits: List[RuleHit] = []
+        brute = next((r for r in self.rules if r.name == BRUTE_FORCE_RULE), None)
+        for event in events:
+            for rule in self.rules:
+                if rule.name == BRUTE_FORCE_RULE or rule.match_fn is None:
+                    continue
+                try:
+                    matched = rule.match_fn(event.fields)
+                except Exception as exc:
+                    run["rule_errors"] += 1
+                    logger.error("ingestion_rule_error", rule=rule.name, error=str(exc))
+                    continue
+                if matched:
+                    hits.append(RuleHit(rule, event))
+        if brute is not None:
+            for event, count in aggregate_failed_logons(
+                events, settings.BRUTE_FORCE_THRESHOLD, settings.INGEST_DEDUP_BUCKET_SECONDS,
+            ):
+                hits.append(RuleHit(brute, event, count))
+        self.rules_run = len(self.rules)
+        return hits
+
+    async def _store(self, groups, run: dict) -> List[dict]:
+        new_alerts: List[dict] = []
+        collection = self.db[self.ALERTS_COLLECTION]
+        for group in groups:
+            doc = build_alert_doc(group, self.org_id, self.noise)
+            insert_only = {k: v for k, v in doc.items() if k not in ("_id", "count", "last_seen")}
+            result = await collection.update_one(
+                {"_id": doc["_id"]},
+                {"$setOnInsert": insert_only, "$max": {"count": doc["count"], "last_seen": doc["last_seen"]}},
+                upsert=True,
+            )
+            if result.upserted_id is not None:
+                new_alerts.append(doc)
+                run["alerts_new"] += 1
+            else:
+                run["alerts_seen"] += 1
+        return new_alerts
+
+    # -- public entry point ---------------------------------------------
+
+    async def fetch_and_store_alerts(self, limit: Optional[int] = None) -> List[dict]:
+        run = {
+            "_id": str(uuid.uuid4()), "org_id": self.org_id, "started_at": datetime.now(timezone.utc),
+            "status": "ok", "fetched": 0, "unmapped": 0, "suppressed": {}, "rule_errors": 0,
+            "hits": 0, "alerts_new": 0, "alerts_seen": 0, "truncated": False, "lag_seconds": None, "errors": [],
+        }
+        self.errors, self.total_fetched = [], 0
+        new_alerts: List[dict] = []
+        stage = "fetch"
+        splunk = self._splunk_factory()
+        try:
+            cursor = await self._load_cursor()
+            events, newest = await self._collect(splunk, self._earliest_epoch(cursor), run)
+            stage = "detect"
+            hits = self._detect(events, run)
+            run["hits"] = len(hits)
+            stage = "store"
+            groups = group_hits(hits, self.org_id, settings.INGEST_DEDUP_BUCKET_SECONDS)
+            new_alerts = await self._store(groups, run)
+            await self._save_cursor(newest)  # only reached when every stage succeeded
+            if newest:
+                run["lag_seconds"] = max(0, int((datetime.now(timezone.utc) - newest).total_seconds()))
+        except Exception as exc:
+            run["status"] = "error"
+            self.errors.append({"stage": stage, "error": str(exc)})
+            run["errors"] = list(self.errors)
+            logger.error("ingestion_cycle_failed", stage=stage, error=str(exc))
         finally:
             await splunk.close()
-
-        await self._update_last_ingested_time()
+            run["finished_at"] = datetime.now(timezone.utc)
+            self.total_fetched = run["fetched"]
+            try:
+                await self.db[self.RUNS_COLLECTION].insert_one(run)
+            except Exception as exc:  # health bookkeeping must never mask the real result
+                logger.error("ingestion_run_record_failed", error=str(exc))
 
         logger.info(
-            "ingestion_complete",
-            total_fetched=self.total_fetched,
-            total_inserted=len(new_alerts),
-            rules_run=self.rules_run,
+            "ingestion_complete", fetched=run["fetched"], unmapped=run["unmapped"],
+            suppressed=sum(run["suppressed"].values()), alerts_new=run["alerts_new"],
+            alerts_seen=run["alerts_seen"], status=run["status"],
         )
         return new_alerts
