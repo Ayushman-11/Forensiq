@@ -5,7 +5,7 @@ Implements SIEMProvider interface using httpx async client.
 
 import asyncio
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, AsyncIterator
 import httpx
 from app.core.config import settings
 from app.core.logging import logger
@@ -163,6 +163,30 @@ class SplunkClient:
         response.raise_for_status()
         data = response.json()
         return data.get("results", [])
+
+    async def search_raw_pages(
+        self,
+        query: str,
+        earliest_time: str,
+        latest_time: str = "now",
+        page_size: int = 500,
+        max_pages: int = 20,
+    ) -> AsyncIterator[List[Dict[str, Any]]]:
+        """Runs one search job and yields raw result rows page by page (no normalization)."""
+        clean_query = query.strip()
+        if not (clean_query.startswith("search") or clean_query.startswith("|")):
+            clean_query = f"search {clean_query}"
+
+        sid = await self.submit_search(clean_query, earliest_time, latest_time)
+        await self.poll_search(sid, max_wait_seconds=120)
+
+        for page_index in range(max_pages):
+            rows = await self.get_results(sid, offset=page_index * page_size, limit=page_size)
+            if not rows:
+                return
+            yield rows
+            if len(rows) < page_size:
+                return
 
     async def list_alerts(self, limit: int = 50) -> List[NormalizedAlert]:
         """Lists active threat alert rules and fired alerts from Splunk REST API."""
