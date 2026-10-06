@@ -4,6 +4,7 @@ Alert Ingestion and Listing endpoints.
 
 from typing import List, Dict, Any, Literal, Optional
 from datetime import datetime, timedelta, timezone
+import re
 import uuid
 import asyncio
 import json
@@ -16,6 +17,7 @@ from app.models.alert import AlertModel
 from app.services.ingestion import IngestionService
 from app.agents.graph import investigation_graph
 from app.core.logging import logger
+from app.core.errors import internal_error, new_request_id
 from app.api.deps import require_roles, get_current_user
 from app.core.tenancy import scoped_query, tenant_filter, tenant_id
 from app.services.audit import record_audit
@@ -30,29 +32,39 @@ class DispositionRequest(BaseModel):
 class NoteRequest(BaseModel):
     content: str = Field(min_length=1, max_length=5000)
 
+VALID_SEVERITIES = {"critical", "high", "medium", "low"}
+VALID_STATUSES = {
+    s.lower(): s
+    for s in ("New", "Investigating", "Investigated", "Investigation Failed", "Closed", "Escalated", "Suppressed")
+}
+
 @router.get("/", response_model=List[dict])
 async def list_alerts(
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=200),
     severity: str = Query(None, description="Filter by severity"),
     status: str = Query(None, description="Filter by status"),
-    search: str = Query(None, description="Search in title or host"),
+    search: str = Query(None, max_length=100, description="Search in title or host"),
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
     """Fetches recent alerts from MongoDB with optional filtering."""
+    conditions = []
+    if severity and severity.lower() != "all":
+        if severity.lower() not in VALID_SEVERITIES:
+            raise HTTPException(status_code=422, detail=f"severity must be one of {sorted(VALID_SEVERITIES)} or 'all'")
+        conditions.append({"severity": severity.lower()})
+    if status and status.lower() != "all":
+        canonical = VALID_STATUSES.get(status.lower())
+        if canonical is None:
+            raise HTTPException(status_code=422, detail=f"status must be one of {sorted(VALID_STATUSES.values())} or 'all'")
+        conditions.append({"status": canonical})
+    if search:
+        pattern = re.escape(search)
+        conditions.append({"$or": [
+            {"title": {"$regex": pattern, "$options": "i"}},
+            {"host": {"$regex": pattern, "$options": "i"}},
+        ]})
     try:
-        conditions = []
-        if severity and severity.lower() != "all":
-            conditions.append({"severity": severity.lower()})
-        if status and status.lower() != "all":
-            conditions.append({"status": status})
-            
-        if search:
-            conditions.append({"$or": [
-                {"title": {"$regex": search, "$options": "i"}},
-                {"host": {"$regex": search, "$options": "i"}}
-            ]})
-            
         alerts = []
         cursor = db["alerts"].find(scoped_query(user, *conditions), {"raw_events": 0}).sort("created_at", -1).limit(limit)
         async for document in cursor:
@@ -64,17 +76,14 @@ async def list_alerts(
             alerts.append(document)
         return alerts
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to fetch alerts: {str(e)}",
-        )
+        raise internal_error("alerts_list_failed", e)
 
 @router.get("/stats/by-rule")
-async def alerts_by_rule(db: AsyncIOMotorDatabase = Depends(get_db)):
+async def alerts_by_rule(db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
     """Returns count of alerts grouped by rule_name."""
     try:
         pipeline = [
-            {"$match": {"rule_name": {"$exists": True, "$ne": None}}},
+            {"$match": {"$and": [tenant_filter(user), {"rule_name": {"$exists": True, "$ne": None}}]}},
             {"$group": {"_id": "$rule_name", "count": {"$sum": 1}}},
             {"$sort": {"count": -1}}
         ]
@@ -87,12 +96,12 @@ async def alerts_by_rule(db: AsyncIOMotorDatabase = Depends(get_db)):
         return []
 
 @router.get("/stats/timeline")
-async def alerts_timeline(db: AsyncIOMotorDatabase = Depends(get_db)):
+async def alerts_timeline(db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
     """Returns alert counts grouped by hour for the last 24 hours."""
     try:
         twenty_four_hours_ago = datetime.utcnow() - timedelta(hours=24)
         pipeline = [
-            {"$match": {"created_at": {"$gte": twenty_four_hours_ago}}},
+            {"$match": {"$and": [tenant_filter(user), {"created_at": {"$gte": twenty_four_hours_ago}}]}},
             {"$group": {
                 "_id": {
                     "year": {"$year": "$created_at"},
@@ -130,7 +139,7 @@ async def get_alert(alert_id: str, db: AsyncIOMotorDatabase = Depends(get_db), u
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise internal_error("alerts_endpoint_failed", e, alert_id=alert_id)
 
 @router.post("/ingest", response_model=dict)
 async def ingest_from_splunk(
@@ -145,11 +154,10 @@ async def ingest_from_splunk(
         if service.errors and not inserted:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail={"message": "Splunk ingestion failed", **result})
         return result
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Ingestion failed: {str(e)}"
-        )
+        raise internal_error("alerts_ingest_failed", e)
 
 
 async def _finalize_and_save_investigation(
@@ -255,13 +263,15 @@ async def run_investigation_background(alert_id: str, job_id: str, db: AsyncIOMo
         logger.info(f"Investigation {job_id} for alert {alert_id} completed successfully.")
 
     except Exception as e:
-        logger.error(f"Investigation {job_id} failed: {e}")
+        ref = new_request_id()
+        logger.error("investigation_failed", request_id=ref, job_id=job_id, alert_id=alert_id, error=str(e))
         await db["investigation_jobs"].update_one(
             {"_id": job_id},
             {"$set": {
                 "status": "failed",
                 "completed_at": datetime.utcnow(),
-                "error": str(e)
+                "error": "investigation_failed",
+                "error_ref": ref,
             }}
         )
         await db["alerts"].update_one(
@@ -442,16 +452,17 @@ async def investigate_alert_stream(
                 yield f"event: complete\ndata: {json.dumps(complete_event, default=str)}\n\n"
 
             except Exception as e:
-                logger.error(f"Investigation stream error for {alert_id}: {e}")
+                ref = new_request_id()
+                logger.error("investigation_stream_failed", request_id=ref, alert_id=alert_id, error=str(e))
                 await db["investigation_jobs"].update_one(
                     {"_id": job_id},
-                    {"$set": {"status": "failed", "completed_at": datetime.now(timezone.utc), "error": str(e)}}
+                    {"$set": {"status": "failed", "completed_at": datetime.now(timezone.utc), "error": "investigation_failed", "error_ref": ref}}
                 )
                 await db["alerts"].update_one(
                     {"_id": alert_id},
                     {"$set": {"status": "Investigation Failed"}}
                 )
-                yield f"event: error\ndata: {json.dumps({'job_id': job_id, 'alert_id': alert_id, 'error': str(e)})}\n\n"
+                yield f"event: error\ndata: {json.dumps({'job_id': job_id, 'alert_id': alert_id, 'error': f'Investigation failed (ref {ref})'})}\n\n"
 
         return StreamingResponse(
             sse_event_stream(),
@@ -465,7 +476,7 @@ async def investigate_alert_stream(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise internal_error("alerts_endpoint_failed", e, alert_id=alert_id)
 
 @router.post("/{alert_id:path}/investigate", response_model=dict)
 async def investigate_alert(
@@ -507,13 +518,20 @@ async def investigate_alert(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise internal_error("alerts_endpoint_failed", e, alert_id=alert_id)
+
+def _sanitize_job(job: dict) -> dict:
+    """Legacy job rows stored str(exception) in `error`; hide it unless it is a sanitized row (has error_ref)."""
+    if job.get("error") and not job.get("error_ref"):
+        job["error"] = "investigation_failed"
+    return job
+
 
 @router.get("/investigation/{job_id}", response_model=dict)
-async def get_investigation_status(job_id: str, db: AsyncIOMotorDatabase = Depends(get_db)):
+async def get_investigation_status(job_id: str, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
     """Polls the status of an ongoing investigation."""
     try:
-        job = await db["investigation_jobs"].find_one({"_id": job_id})
+        job = await db["investigation_jobs"].find_one(scoped_query(user, {"_id": job_id}))
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
             
@@ -523,11 +541,11 @@ async def get_investigation_status(job_id: str, db: AsyncIOMotorDatabase = Depen
             if key in job and isinstance(job[key], datetime):
                 job[key] = job[key].isoformat()
                 
-        return job
+        return _sanitize_job(job)
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise internal_error("alerts_endpoint_failed", e, job_id=job_id)
 
 @router.get("/{alert_id:path}/investigations")
 async def investigation_history(alert_id: str, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
@@ -538,7 +556,7 @@ async def investigation_history(alert_id: str, db: AsyncIOMotorDatabase = Depend
         job["_id"] = str(job["_id"])
         for key in ("created_at", "started_at", "completed_at"):
             if isinstance(job.get(key), datetime): job[key] = job[key].isoformat()
-        jobs.append(job)
+        jobs.append(_sanitize_job(job))
     return jobs
 
 @router.patch("/{alert_id:path}/disposition")

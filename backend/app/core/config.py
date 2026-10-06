@@ -10,6 +10,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Named constant so the "insecure default" comparison isn't a fragile string
 # duplicate between the field default and the production fail-fast check.
 DEFAULT_SECRET_KEY = "default-development-secret-key-must-change-in-prod-min-32-chars"
+DEFAULT_SPLUNK_PASSWORD = "ChangedPassword123!"
+
+
+_NON_PRODUCTION_ENVS = frozenset({"development", "dev", "test", "testing", "local"})
 
 
 class Settings(BaseSettings):
@@ -22,13 +26,13 @@ class Settings(BaseSettings):
 
     # General Configuration
     ENV: str = Field(default="development", description="Application runtime environment")
-    DEBUG: bool = Field(default=True, description="Enable debug mode and verbose logs")
+    DEBUG: bool = Field(default=False, description="Enable debug mode and verbose logs")
     SECRET_KEY: str = Field(
         default=DEFAULT_SECRET_KEY,
         description="JWT signature secret key",
     )
     ALGORITHM: str = Field(default="HS256", description="JWT signing algorithm")
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=60 * 24, description="Access token TTL in minutes")
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=30, description="Access token TTL in minutes")
     REFRESH_TOKEN_EXPIRE_MINUTES: int = Field(
         default=60 * 24 * 7, description="Refresh token TTL in minutes (7 days)"
     )
@@ -36,10 +40,18 @@ class Settings(BaseSettings):
     # Splunk Provider Configuration
     SPLUNK_URL: str = Field(default="https://localhost:8089", description="Splunk REST Management API URL")
     SPLUNK_USERNAME: str = Field(default="admin", description="Splunk REST API username")
-    SPLUNK_PASSWORD: str = Field(default="ChangedPassword123!", description="Splunk REST API password")
+    SPLUNK_PASSWORD: str = Field(default=DEFAULT_SPLUNK_PASSWORD, description="Splunk REST API password")
     SPLUNK_VERIFY_SSL: bool = Field(default=False, description="Verify SSL certificates for Splunk API")
     SPLUNK_DEFAULT_INDEX: str = Field(default="main", description="Default Splunk index to search")
     SPLUNK_DETECTION_INDEX: str = Field(default="windows", description="Index containing detection telemetry")
+    SPLUNK_ALLOWED_INDEXES: List[str] = Field(
+        default=["windows"], description="Indexes users may query through /search"
+    )
+    SEARCH_MAX_RANGE_DAYS: int = Field(default=30, description="Maximum lookback for /search queries")
+
+    # Login throttling
+    LOGIN_MAX_FAILURES: int = Field(default=5, description="Failed logins per email+IP before lockout")
+    LOGIN_LOCKOUT_MINUTES: int = Field(default=15, description="Lockout duration in minutes")
 
     # Database Configuration
     MONGO_URI: str = Field(
@@ -103,15 +115,23 @@ class Settings(BaseSettings):
     )
 
     @model_validator(mode="after")
-    def _reject_insecure_secret_in_production(self) -> "Settings":
-        """Fail fast at startup if production is left signing JWTs with the
-        publicly-known default SECRET_KEY. Development/test are unaffected."""
-        if self.ENV.lower() == "production" and self.SECRET_KEY == DEFAULT_SECRET_KEY:
-            raise ValueError(
-                "FORENSIQ_SECRET_KEY must be set to a non-default value when "
-                "FORENSIQ_ENV=production. Refusing to start with the insecure "
-                "default development secret key."
-            )
+    def _reject_insecure_production_settings(self) -> "Settings":
+        """Fail fast at startup if any non-development environment runs with insecure defaults."""
+        if self.ENV.strip().lower() in _NON_PRODUCTION_ENVS:
+            return self
+        problems = []
+        if self.SECRET_KEY == DEFAULT_SECRET_KEY:
+            problems.append("FORENSIQ_SECRET_KEY must not be the insecure default development key")
+        elif len(self.SECRET_KEY) < 32:
+            problems.append("FORENSIQ_SECRET_KEY must be at least 32 characters")
+        if self.SPLUNK_PASSWORD == DEFAULT_SPLUNK_PASSWORD:
+            problems.append("FORENSIQ_SPLUNK_PASSWORD must not be the default")
+        if not self.SPLUNK_PASSWORD:
+            problems.append("FORENSIQ_SPLUNK_PASSWORD must not be empty")
+        if self.DEBUG:
+            problems.append("FORENSIQ_DEBUG must be false in production")
+        if problems:
+            raise ValueError("Refusing to start in production: " + "; ".join(problems))
         return self
 
 

@@ -17,6 +17,8 @@ async def test_ensure_indexes_creates_expected_indexes():
     assert any("org_id" in name and "created_at" in name for name in alert_idx)
     runs_idx = await db["ingestion_runs"].index_information()
     assert any(v.get("expireAfterSeconds") for v in runs_idx.values())
+    attempts_idx = await db["login_attempts"].index_information()
+    assert any(v.get("expireAfterSeconds") == 0 for v in attempts_idx.values())
 
 
 @pytest.mark.asyncio

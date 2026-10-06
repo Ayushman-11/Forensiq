@@ -12,6 +12,7 @@ from app.database.session import get_db
 from app.api.deps import get_current_user
 from app.core.tenancy import scoped_query
 from app.core.logging import logger
+from app.core.errors import internal_error
 from app.services.report_generator import generate_investigation_report, generate_executive_summary
 
 router = APIRouter()
@@ -60,8 +61,7 @@ async def download_full_report(
     try:
         pdf_bytes = generate_investigation_report(alert)
     except Exception as exc:
-        logger.error("report_generation_failed", alert_id=alert_id, error=str(exc))
-        raise HTTPException(status_code=500, detail=f"PDF generation failed: {str(exc)}")
+        raise internal_error("report_generation_failed", exc, alert_id=alert_id)
 
     filename = _alert_id_to_filename(alert_id, "investigation_report")
     logger.info("report_generation_success", alert_id=alert_id, report_type="full", bytes=len(pdf_bytes))
@@ -99,8 +99,7 @@ async def download_executive_summary(
     try:
         pdf_bytes = generate_executive_summary(alert)
     except Exception as exc:
-        logger.error("report_generation_failed", alert_id=alert_id, error=str(exc))
-        raise HTTPException(status_code=500, detail=f"Executive summary generation failed: {str(exc)}")
+        raise internal_error("report_generation_failed", exc, alert_id=alert_id)
 
     filename = _alert_id_to_filename(alert_id, "executive_summary")
     logger.info("report_generation_success", alert_id=alert_id, report_type="executive", bytes=len(pdf_bytes))

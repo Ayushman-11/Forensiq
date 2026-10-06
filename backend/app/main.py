@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.core.config import settings
+from app.core.errors import new_request_id
 from app.core.logging import setup_logging, logger
 from app.api.v1.router import api_router
 from app.database.indexes import ensure_indexes
@@ -84,11 +85,16 @@ app.add_middleware(
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """Global unhandled exception handler returning structured JSON response."""
-    logger.error("unhandled_exception", path=request.url.path, error=str(exc))
+    """Global unhandled exception handler: generic body, real error logged under a request id."""
+    ref = new_request_id()
+    logger.error(
+        "unhandled_exception", path=request.url.path, request_id=ref,
+        error=str(exc), error_type=type(exc).__name__,
+    )
     return JSONResponse(
         status_code=500,
-        content={"detail": "An internal server error occurred.", "error": str(exc)},
+        content={"detail": "An internal server error occurred.", "request_id": ref},
+        headers={"X-Request-ID": ref},
     )
 
 

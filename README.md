@@ -117,6 +117,8 @@ Ensure you have the following installed on your machine:
    python -m uvicorn app.main:app --port 8001 --reload
    ```
 
+   Login throttling keys on the client IP; behind a reverse proxy run uvicorn with `--proxy-headers --forwarded-allow-ips=<proxy ip>` so the real client IP is used.
+
 ### 3. Frontend Setup (Next.js)
 1. Open a new terminal and navigate to the `frontend` directory:
    ```bash
@@ -154,6 +156,7 @@ Forensiq uses MongoDB to store normalized alerts and AI investigation states.
      python scripts/export_db.py
      ```
      Zip the newly created `mongo_dump_json` folder and share it with your team.
+     `backend/mongo_dump_json/` is git-ignored and must never be committed (it contains password hashes and real telemetry); share it only as a zip over a private channel.
    - **To import (on a team member's machine):**
      Extract the zip file into the `backend` directory so that the folder `mongo_dump_json` is present. Ensure your backend virtual environment is active, then run:
      ```bash
@@ -190,7 +193,7 @@ raw Splunk row -> `CanonicalEvent` (normalization) -> noise suppression -> detec
 - **Dedup**: repeated detections collapse per `INGEST_DEDUP_BUCKET_SECONDS`; failed-logon bursts raise an alert at `BRUTE_FORCE_THRESHOLD` per bucket and source.
 - **Other settings**: `INVESTIGATION_CONCURRENCY` bounds concurrent auto-investigations; `POLLER_LEASE_TTL_SECONDS` is the single-poller lease TTL.
 - **Health endpoint**: `GET /api/v1/dashboard/ingestion-health` returns the caller-tenant's last run, up to 20 recent runs (fetched, suppressed by reason, new/seen alerts, truncation, lag, errors) and aggregate totals. Run records expire after 30 days.
-- **Regenerating test fixtures**: from `backend/`, run `./venv/Scripts/python.exe scripts/export_fixture_rows.py` to re-export real rows per EventCode from the lab dump into `tests/fixtures/splunk_rows.json`.
+- **Regenerating test fixtures**: from `backend/`, run `./venv/Scripts/python.exe scripts/export_fixture_rows.py` to re-export real rows per EventCode from the lab dump into `tests/fixtures/splunk_rows.json` (requires a local `mongo_dump_json`; produced by `scripts/export_db.py`; identifiers are pseudonymized automatically).
 
 ---
 

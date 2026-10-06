@@ -34,3 +34,6 @@ build/
 
 # Data dumps
 mongo_dump_json/
+
+# Local database dumps (contain credentials hashes and real telemetry) - never commit
+backend/mongo_dump_json/
