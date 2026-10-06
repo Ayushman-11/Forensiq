@@ -21,7 +21,7 @@ def test_adds_search_prefix_and_default_index():
     assert ok("search EventCode=1 | head 50") == "search index=windows EventCode=1 | head 50"
 
 
-def test_explicit_allowed_index_is_kept_and_not_duplicated():
+def test_explicit_allowed_index_is_accepted_after_injected_index():
     out = ok('search index="windows" EventCode=3 | stats count by host | sort -count')
     assert out.startswith('search index=windows index="windows" EventCode=3')
     assert ok("index=WINDOWS | head 5").startswith("search index=windows index=WINDOWS")
