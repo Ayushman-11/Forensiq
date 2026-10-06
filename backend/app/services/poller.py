@@ -1,34 +1,54 @@
 import asyncio
+import uuid
+
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from app.services.ingestion import IngestionService
+
 from app.agents.graph import investigation_graph
+from app.core.config import settings
 from app.core.logging import logger
+from app.services.ingestion import IngestionService
+from app.services.lease import acquire_lease, release_lease
+
+LEASE_NAME = "alert_poller"
 
 
 class AlertPoller:
     def __init__(self, db: AsyncIOMotorDatabase, interval_seconds: int = 30):
         self.db = db
         self.interval_seconds = interval_seconds
+        self.owner = str(uuid.uuid4())
         self._running = False
         self._task = None
+        self._tasks: set = set()
+        self._semaphore = asyncio.Semaphore(settings.INVESTIGATION_CONCURRENCY)
+
+    async def _run_cycle(self) -> int:
+        """One poll: take/renew the lease, ingest, schedule bounded auto-investigations."""
+        if not await acquire_lease(self.db, LEASE_NAME, self.owner, settings.POLLER_LEASE_TTL_SECONDS):
+            logger.info("poller_lease_held_elsewhere")
+            return 0
+
+        service = IngestionService(self.db)  # fresh per cycle: counters and errors do not accumulate
+        new_alerts = await service.fetch_and_store_alerts()
+        if not new_alerts:
+            logger.info("poller_no_new_alerts")
+            return 0
+
+        logger.info("poller_new_alerts", count=len(new_alerts), rules=sorted({a.get("rule_name") for a in new_alerts}))
+        for alert in new_alerts:
+            task = asyncio.create_task(self._bounded_investigation(alert))
+            self._tasks.add(task)  # keep a reference so the task is not garbage-collected
+            task.add_done_callback(self._tasks.discard)
+        return len(new_alerts)
+
+    async def _bounded_investigation(self, alert: dict) -> None:
+        async with self._semaphore:
+            await self._investigate_alert(alert)
 
     async def _poll_loop(self):
-        service = IngestionService(self.db)
         while self._running:
             try:
-                new_alerts = await service.fetch_and_store_alerts()
-
-                if new_alerts:
-                    logger.info(
-                        "poller_new_alerts",
-                        count=len(new_alerts),
-                        rules={a.get("rule_name") for a in new_alerts},
-                    )
-                    for alert in new_alerts:
-                        asyncio.create_task(self._investigate_alert(alert))
-                else:
-                    logger.info("poller_no_new_alerts")
-
+                await self._run_cycle()
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -119,4 +139,8 @@ class AlertPoller:
         self._running = False
         if self._task:
             self._task.cancel()
+        try:
+            asyncio.get_running_loop().create_task(release_lease(self.db, LEASE_NAME, self.owner))
+        except RuntimeError:
+            pass  # no running loop at interpreter shutdown; the lease simply expires
         logger.info("alert_poller_stopped")
