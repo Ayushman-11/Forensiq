@@ -63,3 +63,77 @@ async def test_cycle_uses_a_fresh_service_each_time_and_schedules_investigations
     await asyncio.gather(*list(poller._tasks))
     assert len(created) == 2
     assert poller._investigate_alert.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_stop_releases_lease_and_cancels_inflight_investigations(db):
+    import asyncio
+
+    poller = AlertPoller(db, interval_seconds=30)
+    started = asyncio.Event()
+
+    async def slow(alert):
+        started.set()
+        await asyncio.sleep(60)
+
+    def make_service(*a, **k):
+        inst = AsyncMock()
+        inst.fetch_and_store_alerts.return_value = [{"_id": "a1", "rule_name": "r"}]
+        return inst
+
+    poller._investigate_alert = slow
+    with patch("app.services.poller.IngestionService", side_effect=make_service):
+        assert await poller._run_cycle() == 1
+    await started.wait()
+    inflight = list(poller._tasks)
+    assert inflight
+    await poller.stop()
+    assert all(t.cancelled() for t in inflight)
+    assert await acquire_lease(db, "alert_poller", "other", 60)
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_renews_lease_during_slow_cycle(db, monkeypatch):
+    import asyncio
+
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "POLLER_LEASE_TTL_SECONDS", 0.3)
+    poller = AlertPoller(db, interval_seconds=30)
+    seen = {}
+
+    def make_service(*a, **k):
+        inst = AsyncMock()
+
+        async def slow():
+            seen["first"] = (await db["leases"].find_one({"_id": "alert_poller"}))["expires_at"]
+            await asyncio.sleep(1)
+            seen["last"] = (await db["leases"].find_one({"_id": "alert_poller"}))["expires_at"]
+            seen["other"] = await acquire_lease(db, "alert_poller", "other", 60)
+            return []
+
+        inst.fetch_and_store_alerts.side_effect = slow
+        return inst
+
+    with patch("app.services.poller.IngestionService", side_effect=make_service):
+        assert await poller._run_cycle() == 0
+    assert seen["other"] is False
+    assert seen["last"] > seen["first"]
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_task_does_not_outlive_cycle(db):
+    import asyncio
+
+    poller = AlertPoller(db, interval_seconds=30)
+
+    def make_service(*a, **k):
+        inst = AsyncMock()
+        inst.fetch_and_store_alerts.return_value = []
+        return inst
+
+    before = asyncio.all_tasks()
+    with patch("app.services.poller.IngestionService", side_effect=make_service):
+        await poller._run_cycle()
+    leftover = [t for t in asyncio.all_tasks() - before if not t.done()]
+    assert leftover == []

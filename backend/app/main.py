@@ -48,7 +48,7 @@ async def lifespan(app: FastAPI):
     yield
     
     if poller:
-        poller.stop()
+        await poller.stop()
         
     await close_mongo_connection()
     logger.info("forensiq_backend_shutdown")
