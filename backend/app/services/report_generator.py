@@ -28,19 +28,19 @@ from reportlab.platypus import (
 from reportlab.platypus import SimpleDocTemplate
 
 # ─── Color Palette ───────────────────────────────────────────────────────────
-DARK_BG = colors.HexColor("#0C1322")
-NAVY = colors.HexColor("#0E1A2E")
-CARD_BG = colors.HexColor("#111C2E")
-BORDER = colors.HexColor("#1E2E48")
-CYAN = colors.HexColor("#22D3EE")
-CYAN_DIM = colors.HexColor("#0E7490")
+DARK_BG = colors.HexColor("#FFFFFF")
+NAVY = colors.HexColor("#EAF2F8")
+CARD_BG = colors.HexColor("#F4F7FA")
+BORDER = colors.HexColor("#C7D2DE")
+CYAN = colors.HexColor("#0B6175")
+CYAN_DIM = colors.HexColor("#5A8795")
 AMBER = colors.HexColor("#F59E0B")
 ROSE = colors.HexColor("#F43F5E")
 EMERALD = colors.HexColor("#10B981")
-SLATE_300 = colors.HexColor("#CBD5E1")
-SLATE_400 = colors.HexColor("#94A3B8")
-SLATE_200 = colors.HexColor("#E2E8F0")
-WHITE = colors.white
+SLATE_300 = colors.HexColor("#334155")
+SLATE_400 = colors.HexColor("#64748B")
+SLATE_200 = colors.HexColor("#1E293B")
+WHITE = colors.HexColor("#0F172A")
 
 
 SEVERITY_COLORS = {
@@ -69,7 +69,7 @@ def _styles():
             "cover_title",
             fontName="Helvetica-Bold",
             fontSize=26,
-            textColor=WHITE,
+            textColor=SLATE_200,
             leading=32,
             alignment=TA_LEFT,
         ),
@@ -143,7 +143,7 @@ def _styles():
             "exec_kpi_value",
             fontName="Helvetica-Bold",
             fontSize=22,
-            textColor=WHITE,
+            textColor=SLATE_200,
             leading=26,
             alignment=TA_CENTER,
         ),
@@ -159,7 +159,7 @@ def _styles():
             "exec_title",
             fontName="Helvetica-Bold",
             fontSize=20,
-            textColor=WHITE,
+            textColor=SLATE_200,
             leading=26,
             alignment=TA_LEFT,
         ),
@@ -176,7 +176,7 @@ def _styles():
 
 
 def _page_background(canvas, doc):
-    """Draw dark-themed background on every page."""
+    """Draw a restrained, light document background on every page."""
     canvas.saveState()
     canvas.setFillColor(DARK_BG)
     canvas.rect(0, 0, doc.width + doc.leftMargin + doc.rightMargin,
@@ -195,14 +195,14 @@ def _page_background(canvas, doc):
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     canvas.drawRightString(doc.width + doc.leftMargin, doc.height + doc.topMargin - 12 * mm, f"GENERATED: {ts}")
     # Footer
-    canvas.setFillColor(BORDER)
+    canvas.setFillColor(CARD_BG)
     canvas.rect(0, 0, doc.width + doc.leftMargin + doc.rightMargin, 14 * mm, fill=True, stroke=False)
     canvas.setFont("Helvetica", 7)
     canvas.setFillColor(SLATE_400)
     canvas.drawCentredString(
         (doc.width + doc.leftMargin + doc.rightMargin) / 2,
         5 * mm,
-        f"FORENSIQ CONFIDENTIAL — FOR AUTHORIZED SECURITY PERSONNEL ONLY  |  Page {doc.page}",
+        f"FORENSIQ CONFIDENTIAL | FOR AUTHORIZED SECURITY PERSONNEL ONLY | Page {doc.page}",
     )
     canvas.restoreState()
 
@@ -250,6 +250,18 @@ def _severity_badge(severity: str) -> str:
     }
     col = color_map.get(severity.lower(), "#94A3B8")
     return f'<font color="{col}"><b>{severity.upper()}</b></font>'
+
+
+def _risk_explanation(score: Any) -> str:
+    try:
+        numeric_score = float(score)
+    except (TypeError, ValueError):
+        numeric_score = 0
+    if numeric_score >= 80:
+        return "This is a high-risk event. Immediate containment and senior analyst review are recommended."
+    if numeric_score >= 50:
+        return "This event needs prompt analyst review. It may represent a real security issue, but more evidence is useful before escalation."
+    return "This event is currently assessed as lower risk. Continue monitoring and confirm that the activity is expected."
 
 
 # ─── Full Investigation Report ────────────────────────────────────────────────
@@ -330,7 +342,16 @@ def generate_investigation_report(alert: dict[str, Any]) -> bytes:
         ("Detection Rule", alert.get("rule_name", "Unknown")),
         ("Source SIEM", alert.get("source_siem", "Forensiq Internal")),
     ], S))
+    story.append(Spacer(1, 0.25 * cm))
+    story.append(Paragraph("What this means", S["label"]))
+    story.append(Paragraph(
+        "This document explains what was detected, how serious it appears, what evidence supports the finding, and what action is recommended.",
+        S["body"],
+    ))
     story.append(Spacer(1, 0.5 * cm))
+
+    # Keep the report readable even when optional investigation data is sparse.
+    story.append(PageBreak())
 
     # ── Section 1: Risk Assessment ────────────────────────────────────────────
     story.append(Paragraph("1. RISK ASSESSMENT", S["section_heading"]))
@@ -363,6 +384,8 @@ def generate_investigation_report(alert: dict[str, Any]) -> bytes:
     if risk_assessment.get("summary"):
         story.append(Paragraph("Risk Summary", S["label"]))
         story.append(Paragraph(_plain_text(risk_assessment["summary"]), S["body"]))
+    story.append(Paragraph("Plain-language interpretation", S["label"]))
+    story.append(Paragraph(_plain_text(_risk_explanation(risk_score)), S["body"]))
 
     # ── Section 2: AI Recommendation ─────────────────────────────────────────
     story.append(Paragraph("2. AI AGENT RECOMMENDATION", S["section_heading"]))
@@ -373,6 +396,10 @@ def generate_investigation_report(alert: dict[str, Any]) -> bytes:
         story.append(Paragraph(rec_text, S["recommendation"]))
     else:
         story.append(Paragraph("No automated investigation has been performed for this alert.", S["body"]))
+    story.append(Paragraph(
+        "Recommended next step: a security analyst should confirm whether the activity is expected, then contain or close the alert according to the organization's incident process.",
+        S["body"],
+    ))
     story.append(Spacer(1, 0.3 * cm))
 
     # ── Section 3: MITRE ATT&CK ───────────────────────────────────────────────
@@ -419,8 +446,8 @@ def generate_investigation_report(alert: dict[str, Any]) -> bytes:
             desc = _plain_text(evt.get("description"))
             src = _plain_text(evt.get("source"))
             story.append(Paragraph(
-                f'<font color="#22D3EE">▶ Step {i}</font>  '
-                f'<font color="#CBD5E1">{desc}</font>',
+                f'<font color="#0B6175"><b>Step {i}</b></font>  '
+                f'<font color="#334155">{desc}</font>',
                 S["value"],
             ))
             story.append(Paragraph(f'Timestamp: {_plain_text(ts)}  ·  Source: {src}', S["label"]))
@@ -449,7 +476,7 @@ def generate_investigation_report(alert: dict[str, Any]) -> bytes:
             rows.append([
                 Paragraph(_plain_text(e.get("ioc")), S["mono"]),
                 Paragraph(_plain_text(e.get("ioc_type")), S["value"]),
-                Paragraph(f'<font color="{rep_color}">{_plain_text(rep)}</font>', S["value"]),
+                Paragraph(f'<font color="{rep_color}"><b>{_plain_text(rep)}</b></font>', S["value"]),
                 Paragraph(_plain_text(e.get("threat_score")), S["value"]),
                 Paragraph(_plain_text(e.get("source")), S["value"]),
             ])
