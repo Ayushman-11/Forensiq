@@ -1,0 +1,44 @@
+# Noise suppression policy. Everything suppressed is counted per rule in
+# ingestion_runs.suppressed, so the policy is auditable. Keep entries narrow.
+
+# Registered domains whose subdomains are never worth a threat-intel lookup
+# or a DNS detection. Do not add file-hosting or paste domains here.
+benign_domains:
+  - microsoft.com
+  - windowsupdate.com
+  - windows.com
+  - msftconnecttest.com
+  - office.com
+  - office365.com
+  - live.com
+  - digicert.com
+  - symcd.com
+
+suppress:
+  # Machine accounts (NAME$) making explicit-credential logons to localhost from
+  # the stock System32 service binaries is routine (virtual machine accounts,
+  # service SIDs). Anything else (other processes, remote targets) stays visible.
+  - name: machine_account_explicit_logon
+    event_code: "4648"
+    where:
+      subject_user_endswith: "$"
+      process_in: [lsass.exe, svchost.exe, vmcompute.exe]
+      process_path_startswith:
+        - "C:\\Windows\\System32\\"
+      fields_regex:
+        TargetServerName: "^localhost$"
+
+  - name: benign_dns_lookup
+    event_code: "22"
+    where:
+      domain_benign: true
+
+  # Telemetry shipping from the lab Splunk forwarder. Requires the install path
+  # too, so a same-named binary elsewhere (e.g. Temp) stays visible.
+  - name: splunk_forwarder_traffic
+    event_code: "3"
+    where:
+      process_in: [splunkd.exe, splunk-winevtlog.exe]
+      process_path_startswith:
+        - "C:\\Program Files\\SplunkUniversalForwarder\\"
+        - "C:\\Program Files\\Splunk\\"

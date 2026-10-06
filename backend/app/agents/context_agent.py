@@ -1,6 +1,7 @@
 from typing import Dict, Any
 from app.core.logging import logger
 from app.agents.state import AgentState
+from app.normalization.ioc import public_domain, public_ip
 
 def extract_context_node(state: AgentState) -> Dict[str, Any]:
     """
@@ -65,22 +66,17 @@ def extract_context_node(state: AgentState) -> Dict[str, Any]:
     # We already have IOCs extracted during ingestion, but we can augment them
     existing_iocs = set(alert_data.get("extracted_iocs", []))
     
-    # Re-extract just in case
-    ips = {raw.get("SourceIp"), raw.get("DestinationIp"), raw.get("IpAddress")}
-    domains = {raw.get("QueryName")}
-    
-    # Filter Nones and local IPs
-    def is_valid_ioc(i):
-        if not i or not isinstance(i, str) or i == "-": return False
-        if i.startswith("10.") or i.startswith("192.168.") or i.startswith("127."):
-            return False
-        if "::1" in i: return False
-        return True
-        
-    for i in list(ips) + list(domains):
-        if is_valid_ioc(i):
-            existing_iocs.add(i)
-            
+    # Re-extract just in case, using the shared global-address check
+    for candidate in (raw.get("SourceIp"), raw.get("DestinationIp"), raw.get("IpAddress")):
+        ip = public_ip(candidate)
+        if ip:
+            existing_iocs.add(ip)
+    query_name = raw.get("QueryName")
+    if isinstance(query_name, str) and query_name.strip() not in ("", "-"):
+        domain = public_domain(query_name, allow_file_tlds=True)
+        if domain:
+            existing_iocs.add(domain)
+
     extracted_iocs = list(existing_iocs)
     
     logger.info("context_node_complete", 

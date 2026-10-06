@@ -39,3 +39,21 @@ async def get_dashboard_metrics(db: AsyncIOMotorDatabase = Depends(get_db), user
         ai_confidence_avg=ai_confidence_avg,
         last_ingested_at=last_ingested_at,
     )
+
+
+@router.get("/ingestion-health")
+async def ingestion_health(db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
+    """Recent ingestion cycles for the caller's tenant: counts, suppression, errors and lag."""
+    runs = []
+    cursor = db["ingestion_runs"].find(scoped_query(user)).sort("started_at", -1).limit(20)
+    async for run in cursor:
+        for key in ("started_at", "finished_at"):
+            if hasattr(run.get(key), "isoformat"):
+                run[key] = run[key].isoformat()
+        runs.append(run)
+    totals = {
+        "fetched": sum(r.get("fetched", 0) for r in runs),
+        "suppressed": sum(sum((r.get("suppressed") or {}).values()) for r in runs),
+        "alerts_new": sum(r.get("alerts_new", 0) for r in runs),
+    }
+    return {"last_run": runs[0] if runs else None, "runs": runs, "totals": totals}

@@ -40,3 +40,14 @@ def mock_splunk_search_results():
             "ParentImage": "C:\\Windows\\System32\\powershell.exe",
         }
     ]
+
+
+import json
+from pathlib import Path
+
+
+@pytest.fixture(scope="session")
+def splunk_rows():
+    """Real Splunk rows (from the lab dump) keyed by EventCode string."""
+    path = Path(__file__).parent / "fixtures" / "splunk_rows.json"
+    return json.loads(path.read_text(encoding="utf-8"))

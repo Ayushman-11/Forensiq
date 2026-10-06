@@ -77,6 +77,17 @@ class Settings(BaseSettings):
         description="Time to live in hours for cached IOC enrichments in MongoDB"
     )
 
+    # Ingestion pipeline
+    INGEST_OVERLAP_SECONDS: int = Field(default=120, description="Re-query overlap to catch late-indexed events")
+    INGEST_MAX_PAGES: int = Field(default=20, description="Max result pages fetched per ingestion cycle")
+    INGEST_PAGE_SIZE: int = Field(default=500, description="Rows per Splunk result page")
+    INGEST_INITIAL_LOOKBACK_HOURS: int = Field(default=168, description="First-run lookback window in hours")
+    INGEST_DEDUP_BUCKET_SECONDS: int = Field(default=300, description="Time bucket for collapsing repeated detections")
+    BRUTE_FORCE_THRESHOLD: int = Field(default=5, description="Failed logons per bucket and source that raise an alert")
+    NOISE_CONFIG_PATH: str = Field(default="config/noise.yaml", description="Noise suppression policy file")
+    INVESTIGATION_CONCURRENCY: int = Field(default=3, description="Max concurrent auto-investigations")
+    POLLER_LEASE_TTL_SECONDS: int = Field(default=90, description="Single-poller lease time to live")
+
     # Grok / xAI LLM Configuration
     XAI_API_KEY: str = Field(
         default="",

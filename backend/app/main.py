@@ -10,6 +10,8 @@ from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.core.logging import setup_logging, logger
 from app.api.v1.router import api_router
+from app.database.indexes import ensure_indexes
+from app.normalization.noise import NoiseFilter
 
 
 from app.database.session import connect_to_mongo, close_mongo_connection
@@ -24,6 +26,8 @@ async def lifespan(app: FastAPI):
     """Application lifespan context manager handling startup and shutdown events."""
     setup_logging()
     logger.info("forensiq_backend_startup", env=settings.ENV, debug=settings.DEBUG)
+    # Fail fast on a broken noise policy instead of failing every ingestion cycle.
+    NoiseFilter.from_yaml(settings.NOISE_CONFIG_PATH)
     await connect_to_mongo()
 
     if db_config.client:
@@ -39,6 +43,10 @@ async def lifespan(app: FastAPI):
         await db["ioc_cache"].create_index(
             "cached_at", expireAfterSeconds=int(settings.IOC_CACHE_TTL_HOURS * 3600)
         )
+        try:
+            await ensure_indexes(db)
+        except Exception as exc:  # e.g. a conflicting pre-existing index must not take the API down
+            logger.error("ensure_indexes_failed", error=str(exc))
 
     global poller
     if db_config.client:
@@ -48,7 +56,7 @@ async def lifespan(app: FastAPI):
     yield
     
     if poller:
-        poller.stop()
+        await poller.stop()
         
     await close_mongo_connection()
     logger.info("forensiq_backend_shutdown")
