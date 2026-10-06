@@ -22,40 +22,29 @@ import {
 import { apiFetch } from '@/lib/api';
 
 const QUICK_QUERIES = [
-  { 
-    label: 'Failed Windows Logins (4625)', 
-    query: 'search index=* EventCode=4625',
+  {
+    label: 'Failed Windows Logins (4625)',
+    query: 'search index=windows EventCode=4625',
     category: 'Authentication'
   },
-  { 
-    label: 'PowerShell Execution (Sysmon 1)', 
-    query: 'search index=sysmon EventCode=1 | head 50',
+  {
+    label: 'Process Creation (Sysmon 1)',
+    query: 'search index=windows EventCode=1 | head 50',
     category: 'Execution'
   },
-  { 
-    label: 'Network Connections (Sysmon 3)', 
-    query: 'search index=sysmon EventCode=3 | head 50',
+  {
+    label: 'Network Connections (Sysmon 3)',
+    query: 'search index=windows EventCode=3 | head 50',
     category: 'Network'
   },
-  { 
-    label: 'Latest Sysmon Telemetry', 
-    query: 'search index=sysmon | head 50',
-    category: 'Sysmon'
-  },
-  { 
-    label: 'Latest Security Events (All)', 
-    query: 'search index=* | head 50',
-    category: 'Discovery'
-  },
   {
-    label: 'PowerShell Operational Logs',
-    query: 'search index=main | head 50',
-    category: 'PowerShell'
+    label: 'Latest Windows Telemetry',
+    query: 'search index=windows | head 50',
+    category: 'Discovery'
   }
 ];
 
 const TIME_RANGES = [
-  { label: 'All Time', value: '0' },
   { label: 'Past 24 Hours', value: '-24h' },
   { label: 'Past 7 Days', value: '-7d' },
   { label: 'Past 1 Hour', value: '-1h' },
@@ -80,7 +69,7 @@ type SearchEvent = {
 };
 
 export default function SearchPage() {
-  const [query, setQuery] = useState('search index=sysmon | head 50');
+  const [query, setQuery] = useState('search index=windows | head 50');
   const [timeRange, setTimeRange] = useState('-24h');
   const [events, setEvents] = useState<SearchEvent[]>([]);
   const [loading, setLoading] = useState(false);
@@ -101,7 +90,7 @@ export default function SearchPage() {
     const startTime = performance.now();
 
     try {
-      const res = await apiFetch('/api/v1/search/search', {
+      const res = await apiFetch('/api/v1/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

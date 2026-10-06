@@ -4,7 +4,11 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from app.api.deps import get_siem_client, get_db
+from app.api.deps import get_siem_client, get_db, require_roles
+from app.core.config import settings
+from app.core.tenancy import scoped_query
+from app.services.audit import record_audit
+from app.services.spl_guard import SPLRejected, validate_search, validate_time_range
 from app.infrastructure.siem.base import SIEMProvider
 from app.schemas.normalized_event import NormalizedEvent
 from app.core.logging import logger
@@ -31,14 +35,30 @@ async def execute_search(
     req: SearchRequest,
     siem: SIEMProvider = Depends(get_siem_client),
     db: AsyncIOMotorDatabase = Depends(get_db),
+    user: dict = Depends(require_roles("admin", "soc_manager", "soc_analyst")),
 ):
     """
-    Executes a search query against the configured SIEM provider and returns normalized events.
-    If Splunk is unavailable or unauthenticated, gracefully falls back to searching stored telemetry in MongoDB.
+    Executes a guarded search against the configured SIEM and returns normalized events.
+    If Splunk is unavailable, falls back to searching the caller's tenant data in MongoDB.
     """
     try:
+        validate_time_range(req.earliest_time, req.latest_time, settings.SEARCH_MAX_RANGE_DAYS)
+        safe_query = validate_search(
+            req.query,
+            allowed_indexes=settings.SPLUNK_ALLOWED_INDEXES,
+            default_index=settings.SPLUNK_DETECTION_INDEX,
+        )
+    except SPLRejected as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    try:
+        await record_audit(db, user, "search.execute", "search", "splunk", {"query": safe_query[:500]})
+    except Exception as exc:  # auditing must not make search unavailable, but must be visible in logs
+        logger.error("search_audit_failed", error=str(exc))
+
+    try:
         events = await siem.search(
-            query=req.query,
+            query=safe_query,
             earliest_time=req.earliest_time,
             latest_time=req.latest_time,
             limit=req.limit,
@@ -68,7 +88,7 @@ async def execute_search(
                 ]
             }
 
-        cursor = db["alerts"].find(mongo_query).limit(req.limit)
+        cursor = db["alerts"].find(scoped_query(user, mongo_query) if mongo_query else scoped_query(user)).limit(req.limit)
         alert_docs = await cursor.to_list(length=req.limit)
 
         events: List[NormalizedEvent] = []
