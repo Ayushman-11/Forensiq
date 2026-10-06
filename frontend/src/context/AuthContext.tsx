@@ -68,7 +68,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      throw new Error(body.detail || "Login failed");
+      if (typeof body.detail === "string" && body.detail) {
+        throw new Error(body.detail);
+      }
+      throw new Error(
+        res.status === 422 && Array.isArray(body.detail)
+          ? "Invalid email or password format"
+          : "Login failed"
+      );
     }
 
     const data = await res.json();
