@@ -16,6 +16,7 @@ from app.models.alert import AlertModel
 from app.services.ingestion import IngestionService
 from app.agents.graph import investigation_graph
 from app.core.logging import logger
+from app.core.errors import internal_error, new_request_id
 from app.api.deps import require_roles, get_current_user
 from app.core.tenancy import scoped_query, tenant_filter, tenant_id
 from app.services.audit import record_audit
@@ -64,10 +65,7 @@ async def list_alerts(
             alerts.append(document)
         return alerts
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to fetch alerts: {str(e)}",
-        )
+        raise internal_error("alerts_list_failed", e)
 
 @router.get("/stats/by-rule")
 async def alerts_by_rule(db: AsyncIOMotorDatabase = Depends(get_db)):
@@ -130,7 +128,7 @@ async def get_alert(alert_id: str, db: AsyncIOMotorDatabase = Depends(get_db), u
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise internal_error("alerts_endpoint_failed", e, alert_id=alert_id)
 
 @router.post("/ingest", response_model=dict)
 async def ingest_from_splunk(
@@ -145,11 +143,10 @@ async def ingest_from_splunk(
         if service.errors and not inserted:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail={"message": "Splunk ingestion failed", **result})
         return result
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Ingestion failed: {str(e)}"
-        )
+        raise internal_error("alerts_ingest_failed", e)
 
 
 async def _finalize_and_save_investigation(
@@ -255,13 +252,15 @@ async def run_investigation_background(alert_id: str, job_id: str, db: AsyncIOMo
         logger.info(f"Investigation {job_id} for alert {alert_id} completed successfully.")
 
     except Exception as e:
-        logger.error(f"Investigation {job_id} failed: {e}")
+        ref = new_request_id()
+        logger.error("investigation_failed", request_id=ref, job_id=job_id, alert_id=alert_id, error=str(e))
         await db["investigation_jobs"].update_one(
             {"_id": job_id},
             {"$set": {
                 "status": "failed",
                 "completed_at": datetime.utcnow(),
-                "error": str(e)
+                "error": "investigation_failed",
+                "error_ref": ref,
             }}
         )
         await db["alerts"].update_one(
@@ -442,16 +441,17 @@ async def investigate_alert_stream(
                 yield f"event: complete\ndata: {json.dumps(complete_event, default=str)}\n\n"
 
             except Exception as e:
-                logger.error(f"Investigation stream error for {alert_id}: {e}")
+                ref = new_request_id()
+                logger.error("investigation_stream_failed", request_id=ref, alert_id=alert_id, error=str(e))
                 await db["investigation_jobs"].update_one(
                     {"_id": job_id},
-                    {"$set": {"status": "failed", "completed_at": datetime.now(timezone.utc), "error": str(e)}}
+                    {"$set": {"status": "failed", "completed_at": datetime.now(timezone.utc), "error": "investigation_failed", "error_ref": ref}}
                 )
                 await db["alerts"].update_one(
                     {"_id": alert_id},
                     {"$set": {"status": "Investigation Failed"}}
                 )
-                yield f"event: error\ndata: {json.dumps({'job_id': job_id, 'alert_id': alert_id, 'error': str(e)})}\n\n"
+                yield f"event: error\ndata: {json.dumps({'job_id': job_id, 'alert_id': alert_id, 'error': f'Investigation failed (ref {ref})'})}\n\n"
 
         return StreamingResponse(
             sse_event_stream(),
@@ -465,7 +465,7 @@ async def investigate_alert_stream(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise internal_error("alerts_endpoint_failed", e, alert_id=alert_id)
 
 @router.post("/{alert_id:path}/investigate", response_model=dict)
 async def investigate_alert(
@@ -507,7 +507,7 @@ async def investigate_alert(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise internal_error("alerts_endpoint_failed", e, alert_id=alert_id)
 
 @router.get("/investigation/{job_id}", response_model=dict)
 async def get_investigation_status(job_id: str, db: AsyncIOMotorDatabase = Depends(get_db)):
@@ -527,7 +527,7 @@ async def get_investigation_status(job_id: str, db: AsyncIOMotorDatabase = Depen
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise internal_error("alerts_endpoint_failed", e, job_id=job_id)
 
 @router.get("/{alert_id:path}/investigations")
 async def investigation_history(alert_id: str, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
