@@ -41,7 +41,7 @@ async def correlate_events_node(state: AgentState) -> Dict[str, Any]:
         correlations = await correlate_alert(db, merged_alert)
     except Exception as e:
         logger.error("correlation_node_failed", alert_id=alert_id, error=str(e))
-        new_log = current_log + [f"Correlation Agent encountered an issue: {e}"]
+        new_log = current_log + ["Correlation Agent could not complete (see server logs)"]
         return {
             "correlations": [],
             "investigation_log": new_log

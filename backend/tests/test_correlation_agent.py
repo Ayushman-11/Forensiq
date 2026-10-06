@@ -89,4 +89,18 @@ async def test_correlate_events_node_error_handling():
         
         # Should not raise; graceful fallback
         assert result["correlations"] == []
-        assert any("encountered an issue" in log for log in result["investigation_log"])
+        assert any("could not complete" in log for log in result["investigation_log"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failing", ["get_db", "correlate_alert"])
+async def test_correlate_events_node_failure_does_not_leak_exception_text(failing):
+    secret = "mongodb://user:s3cr3t@internal-host:27017 refused"
+    state = {"alert_data": {"_id": "a1"}, "context": {}, "extracted_iocs": [], "investigation_log": ["start"]}
+    boom = AsyncMock(side_effect=RuntimeError(secret))
+    with patch("app.agents.correlation_agent.get_db", boom if failing == "get_db" else AsyncMock()), \
+         patch("app.agents.correlation_agent.correlate_alert", boom if failing == "correlate_alert" else AsyncMock()):
+        result = await correlate_events_node(state)
+    assert result["correlations"] == []
+    assert result["investigation_log"] == ["start", "Correlation Agent could not complete (see server logs)"]
+    assert "s3cr3t" not in " ".join(result["investigation_log"])
