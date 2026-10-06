@@ -23,6 +23,8 @@ def test_valid_production_settings_boot():
     {"SECRET_KEY": DEFAULT_SECRET_KEY},
     {"SPLUNK_PASSWORD": DEFAULT_SPLUNK_PASSWORD},
     {"DEBUG": True},
+    {"SPLUNK_PASSWORD": ""},
+    {"ENV": " Production ", "SECRET_KEY": DEFAULT_SECRET_KEY},
 ])
 def test_production_rejects_insecure_values(override):
     with pytest.raises(ValueError):

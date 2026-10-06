@@ -114,7 +114,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _reject_insecure_production_settings(self) -> "Settings":
         """Fail fast at startup if production runs with insecure defaults. Development/test are unaffected."""
-        if self.ENV.lower() != "production":
+        if self.ENV.strip().lower() != "production":
             return self
         problems = []
         if self.SECRET_KEY == DEFAULT_SECRET_KEY:
@@ -123,6 +123,8 @@ class Settings(BaseSettings):
             problems.append("FORENSIQ_SECRET_KEY must be at least 32 characters")
         if self.SPLUNK_PASSWORD == DEFAULT_SPLUNK_PASSWORD:
             problems.append("FORENSIQ_SPLUNK_PASSWORD must not be the default")
+        if not self.SPLUNK_PASSWORD:
+            problems.append("FORENSIQ_SPLUNK_PASSWORD must not be empty")
         if self.DEBUG:
             problems.append("FORENSIQ_DEBUG must be false in production")
         if problems:
