@@ -137,3 +137,28 @@ async def test_heartbeat_task_does_not_outlive_cycle(db):
         await poller._run_cycle()
     leftover = [t for t in asyncio.all_tasks() - before if not t.done()]
     assert leftover == []
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_survives_a_failed_renewal(db, monkeypatch):
+    import asyncio
+
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "POLLER_LEASE_TTL_SECONDS", 0.03)
+    poller = AlertPoller(db, interval_seconds=30)
+    calls = []
+
+    async def flaky(*a, **k):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("mongo hiccup")
+        return True
+
+    with patch("app.services.poller.acquire_lease", new=flaky):
+        hb = asyncio.create_task(poller._heartbeat())
+        await asyncio.sleep(0.5)
+        assert not hb.done()
+        assert len(calls) >= 2
+        hb.cancel()
+        await asyncio.gather(hb, return_exceptions=True)

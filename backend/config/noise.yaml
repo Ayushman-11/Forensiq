@@ -15,12 +15,18 @@ benign_domains:
   - symcd.com
 
 suppress:
-  # Machine accounts (NAME$) making explicit-credential logons is routine
-  # service behavior (service SIDs, virtual machine accounts).
+  # Machine accounts (NAME$) making explicit-credential logons to localhost from
+  # the stock System32 service binaries is routine (virtual machine accounts,
+  # service SIDs). Anything else (other processes, remote targets) stays visible.
   - name: machine_account_explicit_logon
     event_code: "4648"
     where:
       subject_user_endswith: "$"
+      process_in: [lsass.exe, svchost.exe, vmcompute.exe]
+      process_path_startswith:
+        - "C:\\Windows\\System32\\"
+      fields_regex:
+        TargetServerName: "^localhost$"
 
   - name: benign_dns_lookup
     event_code: "22"

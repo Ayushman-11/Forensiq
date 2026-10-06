@@ -55,7 +55,11 @@ class AlertPoller:
         """Renew the lease while a cycle runs so a slow cycle cannot lose it."""
         while True:
             await asyncio.sleep(settings.POLLER_LEASE_TTL_SECONDS / 3)
-            ok = await acquire_lease(self.db, LEASE_NAME, self.owner, settings.POLLER_LEASE_TTL_SECONDS)
+            try:
+                ok = await acquire_lease(self.db, LEASE_NAME, self.owner, settings.POLLER_LEASE_TTL_SECONDS)
+            except Exception as exc:
+                logger.warning("poller_heartbeat_error", error=str(exc))
+                continue
             if not ok:
                 logger.warning("poller_lease_lost")
                 return

@@ -18,6 +18,13 @@ _URL_HOST_RE = re.compile(r"(?:https?|hxxps?)://([^/\s\"'<>?#]+)", re.I)
 _HEX_RE = re.compile(r"^[0-9a-f]+$")
 # Real ccTLD/gTLDs that overwhelmingly appear as file extensions inside command lines.
 _FILE_LIKE_TLDS = {"py", "sh", "zip", "mov", "pl", "rs", "md", "cc", "ps", "so"}
+# Bare-text matches (script bodies, command lines) only accept these TLDs: script code such as
+# `$ms.Seek(0)`, `WScript.Shell`, `$service.Name` otherwise looks like a domain (.seek/.shell/.name are real gTLDs).
+_TEXT_TLDS = {
+    "com", "net", "org", "io", "gov", "edu", "co", "uk", "de", "ru", "cn", "xyz", "top", "info", "biz",
+    "me", "us", "cloud", "ai", "app", "dev", "tk", "ml", "ga", "cf", "gq", "pw", "su", "cc", "in", "br",
+    "fr", "nl", "it", "jp", "kr", "au", "ca", "onion",
+}
 
 
 def defang(text: str) -> str:
@@ -62,7 +69,7 @@ def ioc_kind(ioc: str) -> Literal["ip", "domain", "hash"]:
     return "domain"
 
 
-def _text_iocs(text: str | None, benign) -> list[str]:
+def _text_iocs(text: str | None) -> list[str]:
     if not text:
         return []
     text = defang(text)
@@ -77,6 +84,11 @@ def _text_iocs(text: str | None, benign) -> list[str]:
         if ip:
             found.append(ip)
     for match in _DOMAIN_RE.finditer(text):
+        start, end = match.span()
+        if (start > 0 and text[start - 1] == "$") or text[end:end + 1] == "(":
+            continue  # variable / method call in script code, not a hostname
+        if match.group(0).rsplit(".", 1)[-1].lower() not in _TEXT_TLDS:
+            continue
         domain = public_domain(match.group(0))
         if domain:
             found.append(domain)
@@ -107,8 +119,8 @@ def extract_iocs(
             candidates.append(event.hashes[algo])
             break
 
-    candidates += _text_iocs(event.command_line, is_benign_domain)
-    candidates += _text_iocs(event.script_block, is_benign_domain)
+    candidates += _text_iocs(event.command_line)
+    candidates += _text_iocs(event.script_block)
 
     seen: set[str] = set()
     result: list[str] = []

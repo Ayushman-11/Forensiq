@@ -66,3 +66,22 @@ def test_docs_routes_enabled_when_debug_true():
     finally:
         settings.DEBUG = original_debug
         importlib.reload(main_module)
+
+
+@pytest.mark.asyncio
+async def test_lifespan_survives_ensure_indexes_failure():
+    mock_client = AsyncMongoMockClient()
+
+    async def fake_connect_to_mongo():
+        db_config.client = mock_client
+
+    async def boom(db):
+        raise RuntimeError("IndexOptionsConflict")
+
+    with patch("app.main.connect_to_mongo", new=fake_connect_to_mongo), \
+         patch("app.main.AlertPoller.start", new=Mock()), \
+         patch("app.main.ensure_indexes", new=boom):
+        async with lifespan(app):
+            pass  # startup did not raise
+
+    db_config.client = None

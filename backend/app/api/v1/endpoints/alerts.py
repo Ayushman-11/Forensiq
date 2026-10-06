@@ -54,7 +54,7 @@ async def list_alerts(
             ]})
             
         alerts = []
-        cursor = db["alerts"].find(scoped_query(user, *conditions)).sort("created_at", -1).limit(limit)
+        cursor = db["alerts"].find(scoped_query(user, *conditions), {"raw_events": 0}).sort("created_at", -1).limit(limit)
         async for document in cursor:
             # Convert _id to string if it isn't already, ensure serializable
             document["_id"] = str(document["_id"])

