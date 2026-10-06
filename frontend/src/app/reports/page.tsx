@@ -21,19 +21,46 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
 
-  const exportReport = (format: "pdf" | "csv" | "json") => {
+  const exportReport = async (format: "pdf" | "csv" | "json") => {
     setDownloading(format);
-    setTimeout(() => {
-      const dataStr = JSON.stringify(summary, null, 2);
-      const blob = new Blob([dataStr], { type: "application/json" });
+    try {
+      let blob: Blob;
+      let filename: string;
+
+      if (format === "pdf") {
+        const alertsResponse = await apiFetch("/api/v1/alerts?limit=1");
+        if (!alertsResponse.ok) throw new Error("Unable to find an alert for the report");
+        const alerts = (await alertsResponse.json()) as Array<{ _id: string }>;
+        if (!alerts[0]?._id) throw new Error("No alerts are available for PDF export");
+
+        const reportResponse = await apiFetch(
+          `/api/v1/alerts/${encodeURIComponent(alerts[0]._id)}/report/executive`,
+        );
+        if (!reportResponse.ok) {
+          const body = await reportResponse.json().catch(() => ({}));
+          throw new Error(body.detail || "Report generation failed");
+        }
+        blob = await reportResponse.blob();
+        filename = `forensiq_executive_summary_${Date.now()}.pdf`;
+      } else {
+        const dataStr = JSON.stringify(summary, null, 2);
+        blob = new Blob([dataStr], { type: format === "csv" ? "text/csv" : "application/json" });
+        filename = `forensiq_soc_report_${Date.now()}.${format}`;
+      }
+
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `forensiq_soc_report_${Date.now()}.${format}`;
+      a.download = filename;
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) {
+      console.error(error);
+    } finally {
       setDownloading(null);
-    }, 800);
+    }
   };
 
   return (

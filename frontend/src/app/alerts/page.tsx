@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { 
   CircleAlert, 
   Clock3, 
@@ -18,7 +19,9 @@ import {
   CheckCircle,
   Layers,
   Braces,
-  Radar
+  Radar,
+  Download,
+  FileDown
 } from "lucide-react";
 import ContextPanel from "@/components/investigation/ContextPanel";
 import EnrichmentPanel from "@/components/investigation/EnrichmentPanel";
@@ -41,6 +44,7 @@ function ageLabel(v: string) {
 }
 
 export default function AlertsPage() {
+  const searchParams = useSearchParams();
   const [alerts, setAlerts] = useState<AlertRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -67,7 +71,9 @@ export default function AlertsPage() {
       if (!r.ok) throw new Error("Unable to load alert queue");
       const next = (await r.json()) as AlertRecord[];
       setAlerts(next);
+      const requestedAlertId = searchParams.get("alert");
       setSelectedId((prev) => {
+        if (requestedAlertId && next.some((a) => a._id === requestedAlertId)) return requestedAlertId;
         if (prev && next.some((a) => a._id === prev)) return prev;
         return next.length > 0 ? next[0]._id : null;
       });
@@ -76,7 +82,7 @@ export default function AlertsPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, severity, status]);
+  }, [search, searchParams, severity, status]);
 
   useEffect(() => {
     const t = setTimeout(() => void load(), 0);
@@ -325,6 +331,36 @@ function AlertDetailSection({
   onReload: () => Promise<void>; 
 }) {
   const [activeTab, setActiveTab] = useState<"overview" | "iocs" | "telemetry">("overview");
+  const [downloading, setDownloading] = useState<"full" | "executive" | null>(null);
+  const [reportError, setReportError] = useState<string | null>(null);
+
+  const downloadReport = async (type: "full" | "executive") => {
+    setDownloading(type);
+    setReportError(null);
+    try {
+      const endpoint = type === "full"
+        ? `/api/v1/alerts/${alert._id}/report/full`
+        : `/api/v1/alerts/${alert._id}/report/executive`;
+      const response = await apiFetch(endpoint);
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.detail || "Report generation failed");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `forensiq_${type}_report.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) {
+      setReportError(error instanceof Error ? error.message : "Report generation failed");
+    } finally {
+      setDownloading(null);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -339,11 +375,22 @@ function AlertDetailSection({
             {formatAlertTitle(alert.title)}
           </h2>
         </div>
-        <button onClick={onInvestigate} className="button-primary text-xs">
-          <Play className="w-3.5 h-3.5" />
-          <span>Start AI Pipeline</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => void downloadReport("executive")} disabled={downloading !== null} className="button-secondary text-xs">
+            {downloading === "executive" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
+            <span>{downloading === "executive" ? "Generating..." : "Exec Summary"}</span>
+          </button>
+          <button onClick={() => void downloadReport("full")} disabled={downloading !== null} className="button-secondary text-xs">
+            {downloading === "full" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+            <span>{downloading === "full" ? "Generating..." : "Full Report"}</span>
+          </button>
+          <button onClick={onInvestigate} className="button-primary text-xs">
+            <Play className="w-3.5 h-3.5" />
+            <span>Start AI Pipeline</span>
+          </button>
+        </div>
       </div>
+      {reportError && <p className="text-xs text-[#EF4444]">{reportError}</p>}
 
       {/* Tab Navigation */}
       <div className="flex border-b border-[var(--border-color)]">
