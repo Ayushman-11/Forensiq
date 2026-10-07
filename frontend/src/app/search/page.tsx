@@ -47,6 +47,7 @@ const QUICK_QUERIES = [
 const TIME_RANGES = [
   { label: 'Past 24 Hours', value: '-24h' },
   { label: 'Past 7 Days', value: '-7d' },
+  { label: 'Past 30 Days', value: '-30d' },
   { label: 'Past 1 Hour', value: '-1h' },
   { label: 'Past 15 Minutes', value: '-15m' },
 ];

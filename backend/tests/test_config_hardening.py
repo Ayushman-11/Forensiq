@@ -50,3 +50,55 @@ def test_staging_with_insecure_values_rejected():
 def test_non_production_envs_unaffected(env):
     s = Settings(_env_file=None, ENV=env, SECRET_KEY=DEFAULT_SECRET_KEY, DEBUG=True)
     assert s.DEBUG is True
+
+
+KEY_NAMES = ["VT_API_KEY", "ABUSEIPDB_API_KEY", "XAI_API_KEY"]
+
+
+@pytest.fixture
+def clean_key_env(monkeypatch):
+    for name in KEY_NAMES:
+        monkeypatch.delenv(name, raising=False)
+        monkeypatch.delenv(f"FORENSIQ_{name}", raising=False)
+    return monkeypatch
+
+
+@pytest.mark.parametrize("name", KEY_NAMES)
+def test_api_key_prefixed_only(clean_key_env, name):
+    clean_key_env.setenv(f"FORENSIQ_{name}", "prefixed-value")
+    assert getattr(Settings(_env_file=None), name) == "prefixed-value"
+
+
+@pytest.mark.parametrize("name", KEY_NAMES)
+def test_api_key_unprefixed_only(clean_key_env, name):
+    clean_key_env.setenv(name, "plain-value")
+    assert getattr(Settings(_env_file=None), name) == "plain-value"
+
+
+@pytest.mark.parametrize("name", KEY_NAMES)
+def test_api_key_prefixed_wins_over_unprefixed(clean_key_env, name):
+    clean_key_env.setenv(name, "plain-value")
+    clean_key_env.setenv(f"FORENSIQ_{name}", "prefixed-value")
+    assert getattr(Settings(_env_file=None), name) == "prefixed-value"
+
+
+@pytest.mark.parametrize("name", KEY_NAMES)
+def test_api_key_neither_is_empty(clean_key_env, name):
+    assert getattr(Settings(_env_file=None), name) == ""
+
+
+@pytest.mark.parametrize("name", KEY_NAMES)
+def test_api_key_direct_kwarg_still_works(clean_key_env, name):
+    assert getattr(Settings(_env_file=None, **{name: "kw"}), name) == "kw"
+
+
+@pytest.mark.parametrize("name", KEY_NAMES)
+def test_api_key_unprefixed_in_env_file(clean_key_env, tmp_path, name):
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"{name}=from-file\n", encoding="utf-8")
+    assert getattr(Settings(_env_file=str(env_file)), name) == "from-file"
+
+
+def test_first_run_lookback_defaults_to_30_days(monkeypatch):
+    monkeypatch.delenv("FORENSIQ_INGEST_INITIAL_LOOKBACK_HOURS", raising=False)
+    assert Settings(_env_file=None).INGEST_INITIAL_LOOKBACK_HOURS == 720
