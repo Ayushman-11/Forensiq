@@ -97,3 +97,8 @@ def test_api_key_unprefixed_in_env_file(clean_key_env, tmp_path, name):
     env_file = tmp_path / ".env"
     env_file.write_text(f"{name}=from-file\n", encoding="utf-8")
     assert getattr(Settings(_env_file=str(env_file)), name) == "from-file"
+
+
+def test_first_run_lookback_defaults_to_30_days(monkeypatch):
+    monkeypatch.delenv("FORENSIQ_INGEST_INITIAL_LOOKBACK_HOURS", raising=False)
+    assert Settings(_env_file=None).INGEST_INITIAL_LOOKBACK_HOURS == 720
