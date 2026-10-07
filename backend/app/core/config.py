@@ -4,7 +4,7 @@ Enforces type safety and environment variable loading using Pydantic Settings v2
 """
 
 from typing import List
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Named constant so the "insecure default" comparison isn't a fragile string
@@ -22,6 +22,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,
     )
 
     # General Configuration
@@ -78,10 +79,12 @@ class Settings(BaseSettings):
     # Threat Intel Configuration
     VT_API_KEY: str = Field(
         default="",
+        validation_alias=AliasChoices("FORENSIQ_VT_API_KEY", "VT_API_KEY"),
         description="VirusTotal API Key (v3)"
     )
     ABUSEIPDB_API_KEY: str = Field(
         default="",
+        validation_alias=AliasChoices("FORENSIQ_ABUSEIPDB_API_KEY", "ABUSEIPDB_API_KEY"),
         description="AbuseIPDB API Key (v2)"
     )
     IOC_CACHE_TTL_HOURS: int = Field(
@@ -103,6 +106,7 @@ class Settings(BaseSettings):
     # Grok / xAI LLM Configuration
     XAI_API_KEY: str = Field(
         default="",
+        validation_alias=AliasChoices("FORENSIQ_XAI_API_KEY", "XAI_API_KEY"),
         description="xAI Grok API Key",
     )
     XAI_BASE_URL: str = Field(
