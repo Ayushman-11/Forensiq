@@ -14,6 +14,10 @@ import sys
 import os
 from datetime import datetime, timezone
 
+# Fix Windows cp1252 console encoding: allow Unicode chars in MongoDB alert titles
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 sys.path.insert(0, os.path.dirname(__file__))
 
 from app.core.config import settings
@@ -43,16 +47,16 @@ async def main():
     splunk = SplunkClient()
     try:
         await splunk.authenticate()
-        print("  ✓ Authenticated successfully with Splunk REST API")
+        print("  [OK] Authenticated successfully with Splunk REST API")
         
         indexes = await splunk.list_indexes()
-        print(f"  ✓ Found {len(indexes)} Splunk indexes:")
+        print(f"  [OK] Found {len(indexes)} Splunk indexes:")
         key_indexes = [idx for idx in indexes if idx in ("attack_data", "sysmon", "main", "windows", "_internal", "_audit")]
         print(f"    Key indexes present: {key_indexes}")
         other_indexes = [idx for idx in indexes if idx not in key_indexes][:8]
         print(f"    Other indexes sample: {other_indexes}")
     except Exception as e:
-        print(f"  ✗ Splunk connection failed: {e}")
+        print(f"  [FAIL] Splunk connection failed: {e}")
         return
     finally:
         await splunk.close()
@@ -73,9 +77,9 @@ async def main():
             res = await test_client.search(query, earliest_time="-30d", latest_time="now", limit=1)
             raw = res[0].raw_payload if res else {}
             count = raw.get("count", "0") if isinstance(raw, dict) else "0"
-            print(f"  • index='{idx}': {count} events in the last 30 days")
+            print(f"  * index='{idx}': {count} events in the last 30 days")
         except Exception as e:
-            print(f"  • index='{idx}': query error ({e})")
+            print(f"  * index='{idx}': query error ({e})")
         finally:
             await test_client.close()
 
@@ -85,10 +89,10 @@ async def main():
     print("\n[Step 3/6] Connecting to MongoDB...")
     await connect_to_mongo()
     if not db_config.client:
-        print("  ✗ MongoDB connection failed. Please ensure MongoDB is running.")
+        print("  [FAIL] MongoDB connection failed. Please ensure MongoDB is running.")
         return
     db = db_config.client[settings.MONGO_DB_NAME]
-    print(f"  ✓ Connected to MongoDB database '{settings.MONGO_DB_NAME}'")
+    print(f"  [OK] Connected to MongoDB database '{settings.MONGO_DB_NAME}'")
 
     # ─────────────────────────────────────────────────────────────
     # Step 4: Run IngestionService Cycle
@@ -97,7 +101,7 @@ async def main():
     print(f"  Ingestion Query: {build_query()}")
     service = IngestionService(db=db, org_id="default")
     new_alerts = await service.fetch_and_store_alerts()
-    print(f"  ✓ Ingestion Cycle Complete:")
+    print(f"  [OK] Ingestion Cycle Complete:")
     print(f"    - Total Events Fetched: {service.total_fetched}")
     print(f"    - Detection Rules Evaluated: {service.rules_run}")
     print(f"    - New Alerts Upserted: {len(new_alerts)}")
@@ -105,7 +109,7 @@ async def main():
 
     # Check alert collection in MongoDB
     total_alerts = await db["alerts"].count_documents({})
-    print(f"  ✓ Total Alerts in MongoDB 'alerts' collection: {total_alerts}")
+    print(f"  [OK] Total Alerts in MongoDB 'alerts' collection: {total_alerts}")
 
     # ─────────────────────────────────────────────────────────────
     # Step 5: Verify Alert Poller Cycle & Distributed Lease
@@ -113,11 +117,11 @@ async def main():
     print("\n[Step 5/6] Verifying AlertPoller single cycle & lease locking...")
     poller = AlertPoller(db=db, interval_seconds=10)
     cycle_res = await poller._run_cycle()
-    print(f"  ✓ AlertPoller cycle executed cleanly (New alerts handled: {cycle_res})")
+    print(f"  [OK] AlertPoller cycle executed cleanly (New alerts handled: {cycle_res})")
     
     lease_doc = await db["leases"].find_one({"_id": "alert_poller"})
     if lease_doc:
-        print(f"  ✓ Distributed lease registered in MongoDB: owner='{lease_doc.get('owner')}', expires_at='{lease_doc.get('expires_at')}'")
+        print(f"  [OK] Distributed lease registered in MongoDB: owner='{lease_doc.get('owner')}', expires_at='{lease_doc.get('expires_at')}'")
 
     # ─────────────────────────────────────────────────────────────
     # Step 6: Test AI Multi-Agent Investigation on an Alert
@@ -145,7 +149,7 @@ async def main():
 
         async for chunk in investigation_graph.astream(initial_state):
             for node_name, node_output in chunk.items():
-                print(f"    ✓ Node '{node_name}' completed:")
+                print(f"    [OK] Node '{node_name}' completed:")
                 if node_name == "extract_context":
                     iocs = node_output.get("extracted_iocs", [])
                     print(f"      - IOCs Extracted: {len(iocs)} ({iocs})")
@@ -170,7 +174,7 @@ async def main():
                     preview = (rec[:120] + "...") if isinstance(rec, str) and len(rec) > 120 else rec
                     print(f"      - Recommendations: {preview}")
     else:
-        print("  ℹ No alerts currently in MongoDB to investigate. Created test alert structure...")
+        print("  [INFO] No alerts currently in MongoDB to investigate. Created test alert structure...")
 
     await close_mongo_connection()
     print("\n" + "=" * 70)
