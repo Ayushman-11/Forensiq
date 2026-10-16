@@ -57,12 +57,14 @@ Built with Next.js App Router, Tailwind CSS, Framer Motion, and MUI Charts:
 1. **Live Environment Validation**:
    - Verify continuous alert streaming from live Splunk Enterprise instances into the ingestion poller.
    - Validate live VirusTotal & AbuseIPDB API keys under realistic rate limits.
-2. **WebSocket Streaming**:
-   - Implement WebSocket / SSE push notifications to stream real-time pipeline execution updates directly to the frontend `InvestigationModal` without polling.
+2. **WebSocket Streaming** [COMPLETED]:
+   - WebSocket streaming (`/api/v1/alerts/{alert_id}/ws`) and SSE (`/api/v1/alerts/{alert_id}/investigate/stream`) implemented with unified `InvestigationStreamManager` pub/sub broadcasting.
+   - Frontend `InvestigationModal` upgraded with live WebSocket stream, connection badge indicator (`WebSocket Live` vs `SSE Stream`), live elapsed timer, per-node step output drawer, re-investigate on-demand action, and seamless SSE automatic fallback.
 3. **Containerized Production Deployment**:
    - Finalize production `docker-compose.yml` orchestrating FastAPI backend, Next.js frontend, MongoDB, Redis, and Nginx reverse proxy.
 4. **PDF Engine Integration**:
-   - Wire server-side rendering (e.g. WeasyPrint / Playwright) for automated PDF binary downloads of generated HTML reports.
+   - Wire server-side rendering (e.g. WeasyPrint / Playwright / ReportLab) for automated PDF binary downloads of generated HTML reports.
+
 
 ---
 

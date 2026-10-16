@@ -17,8 +17,12 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronUp,
+  RotateCcw,
+  Radio,
+  Wifi,
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import { API_BASE, getAccessToken } from "@/lib/auth";
 import type { AlertRecord, PipelineStep, StepStatus } from "@/lib/types";
 
 const INITIAL_STEPS: PipelineStep[] = [
@@ -103,33 +107,80 @@ export default function InvestigationModal({
   const [logs, setLogs] = useState<string[]>([]);
   const [showLogs, setShowLogs] = useState(true);
   const [finalAlert, setFinalAlert] = useState<AlertRecord | null>(null);
+  const [transport, setTransport] = useState<"connecting" | "websocket" | "sse">("connecting");
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const [expandedStep, setExpandedStep] = useState<string | null>(null);
 
   const logsEndRef = useRef<HTMLDivElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const startTimeRef = useRef<number>(Date.now());
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const completedRef = useRef<boolean>(false);
 
+  // Auto-scroll logs
   useEffect(() => {
     if (logsEndRef.current) {
       logsEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [logs]);
 
+  // Elapsed timer loop
+  useEffect(() => {
+    if (!isOpen) return;
+
+    if (!isFinished && !streamError) {
+      startTimeRef.current = Date.now();
+      timerRef.current = setInterval(() => {
+        setElapsedMs(Date.now() - startTimeRef.current);
+      }, 100);
+    } else if (timerRef.current) {
+      clearInterval(timerRef.current);
+    }
+
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [isOpen, isFinished, streamError]);
+
+  // Main Streaming Lifecycle: WebSocket with Automatic SSE Fallback
   useEffect(() => {
     if (!isOpen) return;
 
     // Reset state for new investigation run
+    completedRef.current = false;
     setSteps(INITIAL_STEPS.map((s, idx) => ({ ...s, status: idx === 0 ? "running" : "pending" })));
     setCurrentStepIndex(0);
     setIsFinished(false);
     setStreamError(null);
     setFinalAlert(null);
+    setTransport("connecting");
     setLogs([`[${new Date().toLocaleTimeString()}] Initializing AI agent investigation pipeline for alert: ${alert.title}`]);
 
+    let isCancelled = false;
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
-    async function startStream() {
+    function buildWebSocketUrl(): string {
+      const token = getAccessToken() || "";
+      let base = API_BASE;
+      if (typeof window !== "undefined" && !base.startsWith("http")) {
+        base = `${window.location.protocol}//${window.location.host}${base}`;
+      }
+      const wsBase = base.replace(/^http:/, "ws:").replace(/^https:/, "wss:");
+      return `${wsBase}/api/v1/alerts/${encodeURIComponent(alert._id)}/ws?token=${encodeURIComponent(token)}`;
+    }
+
+    async function startSSEFallback() {
+      if (isCancelled || completedRef.current) return;
+      setTransport("sse");
+      setLogs((prev) => [
+        ...prev,
+        `[${new Date().toLocaleTimeString()}] [Transport] Establishing Server-Sent Events (SSE) push stream...`,
+      ]);
+
       try {
-        const response = await apiFetch(`/api/v1/alerts/${alert._id}/investigate/stream`, {
+        const response = await apiFetch(`/api/v1/alerts/${encodeURIComponent(alert._id)}/investigate/stream`, {
           method: "POST",
           signal: controller.signal,
         });
@@ -188,17 +239,96 @@ export default function InvestigationModal({
       }
     }
 
-    void startStream();
+    function initWebSocket() {
+      try {
+        const wsUrl = buildWebSocketUrl();
+        const ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
+
+        let pingInterval: NodeJS.Timeout | null = null;
+
+        ws.onopen = () => {
+          if (isCancelled) {
+            ws.close();
+            return;
+          }
+          setTransport("websocket");
+          setLogs((prev) => [
+            ...prev,
+            `[${new Date().toLocaleTimeString()}] [WebSocket] Connected to real-time agent pipeline stream.`,
+          ]);
+
+          // Keep alive ping
+          pingInterval = setInterval(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ action: "ping" }));
+            }
+          }, 20000);
+        };
+
+        ws.onmessage = (event) => {
+          if (isCancelled) return;
+          try {
+            const parsed = JSON.parse(event.data);
+            const eventType = parsed.event || "message";
+            const eventData = parsed.data || {};
+            handleStreamEvent(eventType, eventData);
+          } catch (err) {
+            console.warn("WebSocket parse error:", err, event.data);
+          }
+        };
+
+        ws.onerror = (err) => {
+          if (isCancelled || completedRef.current) return;
+          console.warn("WebSocket stream error, transitioning to SSE fallback:", err);
+          if (pingInterval) clearInterval(pingInterval);
+          // Fall back seamlessly to SSE
+          void startSSEFallback();
+        };
+
+        ws.onclose = (ev) => {
+          if (pingInterval) clearInterval(pingInterval);
+          if (isCancelled) return;
+
+          // If closed prematurely without completion and without normal close, fall back to SSE
+          if (!completedRef.current && ev.code !== 1000) {
+            console.warn(`WebSocket closed with code ${ev.code}. Triggering SSE fallback.`);
+            void startSSEFallback();
+          }
+        };
+      } catch (err) {
+        console.warn("WebSocket initialization failed, falling back to SSE:", err);
+        void startSSEFallback();
+      }
+    }
+
+    // Attempt WebSocket connection first
+    initWebSocket();
 
     return () => {
+      isCancelled = true;
       controller.abort();
+      if (wsRef.current) {
+        wsRef.current.close(1000, "Modal closed");
+        wsRef.current = null;
+      }
     };
   }, [isOpen, alert._id, alert.title]);
 
   function handleStreamEvent(eventType: string, data: any) {
     const time = new Date().toLocaleTimeString();
 
-    if (eventType === "init") {
+    if (eventType === "connected") {
+      setLogs((prev) => [
+        ...prev,
+        `[${time}] Pipeline session established for alert ${data.alert_id ?? alert._id}.`,
+      ]);
+    } else if (eventType === "status") {
+      setLogs((prev) => [
+        ...prev,
+        `[${time}] [Status] ${data.message || data.status}`,
+      ]);
+    } else if (eventType === "init") {
       setLogs((prev) => [
         ...prev,
         `[${time}] Pipeline initialized. Job ID: ${data.job_id}. 7 Specialized nodes queued.`,
@@ -237,17 +367,71 @@ export default function InvestigationModal({
         return nextSteps;
       });
     } else if (eventType === "complete") {
+      completedRef.current = true;
       setIsFinished(true);
       const updated = data.alert as AlertRecord;
       setFinalAlert(updated);
       setLogs((prev) => [
         ...prev,
-        `[${time}] Pipeline investigation complete! Risk Score: ${updated.risk_score ?? "N/A"}/100, AI Confidence: ${updated.ai_confidence ?? "N/A"}%.`,
+        `[${time}] Pipeline investigation complete! Risk Score: ${updated?.risk_score ?? "N/A"}/100, AI Confidence: ${updated?.ai_confidence ?? "N/A"}%.`,
       ]);
-      onComplete(updated);
+      if (updated) {
+        onComplete(updated);
+      }
     } else if (eventType === "error") {
       setStreamError(data.error || "Investigation failed");
       setLogs((prev) => [...prev, `[${time}] Pipeline error: ${data.error}`]);
+    }
+  }
+
+  function handleReinvestigate() {
+    setSteps(INITIAL_STEPS.map((s, idx) => ({ ...s, status: idx === 0 ? "running" : "pending" })));
+    setCurrentStepIndex(0);
+    setIsFinished(false);
+    setStreamError(null);
+    setFinalAlert(null);
+    completedRef.current = false;
+    startTimeRef.current = Date.now();
+    setLogs((prev) => [
+      ...prev,
+      `[${new Date().toLocaleTimeString()}] Triggering fresh re-investigation via live stream...`,
+    ]);
+
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ action: "reinvestigate" }));
+    } else {
+      // Re-trigger via SSE if socket not active
+      void (async () => {
+        try {
+          const res = await apiFetch(`/api/v1/alerts/${encodeURIComponent(alert._id)}/investigate/stream`, {
+            method: "POST",
+          });
+          if (res.ok && res.body) {
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buf = "";
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buf += decoder.decode(value, { stream: true });
+              const msgs = buf.split("\n\n");
+              buf = msgs.pop() ?? "";
+              for (const m of msgs) {
+                if (!m.trim()) continue;
+                let ev = "message";
+                let ds = "";
+                for (const l of m.split("\n")) {
+                  if (l.startsWith("event:")) ev = l.replace("event:", "").trim();
+                  else if (l.startsWith("data:")) ds = l.replace("data:", "").trim();
+                }
+                if (ds) handleStreamEvent(ev, JSON.parse(ds));
+              }
+            }
+          }
+        } catch (e: any) {
+          setStreamError(e.message || "Failed to restart stream");
+        }
+      })();
     }
   }
 
@@ -255,6 +439,7 @@ export default function InvestigationModal({
 
   const completedCount = steps.filter((s) => s.status === "completed").length;
   const progressPercent = Math.min(100, Math.round((completedCount / steps.length) * 100));
+  const elapsedFormatted = (elapsedMs / 1000).toFixed(1) + "s";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
@@ -280,19 +465,49 @@ export default function InvestigationModal({
                 <span className="font-mono text-[11px] text-[var(--color-text-muted)]">
                   {alert.host ?? "Host"} ({alert.user ?? "User"})
                 </span>
+                <span className="text-[var(--color-text-dim)]">•</span>
+                {/* Real-time Streaming Transport Protocol Badge */}
+                {transport === "websocket" ? (
+                  <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-mono bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-semibold shadow-xs">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    WebSocket Live
+                  </span>
+                ) : transport === "sse" ? (
+                  <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-mono bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 font-semibold shadow-xs">
+                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                    SSE Stream
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-mono bg-amber-500/15 text-amber-400 border border-amber-500/30 font-semibold">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                    Connecting...
+                  </span>
+                )}
               </div>
               <h2 className="text-base font-bold text-[var(--color-text)] truncate max-w-lg">
                 {alert.title}
               </h2>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-3)] transition-colors"
-            aria-label="Close modal"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {(isFinished || streamError) && (
+              <button
+                onClick={handleReinvestigate}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-medium text-[var(--color-accent)] bg-[var(--color-accent)]/10 hover:bg-[var(--color-accent)]/20 border border-[var(--color-accent)]/30 transition-all cursor-pointer"
+                title="Re-run pipeline investigation"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Re-investigate</span>
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-3)] transition-colors cursor-pointer"
+              aria-label="Close modal"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Progress bar banner */}
@@ -304,6 +519,8 @@ export default function InvestigationModal({
               <span className="text-[var(--color-text-dim)]">
                 ({completedCount} of {steps.length} nodes finished)
               </span>
+              <span className="text-[var(--color-text-dim)]">•</span>
+              <span className="text-[var(--color-text-dim)]">Time: {elapsedFormatted}</span>
             </span>
             <span className="text-[var(--color-text-muted)]">
               {isFinished ? (
@@ -315,7 +532,7 @@ export default function InvestigationModal({
               ) : (
                 <span className="text-[var(--color-accent)] animate-pulse flex items-center gap-1.5">
                   <span className="inline-block w-2 h-2 rounded-full bg-[var(--color-accent)] animate-ping" />
-                  Streaming live telemetry...
+                  Streaming live agent telemetry...
                 </span>
               )}
             </span>
@@ -345,7 +562,7 @@ export default function InvestigationModal({
             {steps.map((s, idx) => {
               const isRunning = s.status === "running";
               const isCompleted = s.status === "completed";
-              const isPending = s.status === "pending";
+              const isExpanded = expandedStep === s.node;
 
               return (
                 <div
@@ -354,9 +571,14 @@ export default function InvestigationModal({
                     isRunning
                       ? "bg-[var(--color-surface-2)] border-[var(--color-accent)]/60 shadow-lg shadow-[var(--color-accent)]/5"
                       : isCompleted
-                      ? "bg-[var(--color-surface-2)]/60 border-[var(--color-border)]"
+                      ? "bg-[var(--color-surface-2)]/60 border-[var(--color-border)] hover:border-[var(--color-accent)]/40 cursor-pointer"
                       : "bg-[var(--color-surface)]/40 border-[var(--color-border)]/50 opacity-60"
                   }`}
+                  onClick={() => {
+                    if (isCompleted && s.data) {
+                      setExpandedStep(isExpanded ? null : s.node);
+                    }
+                  }}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-center gap-3">
@@ -410,10 +632,17 @@ export default function InvestigationModal({
                       </div>
                     </div>
 
-                    {/* Step index badge */}
-                    <span className="font-mono text-[11px] text-[var(--color-text-dim)] shrink-0">
-                      Step {s.step}/7
-                    </span>
+                    {/* Step index badge & expansion hint */}
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="font-mono text-[11px] text-[var(--color-text-dim)]">
+                        Step {s.step}/7
+                      </span>
+                      {isCompleted && s.data && (
+                        <span className="text-[var(--color-text-dim)]">
+                          {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   {/* Summary / Result snippet if completed */}
@@ -421,6 +650,16 @@ export default function InvestigationModal({
                     <div className="mt-2.5 ml-10 p-2 rounded bg-[var(--color-surface-1)] border border-[var(--color-border)] text-xs font-mono text-[var(--color-accent)]">
                       <span className="text-[var(--color-text-dim)]">Output: </span>
                       {s.summary}
+                    </div>
+                  )}
+
+                  {/* Expandable data inspect drawer */}
+                  {isExpanded && s.data && (
+                    <div className="mt-2 ml-10 p-3 rounded-lg bg-[var(--color-base)] border border-[var(--color-border)] text-[11px] font-mono text-[var(--color-text-muted)] overflow-x-auto max-h-48">
+                      <div className="text-[10px] text-[var(--color-text-dim)] mb-1 font-semibold uppercase tracking-wider">
+                        Raw Agent Output Payload:
+                      </div>
+                      <pre className="whitespace-pre-wrap">{JSON.stringify(s.data, null, 2)}</pre>
                     </div>
                   )}
                 </div>
@@ -432,7 +671,7 @@ export default function InvestigationModal({
           <div className="mt-4 border border-[var(--color-border)] rounded-lg overflow-hidden bg-[var(--color-base)]">
             <button
               onClick={() => setShowLogs(!showLogs)}
-              className="w-full flex items-center justify-between px-4 py-2.5 bg-[var(--color-surface-2)] text-xs font-mono text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors border-b border-[var(--color-border)]"
+              className="w-full flex items-center justify-between px-4 py-2.5 bg-[var(--color-surface-2)] text-xs font-mono text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors border-b border-[var(--color-border)] cursor-pointer"
             >
               <span className="flex items-center gap-2">
                 <Terminal className="w-3.5 h-3.5 text-[var(--color-accent)]" />
@@ -451,7 +690,7 @@ export default function InvestigationModal({
                           ? "text-[var(--color-red)] font-semibold"
                           : log.includes("Complete") || log.includes("Finished")
                           ? "text-[var(--color-success)] font-semibold"
-                          : log.includes("Active") || log.includes("Completed")
+                          : log.includes("WebSocket") || log.includes("SSE") || log.includes("Completed")
                           ? "text-[var(--color-text)]"
                           : "text-[var(--color-text-muted)]"
                       }
@@ -497,7 +736,7 @@ export default function InvestigationModal({
           <div className="flex items-center gap-3">
             <button
               onClick={onClose}
-              className={isFinished ? "button-primary" : "button-secondary"}
+              className={isFinished ? "button-primary cursor-pointer" : "button-secondary cursor-pointer"}
             >
               {isFinished ? "Review Investigation Record" : "Close Window"}
             </button>
