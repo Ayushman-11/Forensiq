@@ -20,8 +20,11 @@ import {
   RotateCcw,
   Radio,
   Wifi,
+  Download,
+  FileDown,
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+
 import { API_BASE, getAccessToken } from "@/lib/auth";
 import type { AlertRecord, PipelineStep, StepStatus } from "@/lib/types";
 
@@ -110,6 +113,7 @@ export default function InvestigationModal({
   const [transport, setTransport] = useState<"connecting" | "websocket" | "sse">("connecting");
   const [elapsedMs, setElapsedMs] = useState(0);
   const [expandedStep, setExpandedStep] = useState<string | null>(null);
+  const [downloadingPdf, setDownloadingPdf] = useState<boolean>(false);
 
   const logsEndRef = useRef<HTMLDivElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -435,6 +439,35 @@ export default function InvestigationModal({
     }
   }
 
+  const downloadPdf = async (type: "full" | "executive" = "full") => {
+    setDownloadingPdf(true);
+    try {
+      const endpoint = `/api/v1/alerts/${encodeURIComponent(alert._id)}/report/pdf?report_type=${type}`;
+      const response = await apiFetch(endpoint);
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.detail || "PDF report generation failed");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `forensiq_${type === "full" ? "investigation_report" : "executive_summary"}_${alert._id.slice(0, 10)}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      console.error("PDF download failed:", err);
+      if (typeof window !== "undefined") {
+        window.alert(err instanceof Error ? err.message : "Failed to download PDF report");
+      }
+    } finally {
+
+      setDownloadingPdf(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   const completedCount = steps.filter((s) => s.status === "completed").length;
@@ -734,6 +767,21 @@ export default function InvestigationModal({
             )}
           </div>
           <div className="flex items-center gap-3">
+            {isFinished && (
+              <button
+                onClick={() => void downloadPdf("full")}
+                disabled={downloadingPdf}
+                className="button-secondary text-xs flex items-center gap-1.5 cursor-pointer"
+                title="Download full publication-ready investigation PDF report"
+              >
+                {downloadingPdf ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Download className="w-3.5 h-3.5" />
+                )}
+                <span>{downloadingPdf ? "Generating..." : "Download PDF Report"}</span>
+              </button>
+            )}
             <button
               onClick={onClose}
               className={isFinished ? "button-primary cursor-pointer" : "button-secondary cursor-pointer"}
