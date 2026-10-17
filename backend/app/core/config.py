@@ -3,6 +3,7 @@ Core Application Configuration Module.
 Enforces type safety and environment variable loading using Pydantic Settings v2.
 """
 
+from pathlib import Path
 from typing import List
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -12,17 +13,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 DEFAULT_SECRET_KEY = "default-development-secret-key-must-change-in-prod-min-32-chars"
 DEFAULT_SPLUNK_PASSWORD = "ChangedPassword123!"
 
-
 _NON_PRODUCTION_ENVS = frozenset({"development", "dev", "test", "testing", "local"})
+_BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+_ENV_FILE = _BACKEND_DIR / ".env"
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="FORENSIQ_",
-        env_file=".env",
+        env_file=(".env", str(_ENV_FILE)),
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
 
     # General Configuration
     ENV: str = Field(default="development", description="Application runtime environment")

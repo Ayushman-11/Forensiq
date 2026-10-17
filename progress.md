@@ -1,11 +1,24 @@
 # Forensiq Project Progress Tracker
 
-Last updated: 2026-10-16
+Last updated: 2026-10-17
 
 ## Overview
 This document tracks the progress of the Forensiq project over time. Each entry includes the date, accomplishments, and current status.
 
 ## Progress Entries
+
+### 2026-10-17: Server-Side PDF Engine & Direct Document Downloads Implemented & Verified
+- Implemented standardized binary PDF report download endpoint in `backend/app/api/v1/endpoints/reports.py`:
+  - `GET /api/v1/alerts/{alert_id}/report/pdf` supporting `report_type="full"|"executive"` and `inline=True|False`.
+  - Maintained backward-compatible route shortcuts `/{alert_id}/report/full` and `/{alert_id}/report/executive`.
+  - Directly streams publication-ready binary PDFs generated via ReportLab with proper `Content-Disposition` attachments.
+- Verified and fixed backend settings resolution (`backend/app/core/config.py`) so `.env` loads consistently regardless of execution working directory.
+- Upgraded Frontend UI with direct binary PDF download capabilities:
+  - **`InvestigationModal.tsx`**: Added "Download PDF Report" action menu in the completed modal footer allowing instant export of Executive Summary or Full Investigation Report without modal dismissal.
+  - **`investigations/page.tsx`**: Added `Exec PDF` and `Full Report PDF` download buttons to the toolbar with active loading spinners.
+  - **`reports/page.tsx`**: Enhanced reports dashboard with dynamic Alert Selector and 1-click binary PDF export buttons for Executive and Technical dossiers.
+- Added comprehensive unit and integration test suite (`tests/test_report_generation.py`) covering unauthorized access, 404 handling, and valid binary PDF generation with `%PDF-` validation.
+- All **327 backend tests** passing and Next.js frontend TypeScript compilation verified with **0 errors**.
 
 ### 2026-10-16: Live WebSocket Pipeline Streaming Implemented & Verified
 - Implemented unified `InvestigationStreamManager` pub/sub broker (`app/services/investigation_streamer.py`).
@@ -55,11 +68,11 @@ This document tracks the progress of the Forensiq project over time. Each entry 
 | **Normalization Engine** | ✅ Complete | Canonical events, IOC extraction, deduplication, noise filtering |
 | **Multi-Agent Pipeline** | ✅ Complete | LangGraph state graph, 8 specialized agents, LLM client |
 | **Threat Intel Enrichment**| ✅ Complete | VirusTotal v3 + AbuseIPDB v2 with MongoDB cache |
-| **Reporting Engine** | ✅ Complete | HTML/Markdown/Executive report generation |
+| **Reporting Engine & PDF** | ✅ Complete | HTML/Markdown/Executive report generation & server-side binary PDF downloads |
 | **Authentication & RBAC** | ✅ Complete | JWT tokens, login throttling, client-side AuthGuard |
 | **Frontend SOC Workspace** | ✅ Complete | Next.js App Router (Dashboard, Alerts, Investigations, Reports, Search, Admin) |
-| **Automated Testing** | ✅ Complete | 38 test suites across all backend components |
+| **Automated Testing** | ✅ Complete | 40 test suites / 327 tests passing |
 | **Live SIEM Ingestion** | ✅ Verified | End-to-end validated: Splunk → Ingestion → Rules → MongoDB → Poller → Investigation |
 | **Live WebSocket Push** | ✅ Complete | Real-time bidirectional WebSocket streaming with automatic SSE fallback |
-| **PDF Binary Export** | ⏳ In Progress | Headless PDF rendering for generated reports |
-| **Production Docker Stack**| ⏳ In Progress | Multi-container production compose setup |
+| **PDF Binary Export** | ✅ Complete | Headless server-side PDF binary generation (ReportLab) with executive and full formats |
+| **Production Docker Stack**| ⏳ In Progress | Multi-container production compose setup (FastAPI + Next.js + Mongo + Redis + Nginx) |

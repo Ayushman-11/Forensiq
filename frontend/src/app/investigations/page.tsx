@@ -15,11 +15,15 @@ import {
   ArrowRight,
   Database,
   Crosshair,
-  Sparkles
+  Sparkles,
+  Download,
+  FileDown,
+  Loader2,
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import type { AlertRecord } from "@/lib/types";
 import InvestigationModal from "@/components/investigation/InvestigationModal";
+
 
 const PIPELINE_STAGES = [
   { key: "context", label: "Context" },
@@ -36,6 +40,38 @@ export default function InvestigationsPage() {
   const [selectedAlert, setSelectedAlert] = useState<AlertRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [investigatingAlert, setInvestigatingAlert] = useState<AlertRecord | null>(null);
+  const [downloadingPdf, setDownloadingPdf] = useState<"full" | "executive" | null>(null);
+
+  const downloadReport = async (type: "full" | "executive") => {
+    if (!selectedAlert) return;
+    setDownloadingPdf(type);
+    try {
+      const endpoint = `/api/v1/alerts/${encodeURIComponent(selectedAlert._id)}/report/pdf?report_type=${type}`;
+      const response = await apiFetch(endpoint);
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.detail || "PDF report generation failed");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `forensiq_${type === "full" ? "investigation_report" : "executive_summary"}_${selectedAlert._id.slice(0, 10)}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      console.error("PDF download failed:", err);
+      if (typeof window !== "undefined") {
+        window.alert(err instanceof Error ? err.message : "Failed to download PDF report");
+      }
+    } finally {
+
+      setDownloadingPdf(null);
+    }
+  };
+
 
   const load = useCallback(async () => {
     try {
@@ -169,13 +205,42 @@ export default function InvestigationsPage() {
                     {selectedAlert.title}
                   </h2>
                 </div>
-                <button
-                  onClick={() => setInvestigatingAlert(selectedAlert)}
-                  className="button-primary text-xs"
-                >
-                  <Play className="w-3.5 h-3.5" />
-                  <span>Run Agent Pipeline</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => void downloadReport("executive")}
+                    disabled={downloadingPdf !== null}
+                    className="button-secondary text-xs flex items-center gap-1.5 cursor-pointer"
+                    title="Download 1-page executive summary PDF"
+                  >
+                    {downloadingPdf === "executive" ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <FileDown className="w-3.5 h-3.5" />
+                    )}
+                    <span>{downloadingPdf === "executive" ? "Generating..." : "Exec PDF"}</span>
+                  </button>
+                  <button
+                    onClick={() => void downloadReport("full")}
+                    disabled={downloadingPdf !== null}
+                    className="button-secondary text-xs flex items-center gap-1.5 cursor-pointer"
+                    title="Download full multi-page investigation report PDF"
+                  >
+                    {downloadingPdf === "full" ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Download className="w-3.5 h-3.5" />
+                    )}
+                    <span>{downloadingPdf === "full" ? "Generating..." : "Full Report PDF"}</span>
+                  </button>
+                  <button
+                    onClick={() => setInvestigatingAlert(selectedAlert)}
+                    className="button-primary text-xs flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Play className="w-3.5 h-3.5" />
+                    <span>Run Agent Pipeline</span>
+                  </button>
+                </div>
+
               </div>
 
               {/* Sections: Summary, Evidence, Behaviors, ATT&CK, Timeline, Recommendation */}
