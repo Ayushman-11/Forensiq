@@ -1,16 +1,16 @@
 # Forensiq Project Status Report
 
-**Last Updated**: October 17, 2026  
+**Last Updated**: October 18, 2026  
 **Platform**: Forensiq — AI-Agent Driven Security Operations & Investigation Platform  
-**Overall Status**: Core Platform, Real-Time Streaming & Server-Side PDF Engine Fully Implemented (Production Docker Stack Remaining)
+**Overall Status**: Core Platform, Real-Time Streaming, PDF Engine & Advanced SOC Visualizations Fully Implemented (Production Docker Stack Remaining)
 
 ---
 
 ## 1. Executive Summary
 
-The **Forensiq** project has completed all foundational and advanced platform milestones as outlined in the `DEVELOPMENT_PLAN.md`. The platform combines enterprise SIEM ingestion (Splunk REST API), an automated 7-node LangGraph multi-agent investigation pipeline, a data normalization and noise reduction engine, threat intelligence enrichment (VirusTotal v3 & AbuseIPDB v2), an interactive real-time WebSocket streaming frontend, automated report generation, and server-side binary PDF document rendering.
+The **Forensiq** project has completed all foundational and advanced platform milestones as outlined in the `DEVELOPMENT_PLAN.md`. The platform combines enterprise SIEM ingestion (Splunk REST API), an automated 7-node LangGraph multi-agent investigation pipeline, a data normalization and noise reduction engine, threat intelligence enrichment (VirusTotal v3 & AbuseIPDB v2), an interactive real-time WebSocket streaming frontend, automated report generation, server-side binary PDF document rendering, and an enterprise SOC visualization suite.
 
-All core subsystems are covered by an automated test suite of **327 passing tests** with 100% test pass rate and zero TypeScript compilation errors.
+All core subsystems are covered by an automated test suite of **329 passing tests** with 100% test pass rate and zero TypeScript compilation errors.
 
 ---
 
@@ -91,19 +91,23 @@ All core subsystems are covered by an automated test suite of **327 passing test
 - **Immutable Audit Trail (`app/services/audit.py`)**:
   - Logs analyst actions, status modifications, triage dispositions, and investigator notes.
 
-### 2.7 Frontend SOC Workspace (`frontend/src/`)
-- Built with **Next.js App Router**, **Tailwind CSS**, **Framer Motion**, and **MUI Charts**:
-  - **SOC Executive Dashboard (`app/page.tsx`)**: Real-time KPI summaries, telemetry stream, severity distributions, and analyst workloads.
+### 2.7 Frontend SOC Workspace & Advanced Visualizations (`frontend/src/`)
+- Built with **Next.js App Router**, **Tailwind CSS**, **Framer Motion**, and **SVG Graphs**:
+  - **Interactive MITRE ATT&CK Matrix & Threat Heatmap (`MitreMatrix.tsx`)**: Full-width enterprise matrix across 12 core tactics with real-time search filtering, dynamic intensity color coding, and drill-down modal to filter matching alert queues.
+  - **Visual Process Execution Tree (`ProcessTreeGraph.tsx`)**: Interactive parent-child attack graph showing spawned processes, command lines, network C2 beacons, and dropped artifacts with step-by-step playback simulation and 1-click command line copying. Embedded in both the main investigation workbench and modal tabs.
+  - **Live Threat Intel Hover Cards & Defanging (`IocHoverCard.tsx`, `lib/defang.ts`)**: Safe defanging/refanging utility (`hxxp://`, `[.]`) with floating reputation popovers, threat confidence bars, and 1-click "Pivot to SPL" console queries.
+  - **SOC Executive Dashboard (`app/page.tsx`)**: Real-time KPI summaries, telemetry stream, severity distributions, and live MITRE matrix.
   - **Alerts Investigation View (`app/alerts/page.tsx`)**: Filterable, paginated alert table with quick triage, disposition actions, and direct investigation modal triggers.
-  - **Investigation Workspace (`app/investigations/page.tsx`)**: Dedicated split-screen investigation workbench with context panel, MITRE ATT&CK breakdown, timeline graph, and enrichment cards.
+  - **Investigation Workspace (`app/investigations/page.tsx`)**: Dedicated split-screen workbench with context panel, live process execution tree, timeline, and 1-click PDF exports.
   - **Raw Telemetry Explorer (`app/search/page.tsx`)**: Direct SPL search console with query presets, execution timing, and structured JSON event inspector.
-  - **AI Extraction Workbench (`app/ai-extraction/page.tsx`)**: Interactive IOC parsing and threat intelligence explorer.
+  - **AI Extraction Workbench (`app/ai-extraction/page.tsx`)**: Interactive IOC parsing with live defanging and threat intelligence explorer.
   - **Reports Dashboard (`app/reports/page.tsx`)**: Investigation report viewer, export manager, and evidence bundle downloader.
   - **Admin & Tenant Management (`app/admin/page.tsx`)**: Multi-tenant configurations, API key settings, and team management.
   - **Auth Guard & Contexts (`AuthContext.tsx`, `AuthGuard.tsx`, `app/login/page.tsx`)**: Client-side role enforcement and persistent session state.
 
 ### 2.8 Automated Testing Suite (`backend/tests/`)
-- **40 test suites** containing **327 automated tests** covering:
+- **41 test suites** containing **329 automated tests** covering:
+  - MITRE ATT&CK statistics aggregation endpoint (`test_mitre_stats.py`)
   - Server-side PDF report rendering and routes (`test_report_generation.py`)
   - WebSocket streaming and lifecycle (`test_investigation_websocket.py`)
   - SSE streaming endpoint and auth (`test_investigation_stream.py`)
@@ -112,7 +116,7 @@ All core subsystems are covered by an automated test suite of **327 passing test
   - Ingestion, deduplication, and lease locking (`test_ingestion_service.py`, `test_lease_poller.py`)
   - Security hardening, login throttling, and route protection (`test_auth_endpoints.py`, `test_login_throttle.py`, `test_route_protection.py`, `test_spl_guard.py`)
   - Normalization mappers, noise filtering, and canonical models (`test_norm_*.py`)
-- **Test Result**: **327 passed**, 0 failed.
+- **Test Result**: **329 passed**, 0 failed (100% pass rate).
 - **Frontend Type Safety**: `npx tsc --noEmit` verified with **0 errors**.
 
 ---
@@ -129,7 +133,8 @@ All core subsystems are covered by an automated test suite of **327 passing test
 | **Reporting Engine & PDF** | ✅ Complete | HTML/Markdown/Executive generation & server-side binary PDF downloads |
 | **Authentication & RBAC** | ✅ Complete | JWT tokens, login throttling, client-side AuthGuard |
 | **Frontend SOC Workspace** | ✅ Complete | Next.js App Router (Dashboard, Alerts, Investigations, Reports, Search, Admin) |
-| **Automated Testing** | ✅ Complete | 40 test suites / 327 tests passing |
+| **Interactive SOC Visuals**| ✅ Complete | MITRE ATT&CK heatmap, Process execution DAG, IOC defanging hover cards |
+| **Automated Testing** | ✅ Complete | 41 test suites / 329 tests passing (100% pass rate) |
 | **Live SIEM Ingestion** | ✅ Complete | Validated against live Splunk Enterprise & MongoDB |
 | **WebSocket Pipeline Push** | ✅ Complete | Real-time WebSocket streaming with automatic SSE fallback |
 | **PDF Binary Export** | ✅ Complete | Server-side PDF binary generation (ReportLab) with executive and full formats |
