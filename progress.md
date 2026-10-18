@@ -1,11 +1,28 @@
 # Forensiq Project Progress Tracker
 
-Last updated: 2026-10-17
+Last updated: 2026-10-18
 
 ## Overview
 This document tracks the progress of the Forensiq project over time. Each entry includes the date, accomplishments, and current status.
 
 ## Progress Entries
+
+### 2026-10-18: Advanced SOC UI Enhancements Implemented & Verified
+- **Interactive MITRE ATT&CK Matrix & Threat Heatmap (`frontend/src/components/mitre/MitreMatrix.tsx`)**:
+  - Full-width enterprise matrix supporting 12 core tactics and primary attack techniques.
+  - Heatmap intensity color coding based on active alert volume (rose for 20+ hits, amber for 5-19 hits, cyan for active detections, slate for unobserved rules).
+  - Search filter with real-time cell matching across tactics, quick metrics bar, and drill-down modal with direct "Filter Alerts Queue" pivot.
+  - Added backend aggregation endpoint `GET /api/v1/alerts/stats/mitre` with tenant scoping and test coverage.
+- **Visual Process Execution Tree Graph (`frontend/src/components/investigation/ProcessTreeGraph.tsx`)**:
+  - Interactive SVG-connected process lineage graph showing parent-child process relationships, spawned tools, network C2 beacons, and dropped artifacts.
+  - Dynamic telemetry inspector displaying PIDs, PPIDs, security context, and full command lines with 1-click copy.
+  - Step-by-step playback simulation engine and zoom/pan/fit controls.
+  - Embedded into the main Investigation Workspace (`investigations/page.tsx`) and as a dedicated tab inside `InvestigationModal.tsx`.
+- **Live Threat Intel Hover Cards & Defanging Engine (`frontend/src/components/enrichment/IocHoverCard.tsx`, `lib/defang.ts`)**:
+  - Safe defanging/refanging utility (`defangIoc`, `refangIoc`, `detectIocType`).
+  - Rich glassmorphism hover card displaying defanged values, threat score bars, reputation tags, and instant pivot actions ("Pivot to SPL", "VirusTotal", "AbuseIPDB").
+  - Integrated across `EnrichmentPanel.tsx`, `ai-extraction/page.tsx`, and alert views.
+- **Verification**: All **329 backend tests** passing (100%) and Next.js frontend TypeScript compilation verified with **0 errors**.
 
 ### 2026-10-17: Server-Side PDF Engine & Direct Document Downloads Implemented & Verified
 - Implemented standardized binary PDF report download endpoint in `backend/app/api/v1/endpoints/reports.py`:

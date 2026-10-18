@@ -127,6 +127,73 @@ async def alerts_timeline(db: AsyncIOMotorDatabase = Depends(get_db), user: dict
         logger.error(f"Error fetching timeline stats: {e}")
         return []
 
+@router.get("/stats/mitre")
+async def alerts_mitre_stats(db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
+    """Returns aggregated MITRE ATT&CK techniques, tactics, hit counts, and rule coverage."""
+    try:
+        cursor = db["alerts"].find(
+            scoped_query(user, {
+                "$or": [
+                    {"mitre_technique": {"$exists": True, "$ne": None, "$ne": ""}},
+                    {"mitre_mappings": {"$exists": True, "$ne": []}}
+                ]
+            }),
+            {"_id": 1, "title": 1, "severity": 1, "mitre_technique": 1, "mitre_tactic": 1, "mitre_mappings": 1}
+        ).limit(500)
+        
+        tech_map = {}
+        tactic_counts = {}
+        total_mapped = 0
+        
+        async for doc in cursor:
+            total_mapped += 1
+            alert_id = str(doc.get("_id", ""))
+            sev = (doc.get("severity") or "medium").lower()
+            
+            mappings = doc.get("mitre_mappings") or []
+            if not mappings and doc.get("mitre_technique"):
+                mappings = [{
+                    "technique": doc.get("mitre_technique"),
+                    "tactic": doc.get("mitre_tactic") or "Execution",
+                    "name": doc.get("title") or ""
+                }]
+                
+            for m in mappings:
+                tech_id = str(m.get("technique") or "").strip().upper()
+                if not tech_id:
+                    continue
+                tactic = str(m.get("tactic") or "Execution").strip()
+                name = str(m.get("name") or "").strip()
+                
+                tactic_counts[tactic] = tactic_counts.get(tactic, 0) + 1
+                
+                if tech_id not in tech_map:
+                    tech_map[tech_id] = {
+                        "id": tech_id,
+                        "name": name or tech_id,
+                        "tactic": tactic,
+                        "count": 0,
+                        "severity": sev,
+                        "alert_ids": []
+                    }
+                entry = tech_map[tech_id]
+                entry["count"] += 1
+                if alert_id and alert_id not in entry["alert_ids"]:
+                    entry["alert_ids"].append(alert_id)
+                
+                sev_ranks = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+                if sev_ranks.get(sev, 1) > sev_ranks.get(entry["severity"], 1):
+                    entry["severity"] = sev
+
+        return {
+            "techniques": list(tech_map.values()),
+            "tactics_summary": tactic_counts,
+            "total_mapped_alerts": total_mapped
+        }
+    except Exception as e:
+        logger.error(f"Error fetching MITRE stats: {e}")
+        return {"techniques": [], "tactics_summary": {}, "total_mapped_alerts": 0}
+
 @router.get("/{alert_id}", response_model=dict)
 async def get_alert(alert_id: str, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
     """Fetches a single alert by ID, including context and enrichments if available."""

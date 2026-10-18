@@ -7,6 +7,9 @@ export type AlertRecord = {
   recommendation?: string; enrichments?: Enrichment[]; extracted_iocs?: string[]; context?: Record<string, unknown>;
   mitre_tactic?: string; mitre_technique?: string; mitre_mappings?: { technique?: string; tactic?: string; name?: string }[];
   timeline?: TimelineEvent[]; correlations?: Correlation[]; evidence?: Record<string, number>; raw_event?: Record<string, unknown>;
+  process_name?: string; command_line?: string; parent_process?: string; event_code?: string | number;
+  source_ip?: string; dest_ip?: string; dest_port?: string | number; protocol?: string;
+  registry_key?: string; registry_details?: string; dns_query?: string; hashes?: string;
 };
 export type InvestigationJob = { _id: string; status: string; created_at?: string; completed_at?: string; recommendation?: string; risk_assessment?: { risk_score?: number; priority?: string; confidence_score?: number } };
 

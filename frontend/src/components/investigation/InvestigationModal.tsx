@@ -27,6 +27,7 @@ import { apiFetch } from "@/lib/api";
 
 import { API_BASE, getAccessToken } from "@/lib/auth";
 import type { AlertRecord, PipelineStep, StepStatus } from "@/lib/types";
+import ProcessTreeGraph from "@/components/investigation/ProcessTreeGraph";
 
 const INITIAL_STEPS: PipelineStep[] = [
   {
@@ -114,6 +115,7 @@ export default function InvestigationModal({
   const [elapsedMs, setElapsedMs] = useState(0);
   const [expandedStep, setExpandedStep] = useState<string | null>(null);
   const [downloadingPdf, setDownloadingPdf] = useState<boolean>(false);
+  const [activeModalTab, setActiveModalTab] = useState<"pipeline" | "tree">("pipeline");
 
   const logsEndRef = useRef<HTMLDivElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -580,6 +582,33 @@ export default function InvestigationModal({
 
         {/* Body content */}
         <div className="flex-1 overflow-y-auto p-6 space-y-3">
+          {/* Tab Selector */}
+          <div className="flex items-center gap-2 border-b border-[var(--color-border)] pb-3 mb-2">
+            <button
+              onClick={() => setActiveModalTab("pipeline")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                activeModalTab === "pipeline"
+                  ? "bg-[var(--color-surface-3)] text-white border border-[var(--color-border)] font-bold shadow-sm"
+                  : "text-[var(--color-text-muted)] hover:text-white"
+              }`}
+            >
+              Pipeline Execution Steps (7 Nodes)
+            </button>
+            <button
+              onClick={() => setActiveModalTab("tree")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeModalTab === "tree"
+                  ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold shadow-sm"
+                  : "text-[var(--color-text-muted)] hover:text-cyan-300"
+              }`}
+            >
+              <span>Visual Process Execution Tree</span>
+              <span className="text-[9px] px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300 uppercase font-mono font-bold">
+                Graph
+              </span>
+            </button>
+          </div>
+
           {streamError && (
             <div className="p-4 rounded-lg bg-[var(--color-red)]/10 border border-[var(--color-red)]/30 text-[var(--color-red)] text-sm flex items-start gap-3">
               <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
@@ -590,12 +619,17 @@ export default function InvestigationModal({
             </div>
           )}
 
-          {/* Stepper list */}
-          <div className="space-y-2">
-            {steps.map((s, idx) => {
-              const isRunning = s.status === "running";
-              const isCompleted = s.status === "completed";
-              const isExpanded = expandedStep === s.node;
+          {activeModalTab === "tree" ? (
+            <div className="space-y-3">
+              <ProcessTreeGraph alert={finalAlert || alert} />
+            </div>
+          ) : (
+            /* Stepper list */
+            <div className="space-y-2">
+              {steps.map((s, idx) => {
+                const isRunning = s.status === "running";
+                const isCompleted = s.status === "completed";
+                const isExpanded = expandedStep === s.node;
 
               return (
                 <div
@@ -699,6 +733,7 @@ export default function InvestigationModal({
               );
             })}
           </div>
+        )}
 
           {/* Collapsible live telemetry terminal log */}
           <div className="mt-4 border border-[var(--color-border)] rounded-lg overflow-hidden bg-[var(--color-base)]">

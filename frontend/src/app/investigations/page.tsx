@@ -23,6 +23,7 @@ import {
 import { apiFetch } from "@/lib/api";
 import type { AlertRecord } from "@/lib/types";
 import InvestigationModal from "@/components/investigation/InvestigationModal";
+import ProcessTreeGraph from "@/components/investigation/ProcessTreeGraph";
 
 
 const PIPELINE_STAGES = [
@@ -257,6 +258,11 @@ export default function InvestigationsPage() {
                   <span className="text-[11px] text-[var(--text-muted)] block">AI Confidence</span>
                   <span className="font-mono text-lg font-bold text-[#8B5CF6]">{selectedAlert.ai_confidence ?? "—"}%</span>
                 </div>
+              </div>
+
+              {/* Visual Process Execution Tree */}
+              <div className="space-y-2">
+                <ProcessTreeGraph alert={selectedAlert} />
               </div>
 
               {/* Summary & Playbook */}
