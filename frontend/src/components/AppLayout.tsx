@@ -20,6 +20,7 @@ import {
   ChevronRight,
   Database,
   Layers,
+  ShieldBan,
   User,
   Activity
 } from "lucide-react";
@@ -60,6 +61,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     { href: "/alerts", icon: Bell, label: "Alerts", badge: null },
     { href: "/incidents", icon: Layers, label: "Incidents", badge: null },
     { href: "/investigations", icon: ShieldAlert, label: "Investigations", badge: null },
+    { href: "/response", icon: ShieldBan, label: "Response", badge: null },
     { href: "/ai-extraction", icon: Sparkles, label: "AI Extraction", badge: "AI" },
     { href: "/raw-logs", icon: Terminal, label: "Raw Logs", badge: "SPL" },
     { href: "/reports", icon: FileText, label: "Reports", badge: null },

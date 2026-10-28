@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ExternalLink, Loader2, RefreshCw, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { ExternalLink, Loader2, RefreshCw, ShieldBan, Trash2 } from "lucide-react";
 import {
   CASE_STATUSES,
   CASE_STATUS_LABELS,
@@ -137,6 +138,9 @@ export default function CasePanel({ incident, user, selectedAlertIds, onChanged,
 
         <div className="space-y-2">
           <h2 className="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">Owner</h2>
+          <Link href={`/response?incident=${encodeURIComponent(incident.id)}`} className="button-secondary text-xs inline-flex items-center gap-1.5 w-fit">
+            <ShieldBan className="h-3.5 w-3.5" /> Request a response action
+          </Link>
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="text-[var(--text-primary)]">{incident.case_owner ? (incident.case_owner_id === user?.sub ? "You" : incident.case_owner) : "Nobody"}</span>
             {user && incident.case_owner_id !== user.sub && (

@@ -174,6 +174,21 @@ class Settings(BaseSettings):
     SERVICENOW_PASSWORD: str = Field(default="", description="ServiceNow integration password")
     TICKET_SYNC_INTERVAL_SECONDS: int = Field(default=300, description="How often linked tickets are polled for status")
 
+    # Response actions (EDR isolate, IdP disable user, firewall block). Dry runs always work;
+    # live execution stays off until an operator turns it on.
+    RESPONSE_LIVE_EXECUTION_ENABLED: bool = Field(default=False, description="Allow approved response actions to change the target system")
+    RESPONSE_REQUEST_TTL_HOURS: int = Field(default=24, description="A request nobody approves within this time expires")
+    RESPONSE_APPROVAL_TTL_MINUTES: int = Field(default=60, description="An approval must be used within this time")
+    RESPONSE_MAX_LIVE_PER_HOUR: int = Field(default=10, description="Circuit breaker: live executions per tenant per hour")
+    RESPONSE_PROTECTED_TARGETS: str = Field(default="", description="Comma-separated hosts, accounts or IPs that may never be actioned (domain controllers, break-glass accounts)")
+    CROWDSTRIKE_BASE_URL: str = Field(default="https://api.crowdstrike.com", description="CrowdStrike Falcon API base URL for your cloud")
+    CROWDSTRIKE_CLIENT_ID: str = Field(default="", description="Falcon API client id (scope: Hosts write)")
+    CROWDSTRIKE_CLIENT_SECRET: str = Field(default="", description="Falcon API client secret")
+    OKTA_BASE_URL: str = Field(default="", description="e.g. https://acme.okta.com")
+    OKTA_API_TOKEN: str = Field(default="", description="Okta API token (SSWS) allowed to suspend users")
+    FIREWALL_WEBHOOK_URL: str = Field(default="", description="HTTPS endpoint of the firewall automation gateway that applies block/unblock")
+    FIREWALL_WEBHOOK_TOKEN: str = Field(default="", description="Bearer token sent to the firewall gateway")
+
     # Data Durability & Governance (Retention in days)
     AUDIT_RETENTION_DAYS: int = Field(default=365, description="Retention in days for audit logs")
     INVESTIGATION_JOB_RETENTION_DAYS: int = Field(default=90, description="Retention in days for completed investigation jobs")

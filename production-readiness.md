@@ -20,7 +20,8 @@ This list covers what must change before Forensiq can hold real security telemet
 | Close with verdict and note, assignment, bulk actions, SLA clocks, role gates, audit trail | Done | PR #17 |
 | MTTA/MTTR, rule precision, backlog aging | Done | PR #17 |
 | Incident grouping | Done | branch `feat/phase1b-incidents` |
-| Case management (2.4) | Done | branch `ai_inv` |
+| Case management (2.4) | Done | branch `case_management` |
+| Response actions (2.5) | Done | branch `response_actions` |
 | UTC timestamps serialised with offset | Done | PR #17 |
 
 Everything below is still open.
@@ -149,9 +150,16 @@ A SOC tool that must be watched to be useful will be missed overnight. This is t
 
 ### 2.5 Response actions
 
-- Connectors for EDR isolate, IdP disable-user, firewall block, each behind an approval step and written to the audit log.
-- Dry-run mode and rollback where the target supports it.
-- **Effort: L.** Do this after notifications and an approval workflow exist.
+**Status: implemented** (`services/response_actions.py`, `services/response_connectors.py`, `endpoints/response.py`, UI at `/response`; tests in `tests/test_response_actions.py`). The approval workflow it needed is part of this work.
+
+- [x] Connectors: EDR isolate (CrowdStrike Falcon `contain` / `lift_containment`), IdP disable user (Okta suspend + clear sessions / unsuspend), firewall block (a webhook gateway you run in front of PAN-OS, FortiGate, a cloud security group, etc.; payload documented in `FirewallWebhook`). Endpoints and credentials come from server settings only. An unconfigured connector refuses with 503; nothing is simulated.
+- [x] Approval step: request, then a **different** SOC manager or admin approves (four eyes, no self-approval), then execute within `RESPONSE_APPROVAL_TTL_MINUTES`. Unapproved requests expire after `RESPONSE_REQUEST_TTL_HOURS`. Approvers are notified through the existing channels (`response_approval_requested`).
+- [x] Audit: every step (`response.requested|approved|rejected|cancelled|dry_run|executed|execution_failed|rolled_back|expired`) goes to the audit log and, when linked, the incident timeline.
+- [x] Dry run: always available, no approval needed, read-only against the target (CrowdStrike and Okta look the target up and say whether it would change; the firewall gateway has no read-only mode and says so). A preview is attached to every request.
+- [x] Rollback for all three actions (lift isolation, re-enable user, unblock IP), SOC manager or admin, with a note. A failed rollback leaves the action in place and retryable.
+- [x] Guardrails: live execution is **off by default** (`FORENSIQ_RESPONSE_LIVE_EXECUTION_ENABLED`); protected-targets list (`RESPONSE_PROTECTED_TARGETS`) checked at request and at execution; loopback/link-local/multicast/reserved IPs can never be blocked; ambiguous hostnames are refused; per-tenant circuit breaker (`RESPONSE_MAX_LIVE_PER_HOUR`); duplicate open requests refused.
+- Not done: Entra ID, SentinelOne/Defender, PAN-OS/FortiGate native connectors (the webhook gateway covers firewalls generically); automatic triggering of actions from rules (everything is analyst-initiated by design); a per-severity or per-action approval policy.
+- **Effort: L.**
 
 ### 2.6 Multi-tenancy
 

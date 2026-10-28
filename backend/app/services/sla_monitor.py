@@ -49,7 +49,7 @@ async def notify_all_channels(
     """Fans out notification payload across all matching enabled channels in tenant."""
     channels = await get_active_channels(db, org_id)
     if not channels:
-        logger.info("no_active_notification_channels", org_id=org_id, event=payload.event_type.value)
+        logger.info("no_active_notification_channels", org_id=org_id, event_type=payload.event_type.value)
         return
 
     tasks = [notification_dispatcher.dispatch(payload, ch) for ch in channels]
