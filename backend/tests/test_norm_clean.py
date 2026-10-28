@@ -1,15 +1,8 @@
-from datetime import UTC
+from datetime import timezone
 
 from app.normalization.clean import (
-    basename,
-    clean_value,
-    host_key,
-    merged_fields,
-    parse_hashes,
-    parse_ts,
-    raw_event_id,
-    split_account,
-    xml_fields,
+    basename, clean_value, host_key, merged_fields, parse_hashes,
+    parse_ts, raw_event_id, split_account, xml_fields,
 )
 
 
@@ -30,8 +23,8 @@ def test_parse_ts_converts_offsets_to_utc():
 
 
 def test_parse_ts_handles_z_naive_epoch_and_garbage():
-    assert parse_ts("2026-08-11T06:37:25Z").tzinfo == UTC
-    assert parse_ts("2026-08-11 06:37:25").tzinfo == UTC
+    assert parse_ts("2026-08-11T06:37:25Z").tzinfo == timezone.utc
+    assert parse_ts("2026-08-11 06:37:25").tzinfo == timezone.utc
     assert parse_ts("1786430245").year == 2026
     assert parse_ts("not a time") is None
     assert parse_ts(None) is None

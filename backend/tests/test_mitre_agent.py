@@ -2,6 +2,7 @@
 Unit tests for MITRE ATT&CK Mapping Agent Node.
 """
 
+import pytest
 from app.agents.mitre_agent import map_mitre_node
 
 
@@ -17,11 +18,11 @@ def test_mitre_explicit_technique():
     }
     result = map_mitre_node(state)
     mappings = result["mitre_mappings"]
-
+    
     assert len(mappings) >= 1
     tech_ids = [m["technique_id"] for m in mappings]
     assert "T1059.001" in tech_ids
-
+    
     ps_entry = next(m for m in mappings if m["technique_id"] == "T1059.001")
     assert ps_entry["tactic"] == "Execution"
     assert "PowerShell" in ps_entry["name"]
@@ -45,7 +46,7 @@ def test_mitre_powershell_obfuscation_heuristics():
     result = map_mitre_node(state)
     mappings = result["mitre_mappings"]
     tech_ids = [m["technique_id"] for m in mappings]
-
+    
     # Expect both PowerShell execution and Deobfuscation
     assert "T1059.001" in tech_ids
     assert "T1140" in tech_ids
@@ -65,7 +66,7 @@ def test_mitre_registry_persistence_heuristics():
     result = map_mitre_node(state)
     mappings = result["mitre_mappings"]
     tech_ids = [m["technique_id"] for m in mappings]
-
+    
     assert "T1547.001" in tech_ids
     reg_entry = next(m for m in mappings if m["technique_id"] == "T1547.001")
     assert reg_entry["tactic"] == "Persistence"
@@ -84,7 +85,7 @@ def test_mitre_failed_logon_brute_force():
     result = map_mitre_node(state)
     mappings = result["mitre_mappings"]
     tech_ids = [m["technique_id"] for m in mappings]
-
+    
     assert "T1110.001" in tech_ids
     bf_entry = next(m for m in mappings if m["technique_id"] == "T1110.001")
     assert bf_entry["tactic"] == "Credential Access"
@@ -105,6 +106,6 @@ def test_mitre_discovery_reconnaissance():
     result = map_mitre_node(state)
     mappings = result["mitre_mappings"]
     tech_ids = [m["technique_id"] for m in mappings]
-
+    
     assert "T1082" in tech_ids
     assert "T1087" in tech_ids

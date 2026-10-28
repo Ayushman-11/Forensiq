@@ -2,10 +2,8 @@
 Unit tests for Investigation Recommendation Agent Node.
 """
 
-from unittest.mock import AsyncMock, patch
-
 import pytest
-
+from unittest.mock import AsyncMock, patch
 from app.agents.recommendation_agent import generate_recommendations_node
 
 

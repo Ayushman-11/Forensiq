@@ -1,4 +1,4 @@
-﻿"""
+"""
 Forensiq FastAPI Main Application Entrypoint.
 Configures app lifespan, middleware (security headers, body limits, CORS, trusted hosts), routers.
 """

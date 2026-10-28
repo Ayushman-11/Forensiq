@@ -8,8 +8,8 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from app.core.logging import setup_logging
 from app.infrastructure.siem.splunk import SplunkClient
+from app.core.logging import setup_logging
 
 SAVED_SEARCHES = [
     "Forensiq_Alert_PowerShell_Execution",

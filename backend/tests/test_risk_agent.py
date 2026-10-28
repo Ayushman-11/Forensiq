@@ -2,10 +2,8 @@
 Unit tests for Risk Assessment Agent Node.
 """
 
-from unittest.mock import AsyncMock, patch
-
 import pytest
-
+from unittest.mock import AsyncMock, patch
 from app.agents.risk_agent import assess_risk_node
 
 

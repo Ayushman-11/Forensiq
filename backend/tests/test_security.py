@@ -1,16 +1,15 @@
 """Tests for password hashing and JWT helpers."""
 
-from datetime import UTC, datetime
-
 import pytest
+from datetime import datetime, timezone
 
 from app.core.security import (
-    TokenError,
+    hash_password,
+    verify_password,
     create_access_token,
     create_refresh_token,
     decode_token,
-    hash_password,
-    verify_password,
+    TokenError,
 )
 
 
@@ -41,7 +40,7 @@ def test_create_and_decode_refresh_token():
     assert payload["type"] == "refresh"
     assert payload["jti"] == jti
     assert isinstance(expires_at, datetime)
-    assert expires_at > datetime.now(UTC)
+    assert expires_at > datetime.now(timezone.utc)
 
 
 def test_decode_token_rejects_garbage():

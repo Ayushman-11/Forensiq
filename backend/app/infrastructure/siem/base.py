@@ -3,9 +3,9 @@ SIEM Provider Abstract Interface Protocol.
 Decouples Forensiq services and AI agents from specific SIEM implementations.
 """
 
-from typing import Protocol
-
-from app.schemas.normalized_event import NormalizedAlert, NormalizedEvent
+from typing import Protocol, List, Optional, Dict, Any
+from datetime import datetime
+from app.schemas.normalized_event import NormalizedEvent, NormalizedAlert
 
 
 class SIEMProvider(Protocol):
@@ -23,14 +23,14 @@ class SIEMProvider(Protocol):
         earliest_time: str = "-24h",
         latest_time: str = "now",
         limit: int = 100,
-    ) -> list[NormalizedEvent]:
+    ) -> List[NormalizedEvent]:
         """Executes a search query and returns normalized security events."""
         ...
 
-    async def list_alerts(self, limit: int = 50) -> list[NormalizedAlert]:
+    async def list_alerts(self, limit: int = 50) -> List[NormalizedAlert]:
         """Lists recent triggered alerts from the SIEM."""
         ...
 
-    async def list_indexes(self) -> list[str]:
+    async def list_indexes(self) -> List[str]:
         """Lists all available indexes in the SIEM."""
         ...

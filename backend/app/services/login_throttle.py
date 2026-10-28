@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from pymongo import ReturnDocument
 
@@ -13,7 +13,7 @@ COLLECTION = "login_attempts"
 
 
 def _now() -> datetime:
-    return datetime.now(UTC).replace(tzinfo=None)  # Mongo returns naive UTC
+    return datetime.now(timezone.utc).replace(tzinfo=None)  # Mongo returns naive UTC
 
 
 def throttle_key(email: str, ip: str) -> str:

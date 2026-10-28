@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
@@ -10,7 +10,7 @@ from pymongo.errors import DuplicateKeyError
 
 def _now() -> datetime:
     # Mongo returns naive UTC datetimes, so keep stored and compared values naive UTC.
-    return datetime.now(UTC).replace(tzinfo=None)
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 async def acquire_lease(db, name: str, owner: str, ttl_seconds: int) -> bool:

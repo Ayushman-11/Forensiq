@@ -7,7 +7,7 @@ import html
 import json
 import ntpath
 import re
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 _NULLS = {"", "-", "null", "none", "(null)", "n/a"}
@@ -69,7 +69,7 @@ def merged_fields(raw: dict) -> dict[str, str]:
 
 
 def _aware(dt: datetime) -> datetime:
-    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
 
 
 def parse_ts(value: Any) -> datetime | None:
@@ -82,7 +82,7 @@ def parse_ts(value: Any) -> datetime | None:
     except ValueError:
         pass
     try:
-        return datetime.fromtimestamp(float(text), tz=UTC)
+        return datetime.fromtimestamp(float(text), tz=timezone.utc)
     except (ValueError, OverflowError, OSError):
         return None
 

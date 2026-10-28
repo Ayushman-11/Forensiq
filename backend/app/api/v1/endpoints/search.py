@@ -1,18 +1,17 @@
 import re
-from datetime import UTC, datetime
-
-from fastapi import APIRouter, Depends, HTTPException, status
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from datetime import datetime, timezone
+from typing import List, Optional
+from fastapi import APIRouter, Depends, Query, HTTPException, status
 from pydantic import BaseModel, Field
-
-from app.api.deps import get_db, get_siem_client, require_roles
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from app.api.deps import get_siem_client, get_db, require_roles
 from app.core.config import settings
-from app.core.logging import logger
 from app.core.tenancy import scoped_query
-from app.infrastructure.siem.base import SIEMProvider
-from app.schemas.normalized_event import NormalizedEvent
 from app.services.audit import record_audit
 from app.services.spl_guard import SPLRejected, validate_search, validate_time_range
+from app.infrastructure.siem.base import SIEMProvider
+from app.schemas.normalized_event import NormalizedEvent
+from app.core.logging import logger
 
 router = APIRouter()
 
@@ -27,7 +26,7 @@ class SearchRequest(BaseModel):
 class SearchResponse(BaseModel):
     count: int
     query: str
-    events: list[NormalizedEvent]
+    events: List[NormalizedEvent]
 
 
 @router.post("", response_model=SearchResponse)
@@ -92,18 +91,18 @@ async def execute_search(
         cursor = db["alerts"].find(scoped_query(user, mongo_query) if mongo_query else scoped_query(user)).limit(req.limit)
         alert_docs = await cursor.to_list(length=req.limit)
 
-        events: list[NormalizedEvent] = []
+        events: List[NormalizedEvent] = []
         for doc in alert_docs:
             created_at = doc.get("created_at")
             if isinstance(created_at, dict) and "$date" in created_at:
                 try:
                     ts = datetime.fromisoformat(created_at["$date"].replace("Z", "+00:00"))
                 except Exception:
-                    ts = datetime.now(UTC)
+                    ts = datetime.now(timezone.utc)
             elif isinstance(created_at, datetime):
                 ts = created_at
             else:
-                ts = datetime.now(UTC)
+                ts = datetime.now(timezone.utc)
 
             events.append(
                 NormalizedEvent(

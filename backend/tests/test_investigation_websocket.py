@@ -1,13 +1,14 @@
-from datetime import UTC, datetime
-
 import pytest
-from mongomock_motor import AsyncMongoMockClient
+import json
+from datetime import datetime, timezone
 from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
+from mongomock_motor import AsyncMongoMockClient
 
+from app.main import app
+from app.database.session import db_config
 from app.core.config import settings
 from app.core.security import create_access_token
-from app.database.session import db_config
-from app.main import app
 
 
 @pytest.fixture
@@ -51,7 +52,7 @@ async def test_ws_investigate_streaming_lifecycle(test_setup):
         "user": "NT AUTHORITY\\SYSTEM",
         "severity": "high",
         "status": "New",
-        "created_at": datetime.now(UTC),
+        "created_at": datetime.now(timezone.utc),
         "raw_logs": "procdump.exe -ma lsass.exe C:\\temp\\lsass.dmp",
         "src_ip": "10.0.0.50",
     })
@@ -138,7 +139,7 @@ async def test_ws_investigate_already_investigated(test_setup):
         "mitre_mappings": [{"tactic": "Command and Control", "technique": "T1071.001"}],
         "timeline": [{"timestamp": "2026-10-16T12:00:00Z", "phase": "Command and Control"}],
         "recommendation": "Isolate host and revoke credentials immediately.",
-        "created_at": datetime.now(UTC),
+        "created_at": datetime.now(timezone.utc),
     })
 
     token = create_access_token("analyst-ws-2", "analyst2@forensiq.ai", "analyst")
