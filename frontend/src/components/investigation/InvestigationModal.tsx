@@ -25,8 +25,8 @@ import {
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 
-import { API_BASE, getAccessToken } from "@/lib/auth";
-import { engineLabel, type AlertRecord, type PipelineStep, type StepStatus } from "@/lib/types";
+import { API_BASE, getAccessToken, getWsTicket } from "@/lib/auth";
+import type { AlertRecord, PipelineStep, StepStatus } from "@/lib/types";
 import ProcessTreeGraph from "@/components/investigation/ProcessTreeGraph";
 
 const INITIAL_STEPS: PipelineStep[] = [
@@ -167,15 +167,7 @@ export default function InvestigationModal({
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
-    function buildWebSocketUrl(): string {
-      const token = getAccessToken() || "";
-      let base = API_BASE;
-      if (typeof window !== "undefined" && !base.startsWith("http")) {
-        base = `${window.location.protocol}//${window.location.host}${base}`;
-      }
-      const wsBase = base.replace(/^http:/, "ws:").replace(/^https:/, "wss:");
-      return `${wsBase}/api/v1/alerts/${encodeURIComponent(alert._id)}/ws?token=${encodeURIComponent(token)}`;
-    }
+
 
     async function startSSEFallback() {
       if (isCancelled || completedRef.current) return;
