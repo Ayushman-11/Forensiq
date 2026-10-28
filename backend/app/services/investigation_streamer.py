@@ -15,6 +15,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.agents.graph import investigation_graph
 from app.services.correlation import correlate_alert
+from app.core.config import settings
 from app.core.timeutil import iso_utc
 from app.core.logging import logger
 from app.core.errors import new_request_id
@@ -164,6 +165,16 @@ async def finalize_and_save_investigation(
         if isinstance(e, dict) and e.get("status", "ok") != "ok" and e.get("source")
     })
 
+    llm_metadata = final_state.get("llm_metadata") or {}
+    model_name = llm_metadata.get("model", settings.XAI_MODEL) if engines.get("risk") == "grok_llm" else "deterministic_engine"
+    prompt_version = llm_metadata.get("prompt_version", settings.LLM_PROMPT_VERSION)
+    token_usage = {
+        "prompt_tokens": llm_metadata.get("prompt_tokens", 0),
+        "completion_tokens": llm_metadata.get("completion_tokens", 0),
+        "total_tokens": llm_metadata.get("total_tokens", 0),
+    }
+    cost_usd = llm_metadata.get("estimated_cost_usd", 0.0)
+
     alert_update = {
         "status": "Investigated",
         "ai_confidence": ai_confidence,
@@ -176,15 +187,36 @@ async def finalize_and_save_investigation(
         "mitre_mappings": mitre_mappings,
         "timeline": timeline,
         "recommendation": recommendation,
+        "containment_advice": "suggested",
         "correlations": correlations,
         "evidence": evidence,
         "engines": engines,
         "unavailable_feeds": unavailable_feeds,
+        "model": model_name,
+        "prompt_version": prompt_version,
+        "cost_usd": cost_usd,
+    }
+
+    run_history_record = {
+        "job_id": job_id,
+        "completed_at": datetime.now(timezone.utc),
+        "risk_score": alert_update["risk_score"],
+        "priority": alert_update["priority"],
+        "model": model_name,
+        "prompt_version": prompt_version,
+        "token_usage": token_usage,
+        "cost_usd": cost_usd,
+        "recommendation": recommendation,
+        "containment_advice": "suggested",
+        "engines": engines,
     }
 
     await db["alerts"].update_one(
         {"_id": alert_id},
-        {"$set": alert_update},
+        {
+            "$set": alert_update,
+            "$push": {"investigation_history": run_history_record},
+        },
     )
 
     await db["investigation_jobs"].update_one(
@@ -199,9 +231,14 @@ async def finalize_and_save_investigation(
             "mitre_mappings": mitre_mappings,
             "timeline": timeline,
             "recommendation": recommendation,
+            "containment_advice": "suggested",
             "correlations": correlations,
             "evidence": evidence,
             "engines": engines,
+            "model": model_name,
+            "prompt_version": prompt_version,
+            "token_usage": token_usage,
+            "cost_usd": cost_usd,
         }}
     )
     logger.info("investigation_completed_and_saved", job_id=job_id, alert_id=alert_id)

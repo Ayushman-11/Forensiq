@@ -29,3 +29,4 @@ class AgentState(TypedDict):
     timeline: List[Dict[str, Any]]
     recommendation: Optional[str]
     recommendation_engine: Optional[str]
+    llm_metadata: Optional[Dict[str, Any]]

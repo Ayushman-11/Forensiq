@@ -15,6 +15,7 @@ from app.core.headers import SecurityHeadersMiddleware, RequestBodyLimitMiddlewa
 from app.api.v1.router import api_router
 from app.database.indexes import ensure_indexes
 from app.normalization.noise import NoiseFilter
+from app.core.startup_checks import missing_integrations
 
 from app.database.session import connect_to_mongo, close_mongo_connection
 from app.services.poller import AlertPoller

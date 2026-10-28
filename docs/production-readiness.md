@@ -23,6 +23,7 @@ This list covers what must change before Forensiq can hold real security telemet
 | UTC timestamps serialised with offset | Done | PR #17 |
 | 1.4 Data durability & governance (migrations, audit index/export, retention TTLs, policy history, erase-on-request) | Done | Implemented |
 | 1.5 Reliability of investigations (durable job queue, reaper, multi-worker pub/sub, observe-only WS, 5xx error propagation) | Done | Implemented |
+| 2.3 AI investigation (evidence citations & rejection, prompt-injection defense, run history & token costs, suggested containment, daily tenant cap & circuit breaker, Atomic Red Team eval harness) | Done | Implemented |
 
 Everything below is still open.
 
@@ -127,14 +128,14 @@ A SOC tool that must be watched to be useful will be missed overnight. This is t
 
 ### 2.3 AI investigation
 
-| Change | Effort |
-|---|---|
-| Structured LLM output with a JSON schema; every claim cites an evidence id from the alert or enrichment; reject answers that cite nothing. | M |
-| Store model, prompt version and token cost with every run; keep a history of runs instead of overwriting results. | M |
-| Containment advice is always "suggested"; any automated action requires human approval. | S |
-| Evaluation harness: a labelled alert set (Atomic Red Team plus benign baselines) scored for verdict precision and recall on every release; block releases that regress. | L |
-| Prompt-injection hardening: alert text (command lines, hostnames, DNS names) is attacker-controlled and goes into LLM prompts. Delimit and escape it; never let model output trigger actions directly; test with injected samples. | M |
-| Cost and rate controls per tenant: daily cap, circuit breaker on provider errors. | S |
+| Change | Effort | Status | Implementation Details |
+|---|---|---|---|
+| Structured LLM output with a JSON schema; every claim cites an evidence id from the alert or enrichment; reject answers that cite nothing. | M | Done | JSON schema with strict validation; alerts/IOCs/correlations indexed into `EVID-ALERT`, `EVID-IOC-n`, etc.; empty or invalid evidence citations rejected. |
+| Store model, prompt version and token cost with every run; keep a history of runs instead of overwriting results. | M | Done | Each run appends to `investigation_history` with `model`, `prompt_version`, `token_usage`, `cost_usd`, timestamp, and full state. |
+| Containment advice is always "suggested"; any automated action requires human approval. | S | Done | Recommendations enforce `status: "suggested"` and `requires_human_approval: True` across risk and recommendation agents. |
+| Evaluation harness: a labelled alert set (Atomic Red Team plus benign baselines) scored for verdict precision and recall on every release; block releases that regress. | L | Done | `eval_harness.py` with 10 labelled benchmark cases (5 Atomic Red Team + 5 benign baselines), confusion matrix, precision/recall thresholds, and `scripts/run_eval.py` CLI gating releases. |
+| Prompt-injection hardening: alert text (command lines, hostnames, DNS names) is attacker-controlled and goes into LLM prompts. Delimit and escape it; never let model output trigger actions directly; test with injected samples. | M | Done | `prompt_guard.py` tags untrusted telemetry in XML blocks (`<untrusted_telemetry_data>`), escapes breakout tags, defangs jailbreak instructions, and injects passive-data instructions. |
+| Cost and rate controls per tenant: daily cap, circuit breaker on provider errors. | S | Done | `llm_governance.py` enforces per-tenant daily USD spend cap (`FORENSIQ_LLM_DAILY_TENANT_CAP_USD`) in MongoDB and 3-state Circuit Breaker (CLOSED, OPEN, HALF-OPEN) resetting after consecutive provider errors. |
 
 ### 2.4 Case management
 

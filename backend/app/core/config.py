@@ -8,10 +8,12 @@ from pathlib import Path
 from typing import List, Optional
 import os
 import urllib.parse
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from app.core.secrets import load_secret_from_file_or_env
-from app.core.logging import logger
+import logging
+
+_cfg_logger = logging.getLogger("forensiq.config")
 
 DEFAULT_SECRET_KEY = "default-development-secret-key-must-change-in-prod-min-32-chars"
 DEFAULT_SPLUNK_PASSWORD = "ChangedPassword123!"
@@ -186,6 +188,16 @@ class Settings(BaseSettings):
         description="xAI Grok Model name (e.g. grok-beta, grok-2-latest)",
     )
 
+    # AI Investigation Governance & Cost Controls (Section 2.3)
+    LLM_PROMPT_VERSION: str = Field(default="v1.2.0", description="Semantic version of active LLM investigation prompts")
+    LLM_DAILY_TENANT_CAP_USD: float = Field(default=25.0, description="Daily spending limit in USD per tenant for LLM investigation queries")
+    LLM_PRICE_PER_1K_PROMPT_TOKENS: float = Field(default=0.002, description="Estimated USD cost per 1,000 prompt tokens")
+    LLM_PRICE_PER_1K_COMPLETION_TOKENS: float = Field(default=0.010, description="Estimated USD cost per 1,000 completion tokens")
+    LLM_CIRCUIT_BREAKER_MAX_FAILURES: int = Field(default=5, description="Consecutive LLM failures before circuit breaker trips open")
+    LLM_CIRCUIT_BREAKER_RESET_SECONDS: int = Field(default=60, description="Cooldown seconds before tripped circuit breaker resets to half-open")
+    LLM_MIN_EVAL_PRECISION: float = Field(default=0.80, description="Minimum benchmark precision target before release regression failure")
+    LLM_MIN_EVAL_RECALL: float = Field(default=0.80, description="Minimum benchmark recall target before release regression failure")
+
     @model_validator(mode="after")
     def _load_mounted_secrets_and_validate(self) -> "Settings":
         """
@@ -203,9 +215,9 @@ class Settings(BaseSettings):
 
         # Warn if Threat Intel or LLM keys are absent in any environment
         if not self.XAI_API_KEY:
-            logger.warning("config_warning_missing_llm_key", detail="FORENSIQ_XAI_API_KEY is not configured; AI agent investigations will fail.")
+            _cfg_logger.warning("config_warning_missing_llm_key: FORENSIQ_XAI_API_KEY is not configured; deterministic fallback will be used.")
         if not self.VT_API_KEY and not self.ABUSEIPDB_API_KEY:
-            logger.warning("config_warning_missing_threat_intel_keys", detail="Neither VT_API_KEY nor ABUSEIPDB_API_KEY are configured; IOC enrichment will be disabled.")
+            _cfg_logger.warning("config_warning_missing_threat_intel_keys: Neither VT_API_KEY nor ABUSEIPDB_API_KEY are configured; IOC enrichment will be disabled.")
 
         if self.ENV.strip().lower() in _NON_PRODUCTION_ENVS:
             return self

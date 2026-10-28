@@ -15,7 +15,7 @@ from app.database.session import db_config
 from app.core.config import settings
 from app.core.security import decode_token, TokenError
 from app.core.logging import logger
-from app.core.tenancy import scoped_query
+from app.core.tenancy import scoped_query, tenant_id
 from app.services.investigation_streamer import (
     investigation_stream_manager,
     reconstruct_steps_from_alert,
@@ -101,7 +101,7 @@ async def handle_websocket_investigation(
     alert_id: str,
     token: Optional[str] = Query(None),
     ticket: Optional[str] = Query(None),
-    auto_start: bool = Query(True),
+    auto_start: bool = Query(False),
 ):
     """
     Unified WebSocket handler for streaming investigation events.
@@ -169,6 +169,7 @@ async def handle_websocket_investigation(
                 "event": "complete",
                 "data": {
                     "alert_id": alert_id,
+                    "alert": alert,
                     "verdict": alert.get("verdict"),
                     "confidence": alert.get("confidence"),
                     "recommended_actions": alert.get("recommended_actions", []),
@@ -210,7 +211,7 @@ async def handle_websocket_investigation(
             except json.JSONDecodeError:
                 continue
 
-            command = msg.get("command")
+            command = msg.get("command") or msg.get("action")
             if command == "ping":
                 await websocket.send_text(json.dumps({"event": "pong", "data": {}}))
             elif command in ("start", "reinvestigate"):
@@ -239,7 +240,7 @@ async def websocket_investigate_endpoint(
     alert_id: str,
     token: Optional[str] = Query(None),
     ticket: Optional[str] = Query(None),
-    auto_start: bool = Query(True),
+    auto_start: bool = Query(False),
 ):
     """WebSocket connection route: /api/v1/alerts/{alert_id}/ws"""
     await handle_websocket_investigation(websocket, alert_id, token, ticket, auto_start)
@@ -251,7 +252,7 @@ async def websocket_investigate_path_endpoint(
     alert_id: str,
     token: Optional[str] = Query(None),
     ticket: Optional[str] = Query(None),
-    auto_start: bool = Query(True),
+    auto_start: bool = Query(False),
 ):
     """Alternate WebSocket connection route: /api/v1/alerts/ws/{alert_id:path}"""
     await handle_websocket_investigation(websocket, alert_id, token, ticket, auto_start)

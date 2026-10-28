@@ -2,7 +2,7 @@ import pytest
 
 from app.core.config import DEFAULT_SECRET_KEY, DEFAULT_SPLUNK_PASSWORD, Settings
 
-GOOD = dict(_env_file=None, ENV="production", SECRET_KEY="x" * 40, SPLUNK_PASSWORD="a-real-splunk-password", DEBUG=False)
+GOOD = dict(_env_file=None, ENV="production", SECRET_KEY="x" * 40, SPLUNK_PASSWORD="a-real-splunk-password", DEBUG=False, TRUSTED_HOSTS=["forensiq.example.com"], MONGO_URI="mongodb://user:pass@mongo.corp:27017/db?tls=true")
 
 
 def test_safe_defaults():

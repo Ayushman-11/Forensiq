@@ -14,6 +14,7 @@ from fastapi import HTTPException, Request, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.database.session import db_config
 from app.core.config import settings
+from app.core.logging import logger
 
 
 def _now() -> datetime:
@@ -63,27 +64,34 @@ def rate_limiter(max_requests: int, window_seconds: int, scope: str):
     Dependency factory to rate-limit expensive endpoints per user or client IP.
     """
     async def _dependency(request: Request):
-        if not db_config.client:
-            return  # Degrade gracefully if db unavailable
+        try:
+            if not db_config.client:
+                return  # Degrade gracefully if db unavailable
 
-        db = db_config.client[settings.MONGO_DB_NAME]
-        
-        # Identify user via sub claim from Bearer header if present, else client IP
-        auth_header = request.headers.get("authorization", "")
-        client_id = request.client.host if request.client else "unknown"
-        if auth_header.startswith("Bearer "):
-            # Use raw token segment or IP
-            client_id = auth_header[7:].strip()[:32]
+            db = db_config.client[settings.MONGO_DB_NAME]
+            
+            # Identify user via sub claim from Bearer header if present, else client IP
+            auth_header = request.headers.get("authorization", "")
+            client_id = request.client.host if request.client else "unknown"
+            if auth_header.startswith("Bearer "):
+                # Use raw token segment or IP
+                client_id = auth_header[7:].strip()[:32]
 
-        key = rate_limit_key(scope, client_id)
-        retry_after = await check_rate_limit(db, key, max_requests, window_seconds)
+            key = rate_limit_key(scope, client_id)
+            retry_after = await check_rate_limit(db, key, max_requests, window_seconds)
 
-        if retry_after:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Rate limit exceeded for {scope}. Try again in {retry_after} seconds.",
-                headers={"Retry-After": str(retry_after)},
-            )
+            if retry_after:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"Rate limit exceeded for {scope}. Try again in {retry_after} seconds.",
+                    headers={"Retry-After": str(retry_after)},
+                )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            # Degrade gracefully: rate limiter failures must never crash application requests
+            logger.warning("rate_limiter_unavailable", error=str(exc))
+            return
 
     return _dependency
 
