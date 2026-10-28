@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from app.models.alert import AlertModel
 from app.normalization.alerts import build_alert_doc
@@ -41,7 +41,7 @@ def test_real_registry_row_keeps_process_and_key(splunk_rows):
 
 
 def test_grouped_alert_reports_count_and_window():
-    t0 = datetime(2026, 8, 11, 6, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 8, 11, 6, 0, tzinfo=UTC)
     events = [CanonicalEvent(event_id=f"e{i}", ts=t0 + timedelta(seconds=i), event_code="4625",
                              host="LAB", host_key="lab", src_ip="45.33.32.156", target_user="admin", user="admin")
               for i in range(6)]

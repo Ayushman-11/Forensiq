@@ -17,9 +17,8 @@ Each rule carries:
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional
-
 
 # ---------------------------------------------------------------------------
 # Dataclass
@@ -34,8 +33,8 @@ class DetectionRule:
     mitre_technique: str
     mitre_tactic: str
     spl_query: str
-    event_codes: List[str] = field(default_factory=list)
-    match_fn: Optional[Callable[[dict], bool]] = field(default=None, repr=False, compare=False)
+    event_codes: list[str] = field(default_factory=list)
+    match_fn: Callable[[dict], bool] | None = field(default=None, repr=False, compare=False)
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +50,7 @@ def _is_private_ip(ip: str) -> bool:
     return bool(_PRIVATE_IP_PATTERN.match(str(ip or "")))
 
 
-def _field_contains_any(raw: dict, field_name: str, patterns: List[str]) -> bool:
+def _field_contains_any(raw: dict, field_name: str, patterns: list[str]) -> bool:
     value = str(raw.get(field_name) or "").lower()
     return any(p.lower() in value for p in patterns)
 
@@ -163,7 +162,7 @@ def _process_anomaly(raw: dict) -> bool:
 # Rule Registry
 # ---------------------------------------------------------------------------
 
-_RULES: List[DetectionRule] = [
+_RULES: list[DetectionRule] = [
     DetectionRule(
         name="brute_force_login",
         description=(
@@ -336,11 +335,11 @@ class DetectionRuleEngine:
     result = engine.evaluate_raw_event(raw_splunk_dict)
     """
 
-    def get_all_rules(self) -> List[DetectionRule]:
+    def get_all_rules(self) -> list[DetectionRule]:
         """Returns the complete list of registered DetectionRule objects."""
         return list(_RULES)
 
-    def evaluate_raw_event(self, raw: dict) -> Optional[Dict]:
+    def evaluate_raw_event(self, raw: dict) -> dict | None:
         """
         Evaluates a single raw Splunk event dict against every rule's match_fn.
 
@@ -367,7 +366,7 @@ class DetectionRuleEngine:
                 continue
         return None
 
-    def get_rule_by_name(self, name: str) -> Optional[DetectionRule]:
+    def get_rule_by_name(self, name: str) -> DetectionRule | None:
         """Returns the DetectionRule with the given name, or None."""
         for rule in _RULES:
             if rule.name == name:

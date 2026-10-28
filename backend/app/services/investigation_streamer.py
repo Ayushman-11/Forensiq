@@ -7,17 +7,17 @@ WebSockets, and real-time state synchronization.
 import asyncio
 import json
 import uuid
-from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, Dict, List, Optional, Set
+from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import WebSocket
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.agents.graph import investigation_graph
-from app.services.correlation import correlate_alert
-from app.core.logging import logger
 from app.core.errors import new_request_id
-
+from app.core.logging import logger
+from app.services.correlation import correlate_alert
 
 STEP_DEFINITIONS = {
     "extract_context": {
@@ -182,7 +182,7 @@ async def finalize_and_save_investigation(
         {"_id": job_id},
         {"$set": {
             "status": "complete",
-            "completed_at": datetime.now(timezone.utc),
+            "completed_at": datetime.now(UTC),
             "logs": investigation_log,
             "context": context,
             "enrichments": enrichments,
@@ -198,7 +198,7 @@ async def finalize_and_save_investigation(
     return {**alert, **alert_update}
 
 
-def reconstruct_steps_from_alert(alert: dict) -> List[dict]:
+def reconstruct_steps_from_alert(alert: dict) -> list[dict]:
     """Reconstructs node_complete step payloads for an alert that was previously investigated."""
     steps_data = []
 
@@ -285,9 +285,9 @@ class InvestigationStreamManager:
     """
 
     def __init__(self):
-        self._subscribers: Dict[str, Set[WebSocket]] = {}
-        self._event_history: Dict[str, List[dict]] = {}
-        self._active_runs: Dict[str, asyncio.Task] = {}
+        self._subscribers: dict[str, set[WebSocket]] = {}
+        self._event_history: dict[str, list[dict]] = {}
+        self._active_runs: dict[str, asyncio.Task] = {}
         self._lock = asyncio.Lock()
 
     def register(self, alert_id: str, ws: WebSocket) -> None:
@@ -325,7 +325,7 @@ class InvestigationStreamManager:
         if not subscribers:
             return
 
-        dead_sockets: List[WebSocket] = []
+        dead_sockets: list[WebSocket] = []
         payload_text = json.dumps(message, default=json_serial)
 
         for ws in subscribers:
@@ -338,7 +338,7 @@ class InvestigationStreamManager:
         for ws in dead_sockets:
             self.unregister(alert_id, ws)
 
-    def get_history(self, alert_id: str) -> List[dict]:
+    def get_history(self, alert_id: str) -> list[dict]:
         """Returns in-flight event history for an alert."""
         return list(self._event_history.get(alert_id, []))
 
@@ -351,8 +351,8 @@ class InvestigationStreamManager:
         alert_id: str,
         alert: dict,
         db: AsyncIOMotorDatabase,
-        job_id: Optional[str] = None,
-        org_id: Optional[str] = None,
+        job_id: str | None = None,
+        org_id: str | None = None,
     ) -> AsyncGenerator[dict, None]:
         """
         Executes the LangGraph investigation pipeline while:
@@ -370,8 +370,8 @@ class InvestigationStreamManager:
             "_id": job_id,
             "alert_id": alert_id,
             "status": "running",
-            "created_at": datetime.now(timezone.utc),
-            "started_at": datetime.now(timezone.utc),
+            "created_at": datetime.now(UTC),
+            "started_at": datetime.now(UTC),
             "org_id": org_id or alert.get("org_id", "default"),
         })
 
@@ -460,7 +460,7 @@ class InvestigationStreamManager:
                 {"_id": job_id},
                 {"$set": {
                     "status": "failed",
-                    "completed_at": datetime.now(timezone.utc),
+                    "completed_at": datetime.now(UTC),
                     "error": "investigation_failed",
                     "error_ref": ref,
                 }}

@@ -7,17 +7,16 @@ import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.database.session import get_db
-from app.schemas.auth import LoginRequest, RefreshRequest, LogoutRequest, TokenResponse
 from app.core.security import (
-    verify_password,
-    hash_password,
+    TokenError,
     create_access_token,
     create_refresh_token,
     decode_token,
-    TokenError,
+    hash_password,
+    verify_password,
 )
-
+from app.database.session import get_db
+from app.schemas.auth import LoginRequest, LogoutRequest, RefreshRequest, TokenResponse
 from app.services.login_throttle import clear_failures, reserve_attempt, throttle_key
 
 router = APIRouter()

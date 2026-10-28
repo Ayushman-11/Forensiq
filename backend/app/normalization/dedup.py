@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import hashlib
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Iterable
+from datetime import UTC, datetime
+from typing import Any
 
 from app.normalization.canonical import CanonicalEvent
 
@@ -38,7 +39,7 @@ def stable_id(*parts: object) -> str:
 
 def _utc(ts: datetime) -> datetime:
     """Treat naive datetimes as UTC so IDs do not depend on the local zone."""
-    return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts
+    return ts.replace(tzinfo=UTC) if ts.tzinfo is None else ts
 
 
 def _bucket(ts: datetime, bucket_seconds: int) -> int:

@@ -1,14 +1,16 @@
-import pytest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
 from app.agents.ioc_agent import (
+    Enrichment,
+    _get_cached_enrichment,
     _get_ioc_type,
     _mock_abuseipdb_enrichment,
     _mock_vt_enrichment,
-    _get_cached_enrichment,
     _save_cached_enrichment,
     enrich_ioc_node,
-    Enrichment,
 )
 from app.agents.state import AgentState
 
@@ -75,7 +77,7 @@ async def test_ioc_cache_save_and_retrieve():
     mock_collection.find_one = AsyncMock(return_value={
         "ioc": "192.0.2.1",
         "source": "AbuseIPDB",
-        "cached_at": datetime.now(timezone.utc) - timedelta(hours=2),
+        "cached_at": datetime.now(UTC) - timedelta(hours=2),
         "data": enrichment.model_dump(),
     })
 
@@ -88,7 +90,7 @@ async def test_ioc_cache_save_and_retrieve():
     mock_collection.find_one = AsyncMock(return_value={
         "ioc": "192.0.2.1",
         "source": "AbuseIPDB",
-        "cached_at": datetime.now(timezone.utc) - timedelta(hours=48),
+        "cached_at": datetime.now(UTC) - timedelta(hours=48),
         "data": enrichment.model_dump(),
     })
 

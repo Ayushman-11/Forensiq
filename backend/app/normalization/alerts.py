@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.normalization.dedup import AlertGroup
 from app.normalization.ioc import extract_iocs
@@ -72,7 +72,7 @@ def build_alert_doc(group: AlertGroup, org_id: str, noise: NoiseFilter | None = 
         "first_seen": group.first_seen,
         "last_seen": group.last_seen,
         "count": group.count,
-        "detected_at": datetime.now(timezone.utc),
+        "detected_at": datetime.now(UTC),
         "extracted_iocs": iocs,
         "process_name": ev.process_path.split("\\")[-1] if ev.process_path else None,
         "command_line": ev.command_line or ev.script_block,

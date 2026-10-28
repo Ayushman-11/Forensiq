@@ -6,13 +6,15 @@ persistent MongoDB caching and fallback heuristics to identify malicious indicat
 
 import asyncio
 import re
-from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Any, Optional
-from pydantic import BaseModel
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
 import httpx
-from app.core.logging import logger
-from app.core.config import settings
+from pydantic import BaseModel
+
 from app.agents.state import AgentState
+from app.core.config import settings
+from app.core.logging import logger
 from app.database.session import get_db
 
 
@@ -35,7 +37,7 @@ def _get_ioc_type(ioc: str) -> str:
     return "domain"
 
 
-async def _get_cached_enrichment(db, ioc: str, source: str) -> Optional[Enrichment]:
+async def _get_cached_enrichment(db, ioc: str, source: str) -> Enrichment | None:
     """Retrieves valid cached enrichment from MongoDB ioc_cache collection if unexpired."""
     if db is None:
         return None
@@ -46,7 +48,7 @@ async def _get_cached_enrichment(db, ioc: str, source: str) -> Optional[Enrichme
         cached_at = doc.get("cached_at")
         if cached_at:
             if isinstance(cached_at, datetime):
-                age = datetime.now(timezone.utc) - (cached_at if cached_at.tzinfo else cached_at.replace(tzinfo=timezone.utc))
+                age = datetime.now(UTC) - (cached_at if cached_at.tzinfo else cached_at.replace(tzinfo=UTC))
                 if age > timedelta(hours=settings.IOC_CACHE_TTL_HOURS):
                     return None
             data = doc.get("data", {})
@@ -67,7 +69,7 @@ async def _save_cached_enrichment(db, enrichment: Enrichment) -> None:
             {
                 "$set": {
                     "data": enrichment.model_dump(),
-                    "cached_at": datetime.now(timezone.utc),
+                    "cached_at": datetime.now(UTC),
                 }
             },
             upsert=True,
@@ -251,7 +253,7 @@ async def _query_abuseipdb(ioc: str, db=None) -> Enrichment:
         return res
 
 
-async def enrich_ioc_node(state: AgentState) -> Dict[str, Any]:
+async def enrich_ioc_node(state: AgentState) -> dict[str, Any]:
     """
     LangGraph node: Asynchronously queries VirusTotal and AbuseIPDB
     for all extracted IOCs with persistent MongoDB cache optimization.
@@ -274,7 +276,7 @@ async def enrich_ioc_node(state: AgentState) -> Dict[str, Any]:
         if ioc_type == "ip":
             tasks.append(_query_abuseipdb(ioc, db=db))
 
-    results: List[Enrichment] = []
+    results: list[Enrichment] = []
     if tasks:
         results = await asyncio.gather(*tasks)
 

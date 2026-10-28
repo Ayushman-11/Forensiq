@@ -9,6 +9,7 @@ Forensiq: End-to-end pipeline test
 import asyncio
 import json
 import urllib.parse
+
 import httpx
 
 BASE = "http://localhost:8001/api/v1"

@@ -4,11 +4,11 @@ Assembles, normalizes, and chronologically orders multi-source security events i
 an end-to-end attack timeline grouped by MITRE attack phases.
 """
 
-from typing import Dict, Any, List, Optional
-from datetime import datetime, timezone
-import re
-from app.core.logging import logger
+from datetime import UTC, datetime
+from typing import Any
+
 from app.agents.state import AgentState
+from app.core.logging import logger
 
 # Standard SOC Attack Phase Definitions
 PHASE_RECON = "Reconnaissance & Discovery"
@@ -18,7 +18,7 @@ PHASE_LATERAL = "Lateral Movement & Credential Access"
 PHASE_C2 = "Command and Control & Exfiltration"
 
 
-def _determine_phase(text: str, tactic: Optional[str] = None) -> str:
+def _determine_phase(text: str, tactic: str | None = None) -> str:
     """Classifies an event into a standardized MITRE attack phase."""
     if tactic:
         t = tactic.lower()
@@ -51,17 +51,17 @@ def _determine_phase(text: str, tactic: Optional[str] = None) -> str:
 def _parse_iso(ts: Any) -> datetime:
     """Robustly parse timestamps into timezone-aware datetimes."""
     if isinstance(ts, datetime):
-        return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+        return ts if ts.tzinfo else ts.replace(tzinfo=UTC)
     if not ts or not isinstance(ts, str):
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
     try:
         clean = ts.replace("Z", "+00:00")
         return datetime.fromisoformat(clean)
     except Exception:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
 
-def build_timeline_node(state: AgentState) -> Dict[str, Any]:
+def build_timeline_node(state: AgentState) -> dict[str, Any]:
     """
     LangGraph node: Assembles a chronological, phase-tagged attack timeline from:
       1. Primary alert event
@@ -79,10 +79,10 @@ def build_timeline_node(state: AgentState) -> Dict[str, Any]:
     alert_id = str(alert.get("_id", "unknown"))
     logger.info("timeline_node_start", alert_id=alert_id)
 
-    raw_events: List[Dict[str, Any]] = []
+    raw_events: list[dict[str, Any]] = []
 
     # 1. Primary Alert Event
-    primary_ts = alert.get("created_at") or datetime.now(timezone.utc).isoformat()
+    primary_ts = alert.get("created_at") or datetime.now(UTC).isoformat()
     primary_dt = _parse_iso(primary_ts)
     primary_title = alert.get("title", "Security Alert Triggered")
     primary_tactic = alert.get("mitre_tactic") or (mitre_mappings[0]["tactic"] if mitre_mappings else None)
@@ -190,7 +190,7 @@ def build_timeline_node(state: AgentState) -> Dict[str, Any]:
 
     # 6. Deduplicate by (timestamp, description)
     seen_keys = set()
-    timeline: List[Dict[str, Any]] = []
+    timeline: list[dict[str, Any]] = []
     for item in raw_events:
         dedup_key = (item["timestamp"], item["description"])
         if dedup_key not in seen_keys:

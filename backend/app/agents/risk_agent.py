@@ -4,12 +4,12 @@ Evaluates threat severity, IOC maliciousness, correlation breadth, and MITRE tac
 using the Grok AI LLM (with deterministic heuristic fallback).
 """
 
-from typing import Dict, Any, List, Optional
 import json
-from app.core.logging import logger
-from app.agents.state import AgentState
-from app.agents.llm_client import query_grok_llm, extract_json_from_text
+from typing import Any
 
+from app.agents.llm_client import extract_json_from_text, query_grok_llm
+from app.agents.state import AgentState
+from app.core.logging import logger
 
 RISK_SYSTEM_PROMPT = """You are a Senior Principal SOC Analyst and Incident Response Lead.
 Your objective is to evaluate security incidents, telemetry, threat intelligence, and correlation breadth.
@@ -31,11 +31,11 @@ def _deterministic_risk_assessment(
     enrichments: list,
     correlations: list,
     mitre_mappings: list,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Calibrated rule engine for when LLM is unavailable or uncredited."""
     severity = str(alert.get("severity", "medium")).lower()
     severity_score = {"critical": 75, "high": 58, "medium": 38, "low": 18}.get(severity, 25)
-    
+
     malicious = sum(1 for item in enrichments if item.get("reputation") == "malicious")
     suspicious = sum(1 for item in enrichments if item.get("reputation") == "suspicious")
     correlation_bump = min(20, len(correlations) * 5)
@@ -43,7 +43,7 @@ def _deterministic_risk_assessment(
 
     risk_score = min(100, severity_score + malicious * 15 + suspicious * 8 + correlation_bump + mitre_bump)
     priority = "critical" if risk_score >= 80 else "high" if risk_score >= 60 else "medium" if risk_score >= 35 else "low"
-    
+
     correlated_hosts = {c.get("host") for c in correlations if c.get("host")}
     blast_radius = "multi_host" if len(correlated_hosts) > 1 else "isolated_host"
 
@@ -64,7 +64,7 @@ def _deterministic_risk_assessment(
     }
 
 
-async def assess_risk_node(state: AgentState) -> Dict[str, Any]:
+async def assess_risk_node(state: AgentState) -> dict[str, Any]:
     """
     LangGraph node: Analyzes full alert context, IOC reputations, MITRE mappings,
     and correlations using Grok AI (or deterministic engine if uncredited).

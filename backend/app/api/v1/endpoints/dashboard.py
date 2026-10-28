@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from app.database.session import get_db
-from app.models.alert import DashboardMetrics
+
 from app.api.deps import get_current_user
 from app.core.tenancy import scoped_query, tenant_filter, tenant_id
+from app.database.session import get_db
+from app.models.alert import DashboardMetrics
 
 router = APIRouter()
 
@@ -17,7 +18,7 @@ async def get_dashboard_metrics(db: AsyncIOMotorDatabase = Depends(get_db), user
     high_priority_alerts = await db["alerts"].count_documents(scoped_query(user, {"severity": {"$in": ["critical", "high"]}, "status": {"$in": ["New", "Investigating"]}}))
     open_investigations = await db["alerts"].count_documents(scoped_query(user, {"status": "Investigating"}))
     investigated_alerts = await db["alerts"].count_documents(scoped_query(user, {"status": "Investigated"}))
-    
+
     if total_alerts > 0:
         pipeline = [{"$match": scope}, {"$group": {"_id": None, "avg_conf": {"$avg": "$ai_confidence"}}}]
         cursor = db["alerts"].aggregate(pipeline)
@@ -25,7 +26,7 @@ async def get_dashboard_metrics(db: AsyncIOMotorDatabase = Depends(get_db), user
         ai_confidence_avg = int(result[0]["avg_conf"] or 0) if result else 0
     else:
         ai_confidence_avg = 0
-        
+
     org = tenant_id(user)
     ingestion_state = await db["ingestion_state"].find_one({"_id": f"cursor:{org}:splunk"})
     if not ingestion_state and org == "default":

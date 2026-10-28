@@ -4,7 +4,7 @@ Enforces type safety and environment variable loading using Pydantic Settings v2
 """
 
 from pathlib import Path
-from typing import List
+
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     SPLUNK_VERIFY_SSL: bool = Field(default=False, description="Verify SSL certificates for Splunk API")
     SPLUNK_DEFAULT_INDEX: str = Field(default="main", description="Default Splunk index to search")
     SPLUNK_DETECTION_INDEX: str = Field(default="windows", description="Index containing detection telemetry")
-    SPLUNK_ALLOWED_INDEXES: List[str] = Field(
+    SPLUNK_ALLOWED_INDEXES: list[str] = Field(
         default=["windows"], description="Indexes users may query through /search"
     )
     SEARCH_MAX_RANGE_DAYS: int = Field(default=30, description="Maximum lookback for /search queries")
@@ -73,7 +73,7 @@ class Settings(BaseSettings):
     )
 
     # CORS Configuration
-    CORS_ORIGINS: List[str] = Field(
+    CORS_ORIGINS: list[str] = Field(
         default=["http://localhost:3000", "http://127.0.0.1:3000"],
         description="Allowed CORS origins",
     )

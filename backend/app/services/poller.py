@@ -1,4 +1,5 @@
 import asyncio
+import time
 import uuid
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -6,6 +7,16 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.agents.graph import investigation_graph
 from app.core.config import settings
 from app.core.logging import logger
+from app.core.metrics import (
+    INVESTIGATION_COMPLETED_TOTAL,
+    INVESTIGATION_DURATION_SECONDS,
+    INVESTIGATION_FAILED_TOTAL,
+    INVESTIGATION_QUEUE_DEPTH,
+    INVESTIGATION_STARTED_TOTAL,
+    POLLER_CYCLES_TOTAL,
+    POLLER_IS_LEADER,
+    POLLER_LEASE_LOST_TOTAL,
+)
 from app.services.ingestion import IngestionService
 from app.services.lease import acquire_lease, release_lease
 
@@ -24,7 +35,9 @@ class AlertPoller:
 
     async def _run_cycle(self) -> int:
         """One poll: take/renew the lease, ingest, schedule bounded auto-investigations."""
-        if not await acquire_lease(self.db, LEASE_NAME, self.owner, settings.POLLER_LEASE_TTL_SECONDS):
+        acquired = await acquire_lease(self.db, LEASE_NAME, self.owner, settings.POLLER_LEASE_TTL_SECONDS)
+        POLLER_IS_LEADER.set(1 if acquired else 0)
+        if not acquired:
             logger.info("poller_lease_held_elsewhere")
             return 0
 
@@ -35,6 +48,9 @@ class AlertPoller:
         finally:
             hb.cancel()
             await asyncio.gather(hb, return_exceptions=True)
+
+        POLLER_CYCLES_TOTAL.inc()
+
         if not new_alerts:
             logger.info("poller_no_new_alerts")
             return 0
@@ -62,6 +78,8 @@ class AlertPoller:
                 continue
             if not ok:
                 logger.warning("poller_lease_lost")
+                POLLER_LEASE_LOST_TOTAL.inc()
+                POLLER_IS_LEADER.set(0)
                 return
 
     async def _bounded_investigation(self, alert: dict) -> None:
@@ -85,6 +103,9 @@ class AlertPoller:
     async def _investigate_alert(self, alert_data: dict):
         alert_id = alert_data.get("_id")
         logger.info("auto_investigating_alert", alert_id=alert_id)
+        INVESTIGATION_STARTED_TOTAL.inc()
+        INVESTIGATION_QUEUE_DEPTH.inc()
+        _start = time.monotonic()
         try:
             await self.db["alerts"].update_one(
                 {"_id": alert_id},
@@ -140,17 +161,24 @@ class AlertPoller:
                     }
                 },
             )
+            duration = time.monotonic() - _start
+            INVESTIGATION_DURATION_SECONDS.observe(duration)
+            INVESTIGATION_COMPLETED_TOTAL.inc()
             logger.info(
                 "auto_investigation_complete",
                 alert_id=alert_id,
                 confidence=ai_confidence,
                 enrichments=len(enrichments),
+                duration_seconds=round(duration, 2),
             )
         except Exception as e:
+            INVESTIGATION_FAILED_TOTAL.inc()
             logger.error("auto_investigation_failed", alert_id=alert_id, error=str(e))
             await self.db["alerts"].update_one(
                 {"_id": alert_id}, {"$set": {"status": "Investigation Failed"}}
             )
+        finally:
+            INVESTIGATION_QUEUE_DEPTH.dec()
 
     def start(self):
         if not self._running:

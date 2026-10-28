@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from fastapi import FastAPI
@@ -35,7 +35,7 @@ async def get(app, path):
         return await c.get(path)
 
 
-NOW = datetime.now(timezone.utc).replace(tzinfo=None)
+NOW = datetime.now(UTC).replace(tzinfo=None)
 
 
 def alert(i, org, **kw):

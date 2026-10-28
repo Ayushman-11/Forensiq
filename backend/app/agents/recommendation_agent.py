@@ -4,12 +4,12 @@ Synthesizes full investigation findings, risk assessments, and ATT&CK mappings
 into an actionable incident response checklist using Grok AI (with deterministic fallback).
 """
 
-from typing import Dict, Any, List, Optional
 import json
-from app.core.logging import logger
-from app.agents.state import AgentState
-from app.agents.llm_client import query_grok_llm, extract_json_from_text
+from typing import Any
 
+from app.agents.llm_client import extract_json_from_text, query_grok_llm
+from app.agents.state import AgentState
+from app.core.logging import logger
 
 REC_SYSTEM_PROMPT = """You are a Principal Incident Response Commander.
 Based on the security alert evidence, risk assessment, MITRE tactics, and attack timeline,
@@ -34,7 +34,7 @@ def _deterministic_recommendation(
     correlations: list,
     mitre_mappings: list,
     risk_assessment: dict,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Generates defensive checklists using rule-based heuristics."""
     risk_score = risk_assessment.get("risk_score", 50)
     host = alert.get("host") or "target host"
@@ -42,7 +42,7 @@ def _deterministic_recommendation(
     correlated_hosts = {c.get("host") for c in correlations if c.get("host")}
     techniques = [m.get("technique") for m in mitre_mappings]
 
-    checklist: List[str] = []
+    checklist: list[str] = []
     containment_required = False
 
     if malicious and len(correlated_hosts) > 1:
@@ -71,7 +71,7 @@ def _deterministic_recommendation(
         checklist.append(f"Review target account '{alert.get('user', 'affected account')}' for signs of successful compromise (EventCode 4624).")
         checklist.append("Force password reset and terminate all active sessions if brute force was successful.")
         checklist.append(f"Block the offending source IP address ({alert.get('source_ip', 'external')}) on the authentication gateway.")
-        directive = f"High-volume authentication failure detected. Verify account status and enforce password rotation if needed."
+        directive = "High-volume authentication failure detected. Verify account status and enforce password rotation if needed."
 
     elif risk_score >= 60:
         checklist.append(f"Inspect host '{host}' process telemetry and open network sockets.")
@@ -93,7 +93,7 @@ def _deterministic_recommendation(
     }
 
 
-async def generate_recommendations_node(state: AgentState) -> Dict[str, Any]:
+async def generate_recommendations_node(state: AgentState) -> dict[str, Any]:
     """
     LangGraph node: Produces specific, actionable investigation and containment recommendations
     using Grok AI (with deterministic fallback).

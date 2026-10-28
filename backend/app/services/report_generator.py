@@ -6,26 +6,24 @@ Generates full investigation reports and one-page executive summaries using Repo
 from __future__ import annotations
 
 import io
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
-from reportlab.lib.pagesizes import A4, letter
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm, mm
 from reportlab.platypus import (
     HRFlowable,
-    Image,
-    KeepTogether,
     PageBreak,
     Paragraph,
+    SimpleDocTemplate,
     Spacer,
     Table,
     TableStyle,
 )
-from reportlab.platypus import SimpleDocTemplate
 
 # ─── Color Palette ───────────────────────────────────────────────────────────
 DARK_BG = colors.HexColor("#FFFFFF")
@@ -192,7 +190,7 @@ def _page_background(canvas, doc):
     canvas.drawString(doc.leftMargin, doc.height + doc.topMargin - 12 * mm, "FORENSIQ  ·  SECURITY OPERATIONS PLATFORM")
     canvas.setFillColor(SLATE_400)
     canvas.setFont("Helvetica", 7)
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    ts = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     canvas.drawRightString(doc.width + doc.leftMargin, doc.height + doc.topMargin - 12 * mm, f"GENERATED: {ts}")
     # Footer
     canvas.setFillColor(CARD_BG)
@@ -325,7 +323,7 @@ def generate_investigation_report(alert: dict[str, Any]) -> bytes:
     story.append(Spacer(1, 0.3 * cm))
 
     # Generated date
-    gen_ts = datetime.now(timezone.utc).strftime("%B %d, %Y at %H:%M UTC")
+    gen_ts = datetime.now(UTC).strftime("%B %d, %Y at %H:%M UTC")
     created = alert.get("created_at")
     if isinstance(created, datetime):
         created_str = created.strftime("%Y-%m-%d %H:%M UTC")
@@ -712,7 +710,7 @@ def generate_executive_summary(alert: dict[str, Any]) -> bytes:
     story.append(Spacer(1, 0.5 * cm))
     story.append(_hr())
     story.append(Paragraph(
-        f"Prepared by Forensiq AI · {datetime.now(timezone.utc).strftime('%B %d, %Y')} · "
+        f"Prepared by Forensiq AI · {datetime.now(UTC).strftime('%B %d, %Y')} · "
         "CONFIDENTIAL — For Leadership & Compliance Review Only. "
         "This summary was auto-generated and should be reviewed by security leadership before distribution.",
         S["footer"],

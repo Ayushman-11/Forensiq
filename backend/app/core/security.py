@@ -3,11 +3,10 @@ Password hashing and JWT access/refresh token helpers.
 """
 
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Tuple
+from datetime import UTC, datetime, timedelta
 
-from jose import jwt, JWTError
 import bcrypt
+from jose import JWTError, jwt
 
 from app.core.config import settings
 
@@ -30,7 +29,7 @@ def verify_password(password: str, hashed: str) -> bool:
 
 def create_access_token(user_id: str, email: str, role: str) -> str:
     """Creates a short-lived JWT access token carrying user identity and role."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     expire = now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     payload = {
         "sub": user_id,
@@ -43,12 +42,12 @@ def create_access_token(user_id: str, email: str, role: str) -> str:
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
-def create_refresh_token(user_id: str) -> Tuple[str, str, datetime]:
+def create_refresh_token(user_id: str) -> tuple[str, str, datetime]:
     """
     Creates a long-lived JWT refresh token. Returns (token, jti, expires_at)
     so the caller can persist a matching session row for revocation/rotation.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     expire = now + timedelta(minutes=settings.REFRESH_TOKEN_EXPIRE_MINUTES)
     jti = str(uuid.uuid4())
     payload = {

@@ -1,5 +1,6 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
+
 
 async def record_audit(db, user: dict | None, action: str, entity_type: str, entity_id: str, metadata: dict | None = None):
     await db["audit_logs"].insert_one({
@@ -11,5 +12,5 @@ async def record_audit(db, user: dict | None, action: str, entity_type: str, ent
         "entity_type": entity_type,
         "entity_id": entity_id,
         "metadata": metadata or {},
-        "created_at": datetime.now(timezone.utc),
+        "created_at": datetime.now(UTC),
     })

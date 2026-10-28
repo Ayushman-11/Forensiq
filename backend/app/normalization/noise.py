@@ -9,7 +9,6 @@ import yaml
 
 from app.normalization.canonical import CanonicalEvent
 
-
 _ALLOWED_WHERE_KEYS = {
     "subject_user_endswith", "domain_benign", "process_in", "parent_in",
     "command_line_regex", "process_path_startswith", "fields_regex",
@@ -51,11 +50,11 @@ class NoiseFilter:
             self._fields_re[index] = {f: _compile(name, f"fields_regex[{f}]", pat) for f, pat in fr.items()}
 
     @classmethod
-    def from_dict(cls, cfg: dict) -> "NoiseFilter":
+    def from_dict(cls, cfg: dict) -> NoiseFilter:
         return cls(cfg.get("benign_domains") or [], cfg.get("suppress") or [])
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> "NoiseFilter":
+    def from_yaml(cls, path: str | Path) -> NoiseFilter:
         p = Path(path)
         if not p.is_absolute() and not p.exists():
             p = Path(__file__).resolve().parents[2] / p  # relative paths resolve from backend/ when cwd differs

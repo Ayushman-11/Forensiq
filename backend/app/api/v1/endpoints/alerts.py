@@ -2,29 +2,26 @@
 Alert Ingestion and Listing endpoints.
 """
 
-from typing import List, Dict, Any, Literal, Optional
-from datetime import datetime, timedelta, timezone
+import json
 import re
 import uuid
-import asyncio
-import json
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Query
+from datetime import UTC, datetime, timedelta
+from typing import Literal
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from app.database.session import get_db
-from app.models.alert import AlertModel
-from app.services.ingestion import IngestionService
-from app.agents.graph import investigation_graph
-from app.core.logging import logger
+from pydantic import BaseModel, Field
+
+from app.api.deps import get_current_user, require_roles
 from app.core.errors import internal_error, new_request_id
-from app.api.deps import require_roles, get_current_user
+from app.core.logging import logger
 from app.core.tenancy import scoped_query, tenant_filter, tenant_id
+from app.database.session import get_db
 from app.services.audit import record_audit
-from app.services.correlation import correlate_alert
+from app.services.ingestion import IngestionService
 from app.services.investigation_streamer import (
     investigation_stream_manager,
-    finalize_and_save_investigation as _finalize_and_save_investigation,
     json_serial,
 )
 
@@ -32,7 +29,7 @@ router = APIRouter()
 
 class DispositionRequest(BaseModel):
     action: Literal["close", "escalate", "suppress"]
-    note: Optional[str] = Field(default=None, max_length=5000)
+    note: str | None = Field(default=None, max_length=5000)
 
 class NoteRequest(BaseModel):
     content: str = Field(min_length=1, max_length=5000)
@@ -43,7 +40,7 @@ VALID_STATUSES = {
     for s in ("New", "Investigating", "Investigated", "Investigation Failed", "Closed", "Escalated", "Suppressed")
 }
 
-@router.get("/", response_model=List[dict])
+@router.get("/", response_model=list[dict])
 async def list_alerts(
     limit: int = Query(50, ge=1, le=200),
     severity: str = Query(None, description="Filter by severity"),
@@ -140,16 +137,16 @@ async def alerts_mitre_stats(db: AsyncIOMotorDatabase = Depends(get_db), user: d
             }),
             {"_id": 1, "title": 1, "severity": 1, "mitre_technique": 1, "mitre_tactic": 1, "mitre_mappings": 1}
         ).limit(500)
-        
+
         tech_map = {}
         tactic_counts = {}
         total_mapped = 0
-        
+
         async for doc in cursor:
             total_mapped += 1
             alert_id = str(doc.get("_id", ""))
             sev = (doc.get("severity") or "medium").lower()
-            
+
             mappings = doc.get("mitre_mappings") or []
             if not mappings and doc.get("mitre_technique"):
                 mappings = [{
@@ -157,16 +154,16 @@ async def alerts_mitre_stats(db: AsyncIOMotorDatabase = Depends(get_db), user: d
                     "tactic": doc.get("mitre_tactic") or "Execution",
                     "name": doc.get("title") or ""
                 }]
-                
+
             for m in mappings:
                 tech_id = str(m.get("technique") or "").strip().upper()
                 if not tech_id:
                     continue
                 tactic = str(m.get("tactic") or "Execution").strip()
                 name = str(m.get("name") or "").strip()
-                
+
                 tactic_counts[tactic] = tactic_counts.get(tactic, 0) + 1
-                
+
                 if tech_id not in tech_map:
                     tech_map[tech_id] = {
                         "id": tech_id,
@@ -180,7 +177,7 @@ async def alerts_mitre_stats(db: AsyncIOMotorDatabase = Depends(get_db), user: d
                 entry["count"] += 1
                 if alert_id and alert_id not in entry["alert_ids"]:
                     entry["alert_ids"].append(alert_id)
-                
+
                 sev_ranks = {"low": 1, "medium": 2, "high": 3, "critical": 4}
                 if sev_ranks.get(sev, 1) > sev_ranks.get(entry["severity"], 1):
                     entry["severity"] = sev
@@ -201,12 +198,12 @@ async def get_alert(alert_id: str, db: AsyncIOMotorDatabase = Depends(get_db), u
         alert = await db["alerts"].find_one(scoped_query(user, {"_id": alert_id}))
         if not alert:
             raise HTTPException(status_code=404, detail="Alert not found")
-        
+
         # Ensure proper serialization
         alert["_id"] = str(alert["_id"])
         if "created_at" in alert and isinstance(alert["created_at"], datetime):
             alert["created_at"] = alert["created_at"].isoformat()
-            
+
         return alert
     except HTTPException:
         raise
@@ -256,7 +253,7 @@ async def run_investigation_background(alert_id: str, job_id: str, db: AsyncIOMo
             {"_id": job_id},
             {"$set": {
                 "status": "failed",
-                "completed_at": datetime.now(timezone.utc),
+                "completed_at": datetime.now(UTC),
                 "error": "investigation_failed",
                 "error_ref": ref,
             }}
@@ -320,7 +317,7 @@ async def investigate_alert_stream(
 
 @router.post("/{alert_id:path}/investigate", response_model=dict)
 async def investigate_alert(
-    alert_id: str, 
+    alert_id: str,
     background_tasks: BackgroundTasks,
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -330,9 +327,9 @@ async def investigate_alert(
         alert = await db["alerts"].find_one(scoped_query(user, {"_id": alert_id}))
         if not alert:
             raise HTTPException(status_code=404, detail="Alert not found")
-            
+
         job_id = str(uuid.uuid4())
-        
+
         await db["investigation_jobs"].insert_one({
             "_id": job_id,
             "alert_id": alert_id,
@@ -340,21 +337,21 @@ async def investigate_alert(
             "created_at": datetime.utcnow()
             ,"org_id": tenant_id(user)
         })
-        
+
         await db["alerts"].update_one(
             scoped_query(user, {"_id": alert_id}),
             {"$set": {"status": "Investigating"}}
         )
-        
+
         background_tasks.add_task(run_investigation_background, alert_id, job_id, db)
-        
+
         return {
             "status": "success",
             "job_id": job_id,
             "alert_id": alert_id,
             "message": "Investigation started in the background"
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -374,13 +371,13 @@ async def get_investigation_status(job_id: str, db: AsyncIOMotorDatabase = Depen
         job = await db["investigation_jobs"].find_one(scoped_query(user, {"_id": job_id}))
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
-            
+
         # Serialize datetime
         job["_id"] = str(job["_id"])
         for key in ["created_at", "started_at", "completed_at"]:
             if key in job and isinstance(job[key], datetime):
                 job[key] = job[key].isoformat()
-                
+
         return _sanitize_job(job)
     except HTTPException:
         raise

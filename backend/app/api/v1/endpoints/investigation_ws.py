@@ -6,26 +6,26 @@ interactive commands (start, reinvestigate, ping), and pub/sub push updates.
 
 import asyncio
 import json
-from typing import Optional
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, status
+
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.database.session import db_config
 from app.core.config import settings
-from app.core.security import decode_token, TokenError
 from app.core.logging import logger
+from app.core.security import TokenError, decode_token
 from app.core.tenancy import scoped_query, tenant_id
+from app.database.session import db_config
 from app.services.investigation_streamer import (
     investigation_stream_manager,
+    json_serial,
     reconstruct_steps_from_alert,
     serialize_data,
-    json_serial,
 )
 
 router = APIRouter()
 
 
-async def authenticate_ws_connection(websocket: WebSocket, token: Optional[str], db: AsyncIOMotorDatabase) -> Optional[dict]:
+async def authenticate_ws_connection(websocket: WebSocket, token: str | None, db: AsyncIOMotorDatabase) -> dict | None:
     """
     Validates token from query parameter, headers, or initial auth message.
     Returns the user document if valid, else None.
@@ -70,7 +70,7 @@ async def authenticate_ws_connection(websocket: WebSocket, token: Optional[str],
 async def handle_websocket_investigation(
     websocket: WebSocket,
     alert_id: str,
-    token: Optional[str] = Query(None),
+    token: str | None = Query(None),
     auto_start: bool = Query(True),
 ):
     """
@@ -200,7 +200,7 @@ async def handle_websocket_investigation(
 async def websocket_investigate_endpoint(
     websocket: WebSocket,
     alert_id: str,
-    token: Optional[str] = Query(None),
+    token: str | None = Query(None),
     auto_start: bool = Query(True),
 ):
     """WebSocket connection route: /api/v1/alerts/{alert_id}/ws"""
@@ -211,7 +211,7 @@ async def websocket_investigate_endpoint(
 async def websocket_investigate_path_endpoint(
     websocket: WebSocket,
     alert_id: str,
-    token: Optional[str] = Query(None),
+    token: str | None = Query(None),
     auto_start: bool = Query(True),
 ):
     """Alternate WebSocket connection route: /api/v1/alerts/ws/{alert_id:path}"""

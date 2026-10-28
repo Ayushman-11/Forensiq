@@ -3,24 +3,26 @@ Forensiq FastAPI Main Application Entrypoint.
 Configures app lifespan, middleware, routers, and CORS.
 """
 
+import time
 from contextlib import asynccontextmanager
+
+import structlog
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from prometheus_fastapi_instrumentator import Instrumentator
+
+from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.errors import new_request_id
-from app.core.logging import setup_logging, logger
-from app.api.v1.router import api_router
+from app.core.logging import logger, setup_logging
 from app.database.indexes import ensure_indexes
+from app.database.session import close_mongo_connection, connect_to_mongo, db_config
 from app.normalization.noise import NoiseFilter
-
-
-from app.database.session import connect_to_mongo, close_mongo_connection
-
 from app.services.poller import AlertPoller
-from app.database.session import db_config
 
 poller = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -55,10 +57,10 @@ async def lifespan(app: FastAPI):
         poller.start()
 
     yield
-    
+
     if poller:
         await poller.stop()
-        
+
     await close_mongo_connection()
     logger.info("forensiq_backend_shutdown")
 
@@ -72,6 +74,44 @@ app = FastAPI(
     openapi_url="/openapi.json" if settings.DEBUG else None,
     lifespan=lifespan,
 )
+
+# ---------------------------------------------------------------------------
+# Prometheus instrumentation
+# Exposes GET /metrics (Prometheus text format).
+# Must be created before routers are included so it can instrument all routes.
+# ---------------------------------------------------------------------------
+Instrumentator(
+    should_group_status_codes=True,
+    should_ignore_untemplated=True,
+    should_respect_env_var=False,
+    should_instrument_requests_inprogress=True,
+    inprogress_labels=True,
+    excluded_handlers=["/metrics"],
+).instrument(app).expose(app, include_in_schema=False, tags=["observability"])
+
+
+# ---------------------------------------------------------------------------
+# Request-ID middleware
+# Stamps every request with a unique ID so logs and responses can be correlated.
+# ---------------------------------------------------------------------------
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    req_id = request.headers.get("X-Request-ID") or new_request_id()
+    # Bind the request id into the structlog context for this coroutine.
+    structlog.contextvars.clear_contextvars()
+    structlog.contextvars.bind_contextvars(request_id=req_id, path=request.url.path)
+    start = time.monotonic()
+    response = await call_next(request)
+    duration_ms = round((time.monotonic() - start) * 1000, 1)
+    logger.info(
+        "http_request",
+        method=request.method,
+        status_code=response.status_code,
+        duration_ms=duration_ms,
+    )
+    response.headers["X-Request-ID"] = req_id
+    return response
+
 
 # Configure CORS Middleware
 app.add_middleware(
@@ -110,4 +150,5 @@ async def root():
         "status": "operational",
         "docs": "/docs",
         "api_v1": "/api/v1",
+        "metrics": "/metrics",
     }

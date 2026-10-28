@@ -10,9 +10,8 @@ Validates:
 """
 
 import asyncio
-import sys
 import os
-from datetime import datetime, timezone
+import sys
 
 # Fix Windows cp1252 console encoding: allow Unicode chars in MongoDB alert titles
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -20,13 +19,12 @@ sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+from app.agents.graph import investigation_graph
 from app.core.config import settings
-from app.core.logging import logger
+from app.database.session import close_mongo_connection, connect_to_mongo, db_config
 from app.infrastructure.siem.splunk import SplunkClient
-from app.database.session import db_config, connect_to_mongo, close_mongo_connection
 from app.services.ingestion import IngestionService, build_query
 from app.services.poller import AlertPoller
-from app.agents.graph import investigation_graph
 
 
 async def main():
@@ -48,7 +46,7 @@ async def main():
     try:
         await splunk.authenticate()
         print("  [OK] Authenticated successfully with Splunk REST API")
-        
+
         indexes = await splunk.list_indexes()
         print(f"  [OK] Found {len(indexes)} Splunk indexes:")
         key_indexes = [idx for idx in indexes if idx in ("attack_data", "sysmon", "main", "windows", "_internal", "_audit")]
@@ -101,7 +99,7 @@ async def main():
     print(f"  Ingestion Query: {build_query()}")
     service = IngestionService(db=db, org_id="default")
     new_alerts = await service.fetch_and_store_alerts()
-    print(f"  [OK] Ingestion Cycle Complete:")
+    print("  [OK] Ingestion Cycle Complete:")
     print(f"    - Total Events Fetched: {service.total_fetched}")
     print(f"    - Detection Rules Evaluated: {service.rules_run}")
     print(f"    - New Alerts Upserted: {len(new_alerts)}")
@@ -118,7 +116,7 @@ async def main():
     poller = AlertPoller(db=db, interval_seconds=10)
     cycle_res = await poller._run_cycle()
     print(f"  [OK] AlertPoller cycle executed cleanly (New alerts handled: {cycle_res})")
-    
+
     lease_doc = await db["leases"].find_one({"_id": "alert_poller"})
     if lease_doc:
         print(f"  [OK] Distributed lease registered in MongoDB: owner='{lease_doc.get('owner')}', expires_at='{lease_doc.get('expires_at')}'")

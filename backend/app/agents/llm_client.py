@@ -4,10 +4,12 @@ Provides robust async prompt execution with structured JSON parsing,
 timeout controls, and graceful error handling.
 """
 
-from typing import Optional, Dict, Any
 import json
 import re
+from typing import Any
+
 import httpx
+
 from app.core.config import settings
 from app.core.logging import logger
 
@@ -17,7 +19,7 @@ async def query_grok_llm(
     system_prompt: str,
     temperature: float = 0.2,
     response_json: bool = False,
-) -> Optional[str]:
+) -> str | None:
     """
     Queries xAI Grok API (https://api.x.ai/v1/chat/completions).
     Returns the string completion, or None if credits/API error occurs.
@@ -33,7 +35,7 @@ async def query_grok_llm(
         "Content-Type": "application/json",
     }
 
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "model": settings.XAI_MODEL,
         "messages": [
             {"role": "system", "content": system_prompt},
@@ -64,14 +66,14 @@ async def query_grok_llm(
         return None
 
 
-def extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
+def extract_json_from_text(text: str) -> dict[str, Any] | None:
     """Extracts and parses JSON object from a potentially markdown-wrapped LLM response."""
     if not text:
         return None
     # Strip markdown code blocks if present
     cleaned = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.MULTILINE)
     cleaned = re.sub(r"\s*```$", "", cleaned.strip(), flags=re.MULTILINE)
-    
+
     # Locate first { and last }
     first_brace = cleaned.find("{")
     last_brace = cleaned.rfind("}")

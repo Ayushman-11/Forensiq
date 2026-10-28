@@ -2,7 +2,7 @@
 
 import pytest
 from fastapi import FastAPI
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 from mongomock_motor import AsyncMongoMockClient
 
 from app.api.v1.endpoints import alerts as alerts_module
