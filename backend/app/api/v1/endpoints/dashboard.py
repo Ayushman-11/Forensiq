@@ -5,6 +5,7 @@ from app.database.session import get_db
 from app.models.alert import DashboardMetrics
 from app.api.deps import get_current_user, get_siem_client, require_roles
 from app.core.config import settings
+from app.core.timeutil import iso_utc
 from app.core.tenancy import scoped_query, tenant_filter, tenant_id
 from app.infrastructure.siem.base import SIEMProvider
 from app.services.triage import OPEN_STATUSES, detected_at, sla_state
@@ -44,7 +45,7 @@ async def _ingestion_component(db, user) -> dict:
         state, detail = "ok", f"Fetched {last.get('fetched', 0)} events, {last.get('alerts_new', 0)} new alerts"
     return {
         "state": state, "detail": detail,
-        "last_run_at": finished.isoformat() if finished else None,
+        "last_run_at": iso_utc(finished) if finished else None,
         "lag_seconds": last.get("lag_seconds"),
     }
 
@@ -100,7 +101,7 @@ async def get_dashboard_metrics(db: AsyncIOMotorDatabase = Depends(get_db), user
     total_alerts = await db["alerts"].count_documents(scope)
     critical_alerts = await db["alerts"].count_documents(scoped_query(user, {"severity": {"$regex": "^critical$", "$options": "i"}}))
     new_alerts = await db["alerts"].count_documents(scoped_query(user, {"status": "New"}))
-    high_priority_alerts = await db["alerts"].count_documents(scoped_query(user, {"severity": {"$in": ["critical", "high"]}, "status": {"$in": ["New", "Investigating"]}}))
+    high_priority_alerts = await db["alerts"].count_documents(scoped_query(user, {"severity": {"$in": ["critical", "high"]}, "status": {"$in": list(OPEN_STATUSES)}}))
     open_investigations = await db["alerts"].count_documents(scoped_query(user, {"status": "Investigating"}))
     investigated_alerts = await db["alerts"].count_documents(scoped_query(user, {"status": "Investigated"}))
     
@@ -139,7 +140,7 @@ async def ingestion_health(db: AsyncIOMotorDatabase = Depends(get_db), user: dic
     async for run in cursor:
         for key in ("started_at", "finished_at"):
             if hasattr(run.get(key), "isoformat"):
-                run[key] = run[key].isoformat()
+                run[key] = iso_utc(run[key])
         # Drop any raw error text (legacy rows stored str(exc)); keep only stage + ref.
         run["errors"] = [{"stage": e.get("stage"), "ref": e.get("ref")} for e in (run.get("errors") or []) if isinstance(e, dict)]
         runs.append(run)

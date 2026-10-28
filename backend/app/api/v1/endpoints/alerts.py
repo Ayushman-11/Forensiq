@@ -17,6 +17,7 @@ from app.models.alert import AlertModel
 from app.services.ingestion import IngestionService
 from app.agents.graph import investigation_graph
 from app.core.logging import logger
+from app.core.timeutil import iso_utc
 from app.core.errors import internal_error, new_request_id
 from app.api.deps import require_roles, get_current_user
 from app.core.tenancy import scoped_query, tenant_filter, tenant_id
@@ -86,7 +87,7 @@ async def list_alerts(
     limit: int = Query(50, ge=1, le=200),
     severity: str = Query(None, description="Filter by severity"),
     status: str = Query(None, description="Filter by status"),
-    search: str = Query(None, max_length=100, description="Search in title or host"),
+    search: str = Query(None, max_length=100, description="Search title, host, user, rule, DNS query or ATT&CK technique"),
     assignee: str = Query(None, max_length=100, description="'me', 'unassigned' or a user id"),
     sort: Literal["newest", "oldest", "severity", "risk"] = Query("newest"),
     db: AsyncIOMotorDatabase = Depends(get_db),
@@ -114,8 +115,8 @@ async def list_alerts(
     if search:
         pattern = re.escape(search)
         conditions.append({"$or": [
-            {"title": {"$regex": pattern, "$options": "i"}},
-            {"host": {"$regex": pattern, "$options": "i"}},
+            {field: {"$regex": pattern, "$options": "i"}}
+            for field in ("title", "host", "user", "rule_name", "dns_query", "mitre_technique", "mitre_mappings.technique")
         ]})
     try:
         alerts = []
@@ -131,7 +132,7 @@ async def list_alerts(
             document["sla"] = sla_state(document)
             for key in ("created_at", "detected_at", "acknowledged_at", "resolved_at", "assigned_at", "updated_at"):
                 if isinstance(document.get(key), datetime):
-                    document[key] = document[key].isoformat()
+                    document[key] = iso_utc(document[key])
             alerts.append(document)
         return alerts
     except Exception as e:
@@ -267,7 +268,7 @@ async def get_alert(alert_id: str, db: AsyncIOMotorDatabase = Depends(get_db), u
         alert["sla"] = sla_state(alert)
         for key in ("created_at", "detected_at", "acknowledged_at", "resolved_at", "assigned_at", "updated_at", "escalated_at"):
             if isinstance(alert.get(key), datetime):
-                alert[key] = alert[key].isoformat()
+                alert[key] = iso_utc(alert[key])
 
         return alert
     except HTTPException:
@@ -399,7 +400,7 @@ async def investigate_alert(
             "_id": job_id,
             "alert_id": alert_id,
             "status": "pending",
-            "created_at": datetime.utcnow()
+            "created_at": datetime.now(timezone.utc)
             ,"org_id": tenant_id(user)
         })
         
@@ -441,7 +442,7 @@ async def get_investigation_status(job_id: str, db: AsyncIOMotorDatabase = Depen
         job["_id"] = str(job["_id"])
         for key in ["created_at", "started_at", "completed_at"]:
             if key in job and isinstance(job[key], datetime):
-                job[key] = job[key].isoformat()
+                job[key] = iso_utc(job[key])
                 
         return _sanitize_job(job)
     except HTTPException:
@@ -457,7 +458,7 @@ async def investigation_history(alert_id: str, db: AsyncIOMotorDatabase = Depend
     async for job in db["investigation_jobs"].find(scoped_query(user, {"alert_id": alert_id})).sort("created_at", -1).limit(20):
         job["_id"] = str(job["_id"])
         for key in ("created_at", "started_at", "completed_at"):
-            if isinstance(job.get(key), datetime): job[key] = job[key].isoformat()
+            if isinstance(job.get(key), datetime): job[key] = iso_utc(job[key])
         jobs.append(_sanitize_job(job))
     return jobs
 
@@ -501,7 +502,7 @@ async def add_note(alert_id: str, payload: NoteRequest, db: AsyncIOMotorDatabase
     # A note is a human touching the alert: it starts the acknowledge clock if nothing else has.
     await db["alerts"].update_one(scoped_query(user, {"_id": alert_id, "acknowledged_at": {"$exists": False}}), {"$set": {"acknowledged_at": now}})
     await record_audit(db, user, "alert.note_added", "alert", alert_id, {"note_id": note["_id"]})
-    note["created_at"] = note["created_at"].isoformat()
+    note["created_at"] = iso_utc(note["created_at"])
     return note
 
 @router.get("/{alert_id:path}/notes")
@@ -509,7 +510,7 @@ async def list_notes(alert_id: str, db: AsyncIOMotorDatabase = Depends(get_db), 
     notes = []
     async for note in db["alert_notes"].find(scoped_query(user, {"alert_id": alert_id})).sort("created_at", 1):
         note["_id"] = str(note["_id"])
-        if isinstance(note.get("created_at"), datetime): note["created_at"] = note["created_at"].isoformat()
+        if isinstance(note.get("created_at"), datetime): note["created_at"] = iso_utc(note["created_at"])
         notes.append(note)
     return notes
 
@@ -518,7 +519,7 @@ async def list_audit(alert_id: str, db: AsyncIOMotorDatabase = Depends(get_db), 
     logs = []
     async for entry in db["audit_logs"].find(scoped_query(user, {"entity_type": "alert", "entity_id": alert_id})).sort("created_at", -1).limit(100):
         entry["_id"] = str(entry["_id"])
-        if isinstance(entry.get("created_at"), datetime): entry["created_at"] = entry["created_at"].isoformat()
+        if isinstance(entry.get("created_at"), datetime): entry["created_at"] = iso_utc(entry["created_at"])
         logs.append(entry)
     return logs
 

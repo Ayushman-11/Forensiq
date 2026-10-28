@@ -190,3 +190,21 @@ async def test_user_directory_is_tenant_scoped_and_has_no_secrets(seeded):
     emails = {u["email"] for u in r.json()}
     assert emails == {"l1@corp.local", "l1b@corp.local", "mgr@corp.local"}
     assert "secret-hash" not in r.text
+
+
+@pytest.mark.asyncio
+async def test_api_datetimes_carry_an_explicit_utc_offset(db):
+    # Mongo returns naive UTC; without an offset browsers read it as local time.
+    await db["alerts"].insert_one({"_id": "naive", "org_id": "acme", "title": "t", "severity": "low", "status": "New",
+                                   "created_at": datetime(2026, 10, 1, 12, 0), "detected_at": datetime(2026, 10, 1, 12, 5)})
+    listed = (await call(db, ANALYST, "GET", "/alerts/")).json()[0]
+    single = (await call(db, ANALYST, "GET", "/alerts/naive")).json()
+    for doc in (listed, single):
+        assert doc["created_at"] == "2026-10-01T12:00:00+00:00"
+        assert doc["detected_at"] == "2026-10-01T12:05:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_open_high_priority_kpi_counts_investigated_alerts(seeded):
+    m = (await call(seeded, ANALYST, "GET", "/dashboard/metrics", router=dashboard_module.router, prefix="/dashboard")).json()
+    assert m["high_priority_alerts"] == 1  # "crit" is Investigated, still open
