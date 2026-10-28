@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -10,8 +10,8 @@ from mongomock_motor import AsyncMongoMockClient
 from app.api.v1.endpoints import auth as auth_module
 from app.core.config import settings
 from app.core.security import hash_password, verify_password
-from app.schemas.auth import LoginRequest
 from app.database.session import get_db
+from app.schemas.auth import LoginRequest
 from app.services.login_throttle import clear_failures, reserve_attempt, throttle_key
 
 
@@ -85,7 +85,7 @@ async def test_overlong_passwords_are_rejected_with_422(app):
 @pytest.mark.asyncio
 async def test_expired_window_resets_on_next_reservation(db):
     key = throttle_key("a@b.test", "1.2.3.4")
-    expired = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1)
+    expired = datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=1)
     await db["login_attempts"].insert_one({"_id": key, "attempts": 99, "expires_at": expired})
     assert await reserve_attempt(db, key) == 0
     assert (await db["login_attempts"].find_one({"_id": key}))["attempts"] == 1

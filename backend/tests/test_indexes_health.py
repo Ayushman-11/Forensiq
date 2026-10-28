@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from mongomock_motor import AsyncMongoMockClient
@@ -24,7 +24,7 @@ async def test_ensure_indexes_creates_expected_indexes():
 @pytest.mark.asyncio
 async def test_ingestion_health_is_tenant_scoped_and_aggregates():
     db = AsyncMongoMockClient()["health"]
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     await db["ingestion_runs"].insert_many([
         {"_id": "r1", "org_id": "default", "started_at": now - timedelta(minutes=2), "status": "ok",
          "fetched": 10, "suppressed": {"a": 3, "b": 1}, "alerts_new": 2},

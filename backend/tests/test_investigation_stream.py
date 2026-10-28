@@ -1,10 +1,12 @@
+from datetime import UTC, datetime
+
 import pytest
-from datetime import datetime, timezone
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 from mongomock_motor import AsyncMongoMockClient
-from app.main import app
-from app.database.session import get_db
+
 from app.core.security import create_access_token
+from app.database.session import get_db
+from app.main import app
 
 
 @pytest.fixture
@@ -31,7 +33,7 @@ async def test_investigate_stream_execution(mock_db):
             "user": "corp\\jdoe",
             "severity": "high",
             "status": "New",
-            "created_at": datetime.now(timezone.utc),
+            "created_at": datetime.now(UTC),
             "raw_logs": "powershell -enc JABzACAAPQAgAE4AZQB3AC0ATwBiAGoAZQBjAHQA...",
             "src_ip": "45.33.32.1",
         }

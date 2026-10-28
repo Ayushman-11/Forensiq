@@ -4,18 +4,19 @@ Provides PDF download endpoints for full investigation reports, executive summar
 and consolidated SOC operations reports.
 """
 
-from datetime import datetime, timezone
-from typing import Literal, Optional
+from datetime import UTC, datetime
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.database.session import get_db
 from app.api.deps import get_current_user
-from app.core.tenancy import scoped_query, tenant_id
-from app.core.logging import logger
 from app.core.errors import internal_error
-from app.services.report_generator import generate_investigation_report, generate_executive_summary
+from app.core.logging import logger
+from app.core.tenancy import scoped_query
+from app.database.session import get_db
+from app.services.report_generator import generate_executive_summary, generate_investigation_report
 
 router = APIRouter()
 
@@ -23,7 +24,7 @@ router = APIRouter()
 def _alert_id_to_filename(alert_id: str, prefix: str) -> str:
     """Generates a clean, safe PDF filename from an alert ID."""
     safe_id = alert_id[:16].replace("/", "_").replace("\\", "_").replace(":", "_")
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M")
     return f"forensiq_{prefix}_{safe_id}_{ts}.pdf"
 
 

@@ -8,8 +8,8 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from app.infrastructure.siem.splunk import SplunkClient
 from app.core.logging import setup_logging
+from app.infrastructure.siem.splunk import SplunkClient
 
 DASHBOARD_NAME = "forensiq_threat_alerts_hub"
 DASHBOARD_LABEL = "Forensiq — SOC Incident & Threat Alerts Hub"
@@ -38,13 +38,13 @@ ALERT_HUB_DASHBOARD_XML = """<dashboard version="1.1">
         <search>
           <query>index=main source="WinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=1 NOT Image="*splunk-powershell.exe"
 | eval Severity=case(
-    match(Image, "(?i)powershell\.exe"), "CRITICAL",
+    match(Image, "(?i)powershell\\.exe"), "CRITICAL",
     match(TargetObject, "(?i)CurrentVersion\\\\Run"), "HIGH",
     match(CommandLine, "(?i)(net user|whoami|systeminfo)"), "MEDIUM",
     1=1, "INFORMATIONAL"
   )
 | eval MITRE_Technique=case(
-    match(Image, "(?i)powershell\.exe"), "T1059.001 - Command and Scripting Interpreter: PowerShell",
+    match(Image, "(?i)powershell\\.exe"), "T1059.001 - Command and Scripting Interpreter: PowerShell",
     match(TargetObject, "(?i)CurrentVersion\\\\Run"), "T1547.001 - Boot/Logon Autostart Execution: Registry Run Keys",
     match(CommandLine, "(?i)(net user|whoami|systeminfo)"), "T1082 / T1087 - System &amp; Account Discovery",
     1=1, "T1059 - Command Execution"
@@ -80,7 +80,7 @@ async def main():
         print("   [OK] User-friendly Dashboard 'forensiq_threat_alerts_hub' deployed!\n")
 
         print("3. Registering Human-Readable Alert Rules in Splunk...")
-        
+
         # Rule 1: Critical PowerShell Execution
         await client.create_saved_search(
             name="Forensiq_Alert_PowerShell_Execution",

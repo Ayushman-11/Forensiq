@@ -4,8 +4,10 @@ Verifies the complete flow through:
   START -> extract_context -> enrich_iocs -> correlate_events -> map_mitre -> analyze_investigation -> END
 """
 
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
+
 from app.agents.graph import investigation_graph
 
 

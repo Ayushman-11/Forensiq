@@ -4,8 +4,14 @@ from __future__ import annotations
 
 from app.normalization.canonical import CanonicalEvent
 from app.normalization.clean import (
-    basename, clean_value, host_key, merged_fields, parse_hashes,
-    parse_ts, raw_event_id, split_account,
+    basename,
+    clean_value,
+    host_key,
+    merged_fields,
+    parse_hashes,
+    parse_ts,
+    raw_event_id,
+    split_account,
 )
 
 

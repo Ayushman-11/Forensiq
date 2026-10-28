@@ -9,7 +9,6 @@ import yaml
 
 from app.normalization.canonical import CanonicalEvent
 
-
 _ALLOWED_WHERE_KEYS = {
     "subject_user_endswith", "domain_benign", "process_in", "parent_in",
     "command_line_regex", "process_path_startswith", "fields_regex",
@@ -24,9 +23,8 @@ def _compile(rule_name: str, key: str, pattern: str) -> re.Pattern:
 
 
 class NoiseFilter:
-    def __init__(self, benign_domains: list[str], rules: list[dict], shared_hosting_domains: list[str] | None = None) -> None:
+    def __init__(self, benign_domains: list[str], rules: list[dict]) -> None:
         self.benign_domains = tuple(d.lower().rstrip(".") for d in benign_domains)
-        self.shared_hosting_domains = tuple(d.lower().rstrip(".") for d in shared_hosting_domains or [])
         self.rules = rules
         self._cmd_re: dict[int, re.Pattern] = {}
         self._fields_re: dict[int, dict[str, re.Pattern]] = {}
@@ -52,11 +50,11 @@ class NoiseFilter:
             self._fields_re[index] = {f: _compile(name, f"fields_regex[{f}]", pat) for f, pat in fr.items()}
 
     @classmethod
-    def from_dict(cls, cfg: dict) -> "NoiseFilter":
-        return cls(cfg.get("benign_domains") or [], cfg.get("suppress") or [], cfg.get("shared_hosting_domains") or [])
+    def from_dict(cls, cfg: dict) -> NoiseFilter:
+        return cls(cfg.get("benign_domains") or [], cfg.get("suppress") or [])
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> "NoiseFilter":
+    def from_yaml(cls, path: str | Path) -> NoiseFilter:
         p = Path(path)
         if not p.is_absolute() and not p.exists():
             p = Path(__file__).resolve().parents[2] / p  # relative paths resolve from backend/ when cwd differs
@@ -66,11 +64,6 @@ class NoiseFilter:
     def is_benign_domain(self, domain: str) -> bool:
         d = domain.lower().rstrip(".")
         return any(d == b or d.endswith("." + b) for b in self.benign_domains)
-
-    def is_shared_hosting(self, domain: str) -> bool:
-        """Domains that serve many tenants: blocking the whole domain breaks legitimate work."""
-        d = domain.lower().rstrip(".")
-        return any(d == b or d.endswith("." + b) for b in self.shared_hosting_domains)
 
     def _matches(self, rule: dict, ev: CanonicalEvent, index: int) -> bool:
         if rule.get("event_code") and str(rule["event_code"]) != ev.event_code:

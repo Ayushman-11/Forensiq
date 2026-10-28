@@ -4,11 +4,11 @@ Pytest Test Fixtures for Async FastAPI Backend Testing.
 
 import pytest
 import pytest_asyncio
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 from mongomock_motor import AsyncMongoMockClient
-from app.main import app
+
 from app.database.session import get_db
-from app.infrastructure.siem.splunk import SplunkClient
+from app.main import app
 
 
 @pytest_asyncio.fixture
