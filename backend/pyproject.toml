@@ -52,3 +52,14 @@ target-version = "py311"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+no_strict_optional = true
+follow_imports = "silent"
+warn_unused_ignores = false
+namespace_packages = true
+explicit_package_bases = true
+mypy_path = "."
+exclude = ["__pycache__", ".venv", "venv", "build"]
