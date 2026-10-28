@@ -188,7 +188,7 @@ The backend poller (single instance, guarded by a Mongo lease) turns Splunk rows
 
 raw Splunk row -> `CanonicalEvent` (normalization) -> noise suppression -> detection rules -> dedup -> idempotent upsert into `alerts`.
 
-- **Cursor and pagination**: each cycle resumes from a stored cursor with a small overlap (`INGEST_OVERLAP_SECONDS`) and pages through results (`INGEST_PAGE_SIZE`, `INGEST_MAX_PAGES`); the first run looks back `INGEST_INITIAL_LOOKBACK_HOURS`.
+- **Cursor and pagination**: each cycle resumes from a stored cursor with a small overlap (`INGEST_OVERLAP_SECONDS`) and pages through results (`INGEST_PAGE_SIZE`, `INGEST_MAX_PAGES`); the first run looks back `INGEST_INITIAL_LOOKBACK_HOURS` (default 720 hours, i.e. 30 days).
 - **Noise policy**: `backend/config/noise.yaml` (path set by `NOISE_CONFIG_PATH`) lists what is suppressed as known-benign. Suppression is never silent: every suppressed event is counted per reason in the cycle's `ingestion_runs` document.
 - **Dedup**: repeated detections collapse per `INGEST_DEDUP_BUCKET_SECONDS`; failed-logon bursts raise an alert at `BRUTE_FORCE_THRESHOLD` per bucket and source.
 - **Other settings**: `INVESTIGATION_CONCURRENCY` bounds concurrent auto-investigations; `POLLER_LEASE_TTL_SECONDS` is the single-poller lease TTL.

@@ -6,13 +6,6 @@ import { apiFetch } from "@/lib/api";
 import type { AlertRecord } from "@/lib/types";
 import IocHoverCard from "@/components/enrichment/IocHoverCard";
 
-const DETECTED_BEHAVIORS_DATA = [
-  { name: "PowerShell execution", type: "Execution", confidence: "High confidence", color: "#EF4444" },
-  { name: "Encoded command", type: "Defense Evasion", confidence: "High confidence", color: "#F59E0B" },
-  { name: "External network connection", type: "Command & Control", confidence: "Medium confidence", color: "#3B82F6" },
-  { name: "Suspicious domain query", type: "Discovery", confidence: "Medium confidence", color: "#8B5CF6" },
-];
-
 export default function AIExtractionPage() {
   const [alerts, setAlerts] = useState<AlertRecord[]>([]);
   const [selectedAlert, setSelectedAlert] = useState<AlertRecord | null>(null);
@@ -79,8 +72,8 @@ export default function AIExtractionPage() {
                     key={a._id}
                     onClick={() => setSelectedAlert(a)}
                     className={`w-full text-left p-2.5 rounded transition-colors ${
-                      isSelected 
-                        ? "bg-[var(--sidebar-active-bg)] font-semibold" 
+                      isSelected
+                        ? "bg-[var(--sidebar-active-bg)] font-semibold"
                         : "hover:bg-[var(--surface-hover)]"
                     }`}
                   >
@@ -112,9 +105,9 @@ export default function AIExtractionPage() {
                   </h2>
                 </div>
                 <div className="text-right">
-                  <span className="text-[11px] text-[var(--text-muted)] block">Extraction Confidence</span>
+                  <span className="text-[11px] text-[var(--text-muted)] block">Assessment Confidence</span>
                   <span className="font-mono text-lg font-bold text-[#8B5CF6]">
-                    {selectedAlert.ai_confidence ?? 96}%
+                    {selectedAlert.ai_confidence != null ? `${selectedAlert.ai_confidence}%` : "—"}
                   </span>
                 </div>
               </div>
@@ -151,20 +144,28 @@ export default function AIExtractionPage() {
               <div className="space-y-3">
                 <h3 className="text-xs font-semibold text-[var(--text-primary)]">Extracted Host & Identity Entities</h3>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                  <EntityChip label="Target Host" value={selectedAlert.host || "WIN-SOC-01"} color="#8B5CF6" />
-                  <EntityChip label="Target User" value={selectedAlert.user || "Administrator"} color="#3B82F6" />
-                  <EntityChip label="Severity" value={selectedAlert.severity || "high"} color="#EF4444" />
-                  <EntityChip label="Status" value={selectedAlert.status || "New"} color="#22C55E" />
+                  <EntityChip label="Target Host" value={selectedAlert.host || "—"} color="#8B5CF6" />
+                  <EntityChip label="Target User" value={selectedAlert.user || "—"} color="#3B82F6" />
+                  <EntityChip label="Severity" value={selectedAlert.severity || "—"} color="#EF4444" />
+                  <EntityChip label="Status" value={selectedAlert.status || "—"} color="#22C55E" />
                 </div>
               </div>
 
               {/* Section 12: Detected Behaviors */}
               <div className="space-y-3">
-                <h3 className="text-xs font-semibold text-[var(--text-primary)]">Detected Behaviors</h3>
+                <h3 className="text-xs font-semibold text-[var(--text-primary)]">Mapped Techniques</h3>
+                {(selectedAlert.mitre_mappings ?? []).length === 0 && (
+                  <p className="text-xs text-[var(--text-muted)]">No techniques mapped yet. Run the investigation pipeline.</p>
+                )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {DETECTED_BEHAVIORS_DATA.map((b) => (
-                    <div 
-                      key={b.name}
+                  {(selectedAlert.mitre_mappings ?? []).map((m) => ({
+                    name: m.name || m.technique || "Unnamed technique",
+                    type: [m.technique, m.tactic].filter(Boolean).join(" · "),
+                    confidence: (m as { confidence?: string }).confidence ? `${(m as { confidence?: string }).confidence} confidence` : "Mapped",
+                    color: "#8B5CF6",
+                  })).map((b) => (
+                    <div
+                      key={b.type + b.name}
                       className="p-3 rounded border border-[var(--border-color)] bg-[var(--surface-secondary)] flex items-center justify-between"
                     >
                       <div className="flex items-center gap-2">
@@ -186,12 +187,7 @@ export default function AIExtractionPage() {
               <div className="space-y-2">
                 <h3 className="text-xs font-semibold text-[var(--text-primary)]">Extracted Context Payload</h3>
                 <pre className="p-3.5 rounded bg-[var(--surface-secondary)] border border-[var(--border-color)] text-[11px] font-mono text-[var(--text-primary)] overflow-x-auto max-h-48 leading-relaxed">
-                  {JSON.stringify(selectedAlert.context || {
-                    command_line: "powershell.exe -e aG9zdG5hbWU=",
-                    parent_process: "cmd.exe",
-                    process_id: 4812,
-                    network_connection: "TCP 192.168.1.105:443"
-                  }, null, 2)}
+                  {selectedAlert.context ? JSON.stringify(selectedAlert.context, null, 2) : "No context extracted yet."}
                 </pre>
               </div>
             </>

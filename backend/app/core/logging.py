@@ -39,6 +39,13 @@ def setup_logging() -> None:
         stream=sys.stdout,
         level=log_level,
     )
+    # At DEBUG these log every Mongo command with full documents (alert payloads) and every
+    # HTTP handshake, burying real errors and leaking data into logs. DEBUG is for our code only.
+    for noisy in NOISY_LIBRARY_LOGGERS:
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
+
+NOISY_LIBRARY_LOGGERS = ("pymongo", "motor", "httpx", "httpcore", "urllib3", "asyncio")
 
 
 logger = structlog.get_logger()

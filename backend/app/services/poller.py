@@ -3,10 +3,10 @@ import uuid
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.agents.graph import investigation_graph
 from app.core.config import settings
 from app.core.logging import logger
 from app.services.ingestion import IngestionService
+from app.services.investigation_streamer import investigation_stream_manager
 from app.services.lease import acquire_lease, release_lease
 from app.services.notifications import (
     NotificationEventType,
@@ -154,6 +154,37 @@ class AlertPoller:
         self._task = asyncio.create_task(self._loop())
 
     async def stop(self) -> None:
+                await self._run_cycle()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error("alert_poller_error", error=str(e))
+
+            try:
+                await asyncio.sleep(self.interval_seconds)
+            except asyncio.CancelledError:
+                break
+
+    async def _investigate_alert(self, alert_data: dict):
+        """Auto-investigate through the same pipeline and finalizer as analyst-started runs."""
+        alert_id = alert_data.get("_id")
+        logger.info("auto_investigating_alert", alert_id=alert_id)
+        async for event in investigation_stream_manager.run_pipeline_stream(
+            alert_id=alert_id,
+            alert=alert_data,
+            db=self.db,
+            org_id=alert_data.get("org_id", "default"),
+        ):
+            if event["event"] in ("complete", "error"):
+                logger.info("auto_investigation_finished", alert_id=alert_id, outcome=event["event"])
+
+    def start(self):
+        if not self._running:
+            self._running = True
+            self._task = asyncio.create_task(self._poll_loop())
+            logger.info("alert_poller_started", interval=self.interval_seconds)
+
+    async def stop(self):
         self._running = False
         if self._task:
             self._task.cancel()

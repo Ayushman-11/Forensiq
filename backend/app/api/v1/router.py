@@ -88,3 +88,6 @@ api_router.include_router(
     tags=["reports"],
     dependencies=[Depends(get_current_user), Depends(_report_rate_limit)],
 )
+api_router.include_router(
+    users.router, prefix="/users", tags=["users"], dependencies=[Depends(get_current_user)]
+)

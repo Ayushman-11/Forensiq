@@ -62,6 +62,9 @@ def calculate_calibrated_risk_score(
         "points": mitre_points,
         "factor": f"{len(mitre_mappings)} ATT&CK mappings ({tactic_hits} high-impact tactics)",
     }
+    answered = sum(1 for item in enrichments if item.get("status", "ok") == "ok")
+    correlation_bump = min(20, len(correlations) * 5)
+    mitre_bump = min(10, len(mitre_mappings) * 3)
 
     # Total Sum
     raw_score = base_points + asset_points + ioc_points + mitre_points

@@ -20,18 +20,34 @@ from app.database.session import connect_to_mongo, close_mongo_connection
 from app.services.poller import AlertPoller
 from app.services.sla_monitor import SLAEscalationMonitor
 from app.services.notifications import notification_dispatcher
+from app.services.investigation_worker import InvestigationWorker
+from app.services.job_queue import reap_stuck_jobs
 from app.database.session import db_config
 
 _NON_PROD_ENVS = frozenset({"development", "dev", "test", "testing", "local"})
 
 poller = None
 sla_monitor = None
+investigation_worker = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan context manager handling startup and shutdown events."""
     setup_logging()
     logger.info("forensiq_backend_startup", env=settings.ENV, debug=settings.DEBUG)
+    missing = missing_integrations(settings)
+    if "threat_intel" in missing:
+        logger.warning(
+            "threat_intel_not_configured",
+            missing=missing["threat_intel"],
+            message="IOC enrichment returns no verdict from these feeds until their keys are set",
+        )
+    if "llm" in missing:
+        logger.warning(
+            "llm_not_configured",
+            missing=missing["llm"],
+            message="risk and recommendation agents will use deterministic rules",
+        )
     # Fail fast on a broken noise policy instead of failing every ingestion cycle.
     NoiseFilter.from_yaml(settings.NOISE_CONFIG_PATH)
     await connect_to_mongo()
@@ -58,6 +74,21 @@ async def lifespan(app: FastAPI):
     if db_config.client:
         db = db_config.client[settings.MONGO_DB_NAME]
         poller = AlertPoller(db, interval_seconds=30)
+        try:
+            await reap_stuck_jobs(db)
+        except Exception as exc:
+            logger.error("reap_stuck_jobs_failed", error=str(exc))
+
+    global poller, investigation_worker
+    if db_config.client:
+        db = db_config.client[settings.MONGO_DB_NAME]
+        try:
+            investigation_worker = InvestigationWorker(db, poll_interval=settings.INVESTIGATION_WORKER_POLL_INTERVAL_SECONDS)
+            investigation_worker.start()
+        except Exception as exc:
+            logger.error("investigation_worker_start_failed", error=str(exc))
+
+        poller = AlertPoller(db, interval_seconds=settings.POLLER_INTERVAL_SECONDS)
         poller.start()
 
         # Start background SLA & Escalation Monitor (sweeps every 60 seconds)
@@ -69,6 +100,11 @@ async def lifespan(app: FastAPI):
     if sla_monitor:
         await sla_monitor.stop()
 
+    if investigation_worker:
+        try:
+            await investigation_worker.stop()
+        except Exception as exc:
+            logger.error("investigation_worker_stop_failed", error=str(exc))
     if poller:
         await poller.stop()
 

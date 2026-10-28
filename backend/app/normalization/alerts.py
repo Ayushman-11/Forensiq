@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from app.core.config import settings
 from app.normalization.dedup import AlertGroup
 from app.normalization.ioc import extract_iocs
 from app.normalization.noise import NoiseFilter
@@ -52,6 +53,13 @@ def build_alert_doc(group: AlertGroup, org_id: str, noise: NoiseFilter | None = 
             if note not in notes:
                 notes.append(note)
 
+    raw_ev = ev.raw
+    raw_events_list = [e.raw for e in group.events[:MAX_RAW_EVENTS]]
+    if getattr(settings, "RAW_EVENTS_REDACT_PII", False):
+        from app.services.governance import sanitize_raw_event
+        raw_ev = sanitize_raw_event(raw_ev)
+        raw_events_list = [sanitize_raw_event(r) for r in raw_events_list]
+
     return {
         "_id": group.alert_id,
         "org_id": org_id,
@@ -88,7 +96,7 @@ def build_alert_doc(group: AlertGroup, org_id: str, noise: NoiseFilter | None = 
         "logon_type": ev.logon_type,
         "failure_reason": ev.failure_reason,
         "event_ids": [e.event_id for e in group.events],
-        "raw_event": ev.raw,
-        "raw_events": [e.raw for e in group.events[:MAX_RAW_EVENTS]],
+        "raw_event": raw_ev,
+        "raw_events": raw_events_list,
         "cleaning_notes": notes,
     }

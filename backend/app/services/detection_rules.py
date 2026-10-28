@@ -16,6 +16,8 @@ import yaml
 
 from app.core.logging import logger
 from app.core.mitre_stix import lookup_technique, ATTACK_VERSION
+from app.normalization.ioc import public_ip
+
 
 
 @dataclass
@@ -40,13 +42,9 @@ class DetectionRule:
 # Predicates
 # ---------------------------------------------------------------------------
 
-_PRIVATE_IP_PATTERN = re.compile(
-    r"^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.|\:\:1)"
-)
-
-
-def _is_private_ip(ip: str) -> bool:
-    return bool(_PRIVATE_IP_PATTERN.match(str(ip or "")))
+def _is_external_ip(ip: str) -> bool:
+    """True only for globally routable, non-multicast addresses (v4 or v6, incl. IPv4-mapped)."""
+    return public_ip(str(ip or "")) is not None
 
 
 def _mimikatz_dump(raw: dict) -> bool:
@@ -92,7 +90,7 @@ def _external_network(raw: dict) -> bool:
     if initiated not in ("true", "1", "yes"):
         return False
     dest_ip = str(raw.get("DestinationIp") or "")
-    if not dest_ip or _is_private_ip(dest_ip):
+    if not dest_ip or not _is_external_ip(dest_ip):
         return False
     try:
         dest_port = int(raw.get("DestinationPort") or 0)

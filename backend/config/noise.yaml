@@ -14,6 +14,30 @@ benign_domains:
   - digicert.com
   - symcd.com
 
+# Multi-tenant hosting, paste and shortener domains. These still get threat-intel
+# lookups and detections (attackers stage payloads here), but recommendations
+# never tell an analyst to block the whole domain: block the specific URL instead.
+shared_hosting_domains:
+  - githubusercontent.com
+  - github.com
+  - gitlab.com
+  - bitbucket.org
+  - pastebin.com
+  - bit.ly
+  - drive.google.com
+  - docs.google.com
+  - dropbox.com
+  - onedrive.live.com
+  - sharepoint.com
+  - discord.com
+  - discordapp.com
+  - amazonaws.com
+  - cloudfront.net
+  - azureedge.net
+  - blob.core.windows.net
+  - ngrok.io
+  - ngrok-free.app
+
 suppress:
   # Machine accounts (NAME$) making explicit-credential logons to localhost from
   # the stock System32 service binaries is routine (virtual machine accounts,

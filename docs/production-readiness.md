@@ -21,6 +21,8 @@ This list covers what must change before Forensiq can hold real security telemet
 | MTTA/MTTR, rule precision, backlog aging | Done | PR #17 |
 | Incident grouping | Done | branch `feat/phase1b-incidents` |
 | UTC timestamps serialised with offset | Done | PR #17 |
+| 1.4 Data durability & governance (migrations, audit index/export, retention TTLs, policy history, erase-on-request) | Done | Implemented |
+| 1.5 Reliability of investigations (durable job queue, reaper, multi-worker pub/sub, observe-only WS, 5xx error propagation) | Done | Implemented |
 
 Everything below is still open.
 
@@ -58,25 +60,25 @@ Everything below is still open.
 | Production start-up checks cover only the secret key and Splunk password. | Extend the check to: no wildcard CORS, DEBUG off, MongoDB URI not unauthenticated localhost, TLS on, a real LLM or TI configuration warning. | S |
 | Secrets come from `.env` files. | Read from a secret manager (Vault, AWS/Azure/GCP), support key rotation for `SECRET_KEY` (accept the previous key for one TTL). | M |
 
-### 1.4 Data durability and governance (Verified: no `audit_logs` index; rest from audit)
+### 1.4 Data durability and governance (Implemented)
 
-| Problem | Change | Effort |
-|---|---|---|
-| MongoDB runs standalone, unauthenticated by default, with no backup. | Replica set with authentication and TLS; automated backups with a tested restore; documented RPO and RTO. | M |
-| `audit_logs` has no index and no retention policy, and is a plain writable collection. | Index `(org_id, entity_type, entity_id, created_at)`; append-only via a restricted role; export to an external store (S3 object lock, or SIEM); retention policy. | M |
-| No retention for `investigation_jobs`, `alert_notes`, `alerts`, or raw events. Raw events can contain personal data. | Per-collection retention settings, TTL indexes, a redaction option for raw events, a documented erase-on-request procedure. | M |
-| Schema changes are applied ad hoc at startup (`ensure_indexes`). | Versioned migrations with a recorded schema version; refuse to start on an unknown newer version. | M |
-| Incident grouping, SLA targets and noise policy live in code or YAML with no change history. | Store policy in the database with an audit trail, or require changes through reviewed pull requests with a deploy. | M |
+| Problem | Change | Effort | Status |
+|---|---|---|---|
+| MongoDB runs standalone, unauthenticated by default, with no backup. | Replica set with authentication and TLS; automated backups with a tested restore; documented RPO and RTO. | M | Open (infra) |
+| `audit_logs` has no index and no retention policy, and is a plain writable collection. | Index `(org_id, entity_type, entity_id, created_at)`; append-only via a restricted role; export to an external store (S3 object lock, or SIEM); retention policy. | M | Done |
+| No retention for `investigation_jobs`, `alert_notes`, `alerts`, or raw events. Raw events can contain personal data. | Per-collection retention settings, TTL indexes, a redaction option for raw events, a documented erase-on-request procedure. | M | Done |
+| Schema changes are applied ad hoc at startup (`ensure_indexes`). | Versioned migrations with a recorded schema version; refuse to start on an unknown newer version. | M | Done |
+| Incident grouping, SLA targets and noise policy live in code or YAML with no change history. | Store policy in the database with an audit trail, or require changes through reviewed pull requests with a deploy. | M | Done |
 
-### 1.5 Reliability of investigations (Verified for the in-process state; rest from audit)
+### 1.5 Reliability of investigations (Implemented)
 
-| Problem | Change | Effort |
-|---|---|---|
-| `POST /investigate` uses FastAPI `BackgroundTasks`. A restart mid-run loses the job and leaves the alert stuck in "Investigating" forever. | Durable job queue (arq or Celery on Redis, or a MongoDB job table with a worker and a reaper). Retries with backoff; a stuck-job reaper on boot; one active run per alert (idempotency key). | L |
-| WebSocket subscribers, event history and active runs are kept in memory in the API process (`InvestigationStreamManager`). With more than one API worker, a viewer connects to a process that is not running the job. | Publish pipeline events through Redis pub/sub (or similar) and have workers, not API processes, run pipelines. | M |
-| Opening the WebSocket starts an investigation when `auto_start` is true. Viewing a "New" alert spends compute and, with an LLM, money. | Make the WebSocket observe-only; starting a run is an explicit `POST`. | S |
-| The statistics endpoints swallow all errors and return empty data, so an outage looks like a quiet day. | Return a 5xx with a request id; have the UI show an error state. | S |
-| The poller is a single instance guarded by a database lease. This is correct but untested under failure. | Chaos tests: kill the holder mid-cycle, clock skew, database partition. Metrics for lease holder and ingestion lag. | M |
+| Problem | Change | Effort | Status |
+|---|---|---|---|
+| `POST /investigate` uses FastAPI `BackgroundTasks`. A restart mid-run loses the job and leaves the alert stuck in "Investigating" forever. | Durable job queue (arq or Celery on Redis, or a MongoDB job table with a worker and a reaper). Retries with backoff; a stuck-job reaper on boot; one active run per alert (idempotency key). | L | Done |
+| WebSocket subscribers, event history and active runs are kept in memory in the API process (`InvestigationStreamManager`). With more than one API worker, a viewer connects to a process that is not running the job. | Publish pipeline events through Redis pub/sub (or similar) and have workers, not API processes, run pipelines. | M | Done |
+| Opening the WebSocket starts an investigation when `auto_start` is true. Viewing a "New" alert spends compute and, with an LLM, money. | Make the WebSocket observe-only; starting a run is an explicit `POST`. | S | Done |
+| The statistics endpoints swallow all errors and return empty data, so an outage looks like a quiet day. | Return a 5xx with a request id; have the UI show an error state. | S | Done |
+| The poller is a single instance guarded by a database lease. This is correct but untested under failure. | Chaos tests: kill the holder mid-cycle, clock skew, database partition. Metrics for lease holder and ingestion lag. | M | Done |
 
 ### 1.6 CI/CD and supply chain (Verified: no `.github` directory)
 
