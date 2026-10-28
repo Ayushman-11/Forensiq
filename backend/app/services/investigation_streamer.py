@@ -315,8 +315,18 @@ class InvestigationStreamManager:
                 del self._subscribers[alert_id]
         logger.info("ws_client_unregistered", alert_id=alert_id)
 
-    async def broadcast(self, alert_id: str, event_type: str, data: dict) -> None:
-        """Broadcasts an investigation event to all registered WebSocket clients for this alert."""
+    async def broadcast(
+        self,
+        alert_id: str,
+        event_type: str,
+        data: dict,
+        db: Optional[AsyncIOMotorDatabase] = None,
+        job_id: Optional[str] = None,
+    ) -> None:
+        """
+        Broadcasts an investigation event to all registered WebSocket clients for this alert
+        and persists it to MongoDB investigation_events for multi-worker support.
+        """
         message = {
             "event": event_type,
             "data": serialize_data(data),
@@ -330,6 +340,20 @@ class InvestigationStreamManager:
         elif event_type in ("complete", "error"):
             # Clear or retain final state
             self._event_history[alert_id].append(message)
+
+        # Persist event for multi-process / multi-worker pub-sub
+        if db is not None:
+            try:
+                await db["investigation_events"].insert_one({
+                    "_id": str(uuid.uuid4()),
+                    "alert_id": alert_id,
+                    "job_id": job_id,
+                    "event": event_type,
+                    "data": serialize_data(data),
+                    "created_at": datetime.now(timezone.utc),
+                })
+            except Exception as exc:
+                logger.debug("event_persistence_failed", alert_id=alert_id, error=str(exc))
 
         subscribers = self._subscribers.get(alert_id, set()).copy()
         if not subscribers:
@@ -349,8 +373,24 @@ class InvestigationStreamManager:
             self.unregister(alert_id, ws)
 
     def get_history(self, alert_id: str) -> List[dict]:
-        """Returns in-flight event history for an alert."""
+        """Returns in-flight event history for an alert from local memory."""
         return list(self._event_history.get(alert_id, []))
+
+    async def get_persisted_history(self, alert_id: str, db: AsyncIOMotorDatabase) -> List[dict]:
+        """Returns in-flight or past event history from MongoDB for multi-worker support."""
+        events = []
+        try:
+            cursor = db["investigation_events"].find({"alert_id": alert_id}).sort("created_at", 1)
+            async for doc in cursor:
+                events.append({
+                    "event": doc.get("event"),
+                    "data": doc.get("data"),
+                })
+        except Exception as exc:
+            logger.debug("failed_to_fetch_persisted_events", alert_id=alert_id, error=str(exc))
+        
+        # If DB had events, return them; otherwise fallback to local memory
+        return events if events else self.get_history(alert_id)
 
     def clear_history(self, alert_id: str) -> None:
         """Clears in-flight history for an alert."""
@@ -403,7 +443,7 @@ class InvestigationStreamManager:
             "status": "running",
             "message": "Investigation pipeline initialized",
         }
-        await self.broadcast(alert_id, "init", init_payload)
+        await self.broadcast(alert_id, "init", init_payload, db=db, job_id=job_id)
         yield {"event": "init", "data": init_payload}
 
         initial_state = {
@@ -445,7 +485,7 @@ class InvestigationStreamManager:
                         "data": {k: v for k, v in node_output.items() if k != "alert_data"},
                     }
 
-                    await self.broadcast(alert_id, "node_complete", node_event)
+                    await self.broadcast(alert_id, "node_complete", node_event, db=db, job_id=job_id)
                     yield {"event": "node_complete", "data": node_event}
 
             # Finalize and persist in MongoDB
@@ -466,7 +506,7 @@ class InvestigationStreamManager:
                 "alert": serialized_alert,
             }
 
-            await self.broadcast(alert_id, "complete", complete_event)
+            await self.broadcast(alert_id, "complete", complete_event, db=db, job_id=job_id)
             yield {"event": "complete", "data": complete_event}
 
         except Exception as e:
@@ -490,7 +530,7 @@ class InvestigationStreamManager:
                 "alert_id": alert_id,
                 "error": f"Investigation failed (ref {ref})",
             }
-            await self.broadcast(alert_id, "error", error_payload)
+            await self.broadcast(alert_id, "error", error_payload, db=db, job_id=job_id)
             yield {"event": "error", "data": error_payload}
 
 

@@ -60,7 +60,7 @@ async def test_ws_investigate_streaming_lifecycle(test_setup):
     token = create_access_token("analyst-ws-1", "analyst@forensiq.ai", "analyst")
 
     client = TestClient(app)
-    with client.websocket_connect(f"/api/v1/alerts/alert-ws-test-1/ws?token={token}") as ws:
+    with client.websocket_connect(f"/api/v1/alerts/alert-ws-test-1/ws?token={token}&auto_start=true") as ws:
         # First message: connected
         connected_msg = ws.receive_json()
         assert connected_msg["event"] == "connected"
@@ -162,3 +162,48 @@ async def test_ws_investigate_already_investigated(test_setup):
         complete_msg = ws.receive_json()
         assert complete_msg["event"] == "complete"
         assert complete_msg["data"]["alert"]["risk_score"] == 92
+
+
+@pytest.mark.asyncio
+async def test_ws_investigate_observe_only_by_default(test_setup):
+    """
+    Production-readiness 1.5: WebSocket is observe-only by default.
+    Viewing a New alert must NOT automatically trigger pipeline execution or spend LLM compute.
+    """
+    mock_db = test_setup
+
+    await mock_db["users"].insert_one({
+        "_id": "analyst-ws-observe",
+        "email": "observer@forensiq.ai",
+        "role": "analyst",
+        "is_active": True,
+        "org_id": "default",
+    })
+
+    await mock_db["alerts"].insert_one({
+        "_id": "alert-observe-only",
+        "title": "Uninvestigated New Alert",
+        "host": "srv-observe",
+        "user": "corp\\observer",
+        "severity": "medium",
+        "status": "New",
+        "created_at": datetime.now(timezone.utc),
+    })
+
+    token = create_access_token("analyst-ws-observe", "observer@forensiq.ai", "analyst")
+
+    client = TestClient(app)
+    # Connect without auto_start query param (should default to False)
+    with client.websocket_connect(f"/api/v1/alerts/alert-observe-only/ws?token={token}") as ws:
+        connected = ws.receive_json()
+        assert connected["event"] == "connected"
+
+        # Observe-only status message received
+        status_msg = ws.receive_json()
+        assert status_msg["event"] == "status"
+        assert status_msg["data"]["status"] == "ready"
+
+    # Confirm the alert status in DB remains 'New' (no compute was spent!)
+    alert_in_db = await mock_db["alerts"].find_one({"_id": "alert-observe-only"})
+    assert alert_in_db["status"] == "New"
+

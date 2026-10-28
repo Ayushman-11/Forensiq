@@ -18,11 +18,14 @@ from app.normalization.noise import NoiseFilter
 
 from app.database.session import connect_to_mongo, close_mongo_connection
 from app.services.poller import AlertPoller
+from app.services.investigation_worker import InvestigationWorker
+from app.services.job_queue import reap_stuck_jobs
 from app.database.session import db_config
 
 _NON_PROD_ENVS = frozenset({"development", "dev", "test", "testing", "local"})
 
 poller = None
+investigation_worker = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -64,13 +67,30 @@ async def lifespan(app: FastAPI):
         except Exception as exc:  # e.g. a conflicting pre-existing index must not take the API down
             logger.error("ensure_indexes_failed", error=str(exc))
 
-    global poller
+        try:
+            await reap_stuck_jobs(db)
+        except Exception as exc:
+            logger.error("reap_stuck_jobs_failed", error=str(exc))
+
+    global poller, investigation_worker
     if db_config.client:
-        poller = AlertPoller(db_config.client[settings.MONGO_DB_NAME], interval_seconds=settings.POLLER_INTERVAL_SECONDS)
+        db = db_config.client[settings.MONGO_DB_NAME]
+        try:
+            investigation_worker = InvestigationWorker(db, poll_interval=settings.INVESTIGATION_WORKER_POLL_INTERVAL_SECONDS)
+            investigation_worker.start()
+        except Exception as exc:
+            logger.error("investigation_worker_start_failed", error=str(exc))
+
+        poller = AlertPoller(db, interval_seconds=settings.POLLER_INTERVAL_SECONDS)
         poller.start()
 
     yield
     
+    if investigation_worker:
+        try:
+            await investigation_worker.stop()
+        except Exception as exc:
+            logger.error("investigation_worker_stop_failed", error=str(exc))
     if poller:
         await poller.stop()
         

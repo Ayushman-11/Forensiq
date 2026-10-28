@@ -23,6 +23,7 @@ from app.api.deps import require_roles, get_current_user
 from app.core.tenancy import scoped_query, tenant_filter, tenant_id
 from app.services.audit import record_audit
 from app.services.correlation import correlate_alert
+from app.services.job_queue import enqueue_investigation_job
 from app.services.triage import (
     OPEN_STATUSES,
     TriageError,
@@ -152,8 +153,7 @@ async def alerts_by_rule(db: AsyncIOMotorDatabase = Depends(get_db), user: dict 
             results.append({"rule_name": doc["_id"], "count": doc["count"]})
         return results
     except Exception as e:
-        logger.error(f"Error fetching rule stats: {e}")
-        return []
+        raise internal_error("alerts_by_rule_failed", e)
 
 @router.get("/stats/timeline")
 async def alerts_timeline(db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
@@ -185,12 +185,11 @@ async def alerts_timeline(db: AsyncIOMotorDatabase = Depends(get_db), user: dict
             results.append({"hour": hour_str, "count": doc["count"]})
         return results
     except Exception as e:
-        logger.error(f"Error fetching timeline stats: {e}")
-        return []
+        raise internal_error("alerts_timeline_failed", e)
 
 @router.get("/stats/mitre")
 async def alerts_mitre_stats(db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
-    """Returns aggregated MITRE ATT&CK techniques, tactics, hit counts, and rule coverage."""
+    """Returns aggregated MITRE ATT&CK techniques, tactics, hit counts, and rule coverage across all alerts."""
     try:
         cursor = db["alerts"].find(
             scoped_query(user, {
@@ -200,7 +199,7 @@ async def alerts_mitre_stats(db: AsyncIOMotorDatabase = Depends(get_db), user: d
                 ]
             }),
             {"_id": 1, "title": 1, "severity": 1, "mitre_technique": 1, "mitre_tactic": 1, "mitre_mappings": 1}
-        ).limit(500)
+        )
         
         tech_map = {}
         tactic_counts = {}
@@ -252,8 +251,7 @@ async def alerts_mitre_stats(db: AsyncIOMotorDatabase = Depends(get_db), user: d
             "total_mapped_alerts": total_mapped
         }
     except Exception as e:
-        logger.error(f"Error fetching MITRE stats: {e}")
-        return {"techniques": [], "tactics_summary": {}, "total_mapped_alerts": 0}
+        raise internal_error("alerts_mitre_stats_failed", e)
 
 @router.get("/{alert_id}", response_model=dict)
 async def get_alert(alert_id: str, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
@@ -394,22 +392,12 @@ async def investigate_alert(
         if not alert:
             raise HTTPException(status_code=404, detail="Alert not found")
             
-        job_id = str(uuid.uuid4())
+        enqueue_res = await enqueue_investigation_job(db, alert_id, user)
+        job_id = enqueue_res["job_id"]
         
-        await db["investigation_jobs"].insert_one({
-            "_id": job_id,
-            "alert_id": alert_id,
-            "status": "pending",
-            "created_at": datetime.now(timezone.utc)
-            ,"org_id": tenant_id(user)
-        })
-        
-        await db["alerts"].update_one(
-            scoped_query(user, {"_id": alert_id}),
-            {"$set": {"status": "Investigating"}}
-        )
-        
-        background_tasks.add_task(run_investigation_background, alert_id, job_id, db)
+        # Dispatch in background for immediate execution
+        if enqueue_res.get("status") == "success":
+            background_tasks.add_task(run_investigation_background, alert_id, job_id, db)
         
         return {
             "status": "success",

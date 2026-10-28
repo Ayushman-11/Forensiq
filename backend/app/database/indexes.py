@@ -1,6 +1,8 @@
-"""MongoDB index definitions, created idempotently at startup."""
+"""MongoDB index definitions and versioned migrations, executed idempotently at startup."""
 
 from __future__ import annotations
+
+from app.database.migrations import CURRENT_SCHEMA_VERSION, run_migrations
 
 RUNS_TTL_SECONDS = 30 * 24 * 3600
 WS_TICKETS_TTL_SECONDS = 120  # Expire unconsumed tickets after 2 minutes

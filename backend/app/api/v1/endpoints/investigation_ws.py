@@ -105,6 +105,7 @@ async def handle_websocket_investigation(
 ):
     """
     Unified WebSocket handler for streaming investigation events.
+    Defaults to observe-only (auto_start=False) to prevent accidental compute & LLM cost.
     """
     await websocket.accept()
 
@@ -172,21 +173,36 @@ async def handle_websocket_investigation(
                     "confidence": alert.get("confidence"),
                     "recommended_actions": alert.get("recommended_actions", []),
                 }
-            }))
-        elif auto_start and current_status != "Investigating":
-            # Auto-trigger pipeline if requested
+            }, default=json_serial))
+
+        elif current_status == "Investigating":
+            # Replay any in-flight steps currently buffered or persisted in DB
             await websocket.send_text(json.dumps({
                 "event": "status",
                 "data": {"status": "starting", "message": "Initiating AI graph investigation..."}
             }))
-            asyncio.create_task(
-                investigation_stream_manager.run_investigation(
-                    alert_id=alert_id,
-                    org_id=user.get("org_id", "default"),
-                )
-            )
+            history = await investigation_stream_manager.get_persisted_history(alert_id, db)
+            for historical_event in history:
+                await websocket.send_text(json.dumps(historical_event, default=json_serial))
 
-        # Message receiver loop
+        elif auto_start:
+            # Run the streaming investigation directly if auto_start was explicitly requested
+            async for _ in investigation_stream_manager.run_pipeline_stream(
+                alert_id=alert_id,
+                alert=alert,
+                db=db,
+                org_id=tenant_id(user),
+            ):
+                pass  # run_pipeline_stream broadcasts each event to all subscribers including this websocket
+
+        else:
+            # Observe-only mode: WebSocket does not spend compute automatically
+            await websocket.send_text(json.dumps({
+                "event": "status",
+                "data": {"status": "ready", "message": "Alert ready. Start investigation via POST /investigate or start command."}
+            }))
+
+        # Message receiver loop for client interaction (heartbeat ping, reinvestigate command, etc.)
         while True:
             raw_msg = await websocket.receive_text()
             try:
