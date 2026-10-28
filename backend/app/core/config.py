@@ -94,6 +94,16 @@ class Settings(BaseSettings):
         default=24,
         description="Time to live in hours for cached IOC enrichments in MongoDB"
     )
+    VT_MALICIOUS_MIN_ENGINES: int = Field(
+        default=3,
+        description="VirusTotal engines that must flag an IOC before it is rated malicious; fewer flags rate it suspicious"
+    )
+    ABUSEIPDB_MALICIOUS_MIN_SCORE: int = Field(
+        default=75, description="AbuseIPDB confidence score at or above which an IP is rated malicious"
+    )
+    ABUSEIPDB_SUSPICIOUS_MIN_SCORE: int = Field(
+        default=25, description="AbuseIPDB confidence score at or above which an IP is rated suspicious"
+    )
 
     # Ingestion pipeline
     INGEST_OVERLAP_SECONDS: int = Field(default=120, description="Re-query overlap to catch late-indexed events")

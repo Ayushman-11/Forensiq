@@ -24,8 +24,9 @@ def _compile(rule_name: str, key: str, pattern: str) -> re.Pattern:
 
 
 class NoiseFilter:
-    def __init__(self, benign_domains: list[str], rules: list[dict]) -> None:
+    def __init__(self, benign_domains: list[str], rules: list[dict], shared_hosting_domains: list[str] | None = None) -> None:
         self.benign_domains = tuple(d.lower().rstrip(".") for d in benign_domains)
+        self.shared_hosting_domains = tuple(d.lower().rstrip(".") for d in shared_hosting_domains or [])
         self.rules = rules
         self._cmd_re: dict[int, re.Pattern] = {}
         self._fields_re: dict[int, dict[str, re.Pattern]] = {}
@@ -52,7 +53,7 @@ class NoiseFilter:
 
     @classmethod
     def from_dict(cls, cfg: dict) -> "NoiseFilter":
-        return cls(cfg.get("benign_domains") or [], cfg.get("suppress") or [])
+        return cls(cfg.get("benign_domains") or [], cfg.get("suppress") or [], cfg.get("shared_hosting_domains") or [])
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "NoiseFilter":
@@ -65,6 +66,11 @@ class NoiseFilter:
     def is_benign_domain(self, domain: str) -> bool:
         d = domain.lower().rstrip(".")
         return any(d == b or d.endswith("." + b) for b in self.benign_domains)
+
+    def is_shared_hosting(self, domain: str) -> bool:
+        """Domains that serve many tenants: blocking the whole domain breaks legitimate work."""
+        d = domain.lower().rstrip(".")
+        return any(d == b or d.endswith("." + b) for b in self.shared_hosting_domains)
 
     def _matches(self, rule: dict, ev: CanonicalEvent, index: int) -> bool:
         if rule.get("event_code") and str(rule["event_code"]) != ev.event_code:

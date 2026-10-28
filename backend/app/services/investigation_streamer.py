@@ -152,10 +152,16 @@ async def finalize_and_save_investigation(
         "mitre_count": len(mitre_mappings),
     }
 
-    ai_confidence = risk_assessment.get("confidence_score", alert.get("ai_confidence", 50))
-    for e in enrichments:
-        if isinstance(e, dict) and e.get("reputation") in ["malicious", "suspicious"]:
-            ai_confidence = min(99, ai_confidence + 20)
+    # Confidence is whatever the risk engine reported; no extra boosts on top.
+    ai_confidence = risk_assessment.get("confidence_score", 0)
+    engines = {
+        "risk": risk_assessment.get("engine", "unknown"),
+        "recommendation": final_state.get("recommendation_engine") or "unknown",
+    }
+    unavailable_feeds = sorted({
+        e.get("source") for e in enrichments
+        if isinstance(e, dict) and e.get("status", "ok") != "ok" and e.get("source")
+    })
 
     alert_update = {
         "status": "Investigated",
@@ -171,6 +177,8 @@ async def finalize_and_save_investigation(
         "recommendation": recommendation,
         "correlations": correlations,
         "evidence": evidence,
+        "engines": engines,
+        "unavailable_feeds": unavailable_feeds,
     }
 
     await db["alerts"].update_one(
@@ -192,6 +200,7 @@ async def finalize_and_save_investigation(
             "recommendation": recommendation,
             "correlations": correlations,
             "evidence": evidence,
+            "engines": engines,
         }}
     )
     logger.info("investigation_completed_and_saved", job_id=job_id, alert_id=alert_id)
@@ -365,15 +374,20 @@ class InvestigationStreamManager:
 
         self.clear_history(alert_id)
 
-        # Record job in database
-        await db["investigation_jobs"].insert_one({
-            "_id": job_id,
-            "alert_id": alert_id,
-            "status": "running",
-            "created_at": datetime.now(timezone.utc),
-            "started_at": datetime.now(timezone.utc),
-            "org_id": org_id or alert.get("org_id", "default"),
-        })
+        # Record job in database. Upsert: POST /investigate creates the row before the run starts.
+        now = datetime.now(timezone.utc)
+        await db["investigation_jobs"].update_one(
+            {"_id": job_id},
+            {
+                "$set": {"status": "running", "started_at": now},
+                "$setOnInsert": {
+                    "alert_id": alert_id,
+                    "created_at": now,
+                    "org_id": org_id or alert.get("org_id", "default"),
+                },
+            },
+            upsert=True,
+        )
 
         # Update alert status
         await db["alerts"].update_one(
@@ -403,6 +417,7 @@ class InvestigationStreamManager:
             "correlations": [],
             "timeline": [],
             "recommendation": None,
+            "recommendation_engine": None,
         }
 
         accumulated_state = dict(initial_state)
