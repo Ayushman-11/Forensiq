@@ -62,7 +62,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     { href: "/raw-logs", icon: Terminal, label: "Raw Logs", badge: "SPL" },
     { href: "/reports", icon: FileText, label: "Reports", badge: null },
     { href: "/admin", icon: Settings, label: "Administration", badge: null },
-  ];
+  ].filter((item) => item.href !== "/admin" || user?.role === "admin");
 
   const userEmail = user?.email || "";
   const userRole = user ? roleLabel(user.role) : "";

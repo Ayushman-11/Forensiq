@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import MitreMatrix from "@/components/mitre/MitreMatrix";
+import SocMetricsPanel from "@/components/triage/SocMetricsPanel";
 import { STATE_COLOR, STATE_LABEL, useSystemHealth, type ComponentState } from "@/lib/health";
 
 type Metrics = {
@@ -69,6 +70,7 @@ export default function DashboardPage() {
   const [ingesting, setIngesting] = useState(false);
   const [ingestMsg, setIngestMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   const { health, unreachable: healthUnreachable, refresh: refreshHealth } = useSystemHealth();
 
   const load = useCallback(async (isSilent = false) => {
@@ -77,7 +79,7 @@ export default function DashboardPage() {
       setError(null);
       const [metricsRes, alertsRes, timelineRes] = await Promise.all([
         apiFetch("/api/v1/dashboard/metrics"),
-        apiFetch("/api/v1/alerts?limit=6&status=New"),
+        apiFetch("/api/v1/alerts?limit=6&status=open&assignee=unassigned&sort=severity"),
         apiFetch("/api/v1/alerts/stats/timeline"),
       ]);
 
@@ -89,6 +91,7 @@ export default function DashboardPage() {
       setAlerts((await alertsRes.json()) as Alert[]);
       setTimeline((await timelineRes.json()) as TimelinePoint[]);
       void refreshHealth();
+      setRefreshKey((k) => k + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load SOC telemetry data");
     } finally {
@@ -195,7 +198,7 @@ export default function DashboardPage() {
           title="Open Critical + High"
           value={metrics?.high_priority_alerts}
           semanticColor="#F59E0B"
-          subtext="New or investigating"
+          subtext="Not yet closed or suppressed"
         />
         <KPICard
           title="Active Investigations"
@@ -210,6 +213,8 @@ export default function DashboardPage() {
           subtext={metrics ? `Out of ${metrics.total_alerts} ingested` : "Unavailable"}
         />
       </section>
+
+      <SocMetricsPanel refreshKey={refreshKey} />
 
       {/* Grid: Alert Activity Chart & System Health */}
       <section className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
@@ -303,22 +308,22 @@ export default function DashboardPage() {
           <div>
             <div className="pb-3 border-b border-[var(--border-color)] flex items-center justify-between">
               <div>
-                <h2 className="text-sm font-semibold text-[var(--text-primary)]">New Detections Pending Triage</h2>
-                <p className="text-xs text-[var(--text-muted)]">Real-time incoming alerts from SIEM poller and multi-agent pipeline</p>
+                <h2 className="text-sm font-semibold text-[var(--text-primary)]">Unassigned open alerts</h2>
+                <p className="text-xs text-[var(--text-muted)]">Highest severity first. Pick one up from the queue.</p>
               </div>
-              <Link href="/alerts" className="button-secondary text-xs flex items-center gap-1.5 cursor-pointer">
+              <Link href="/alerts?view=unassigned" className="button-secondary text-xs flex items-center gap-1.5 cursor-pointer">
                 <span>View Full Alerts Queue</span> <ArrowRight className="w-3 h-3" />
               </Link>
             </div>
 
             <div className="mt-3 divide-y divide-[var(--border-color)]">
               {alerts.length === 0 ? (
-                <p className="text-xs text-[var(--text-muted)] py-6 text-center">No pending alerts in queue</p>
+                <p className="text-xs text-[var(--text-muted)] py-6 text-center">No unassigned open alerts</p>
               ) : (
                 alerts.slice(0, 4).map((a) => (
                   <Link
                     key={a._id}
-                    href={`/alerts?alert=${encodeURIComponent(a._id)}`}
+                    href={`/alerts/${encodeURIComponent(a._id)}`}
                     className="py-2.5 flex items-center justify-between text-xs hover:bg-[var(--surface-hover)] px-1 rounded transition-colors group"
                   >
                     <div className="flex items-center gap-2 min-w-0">

@@ -17,11 +17,19 @@ from app.models.alert import AlertModel
 from app.services.ingestion import IngestionService
 from app.agents.graph import investigation_graph
 from app.core.logging import logger
+from app.core.timeutil import iso_utc
 from app.core.errors import internal_error, new_request_id
 from app.api.deps import require_roles, get_current_user
 from app.core.tenancy import scoped_query, tenant_filter, tenant_id
 from app.services.audit import record_audit
 from app.services.correlation import correlate_alert
+from app.services.triage import (
+    OPEN_STATUSES,
+    TriageError,
+    apply_disposition,
+    assign_alert,
+    sla_state,
+)
 from app.services.investigation_streamer import (
     investigation_stream_manager,
     finalize_and_save_investigation as _finalize_and_save_investigation,
@@ -31,8 +39,39 @@ from app.services.investigation_streamer import (
 router = APIRouter()
 
 class DispositionRequest(BaseModel):
-    action: Literal["close", "escalate", "suppress"]
+    action: Literal["close", "escalate", "suppress", "reopen"]
+    verdict: Optional[Literal["true_positive", "benign_true_positive", "false_positive", "duplicate"]] = None
     note: Optional[str] = Field(default=None, max_length=5000)
+
+
+class AssignRequest(BaseModel):
+    assignee_id: Optional[str] = Field(default=None, max_length=100)
+
+
+class BulkRequest(BaseModel):
+    alert_ids: List[str] = Field(min_length=1, max_length=200)
+    action: Literal["assign", "close", "escalate", "suppress", "reopen"]
+    verdict: Optional[Literal["true_positive", "benign_true_positive", "false_positive", "duplicate"]] = None
+    note: Optional[str] = Field(default=None, max_length=5000)
+    assignee_id: Optional[str] = Field(default=None, max_length=100)
+
+
+SORTS = {
+    "newest": [("_detected", -1)],
+    "oldest": [("_detected", 1)],
+    "severity": [("_sev_rank", -1), ("_detected", -1)],
+    "risk": [("risk_score", -1), ("_detected", -1)],
+}
+SEVERITY_RANK = {"$switch": {"branches": [
+    {"case": {"$eq": ["$severity", "critical"]}, "then": 4},
+    {"case": {"$eq": ["$severity", "high"]}, "then": 3},
+    {"case": {"$eq": ["$severity", "medium"]}, "then": 2},
+    {"case": {"$eq": ["$severity", "low"]}, "then": 1},
+], "default": 0}}
+
+
+def _triage_error(exc: TriageError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail=exc.detail)
 
 class NoteRequest(BaseModel):
     content: str = Field(min_length=1, max_length=5000)
@@ -48,36 +87,52 @@ async def list_alerts(
     limit: int = Query(50, ge=1, le=200),
     severity: str = Query(None, description="Filter by severity"),
     status: str = Query(None, description="Filter by status"),
-    search: str = Query(None, max_length=100, description="Search in title or host"),
+    search: str = Query(None, max_length=100, description="Search title, host, user, rule, DNS query or ATT&CK technique"),
+    assignee: str = Query(None, max_length=100, description="'me', 'unassigned' or a user id"),
+    sort: Literal["newest", "oldest", "severity", "risk"] = Query("newest"),
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    """Fetches recent alerts from MongoDB with optional filtering."""
+    """Fetches alerts with optional filtering. status=open means every not-yet-resolved status."""
     conditions = []
+    if assignee == "me":
+        conditions.append({"assignee_id": user.get("id")})
+    elif assignee == "unassigned":
+        conditions.append({"assignee_id": {"$in": [None]}})
+    elif assignee:
+        conditions.append({"assignee_id": assignee})
     if severity and severity.lower() != "all":
         if severity.lower() not in VALID_SEVERITIES:
             raise HTTPException(status_code=422, detail=f"severity must be one of {sorted(VALID_SEVERITIES)} or 'all'")
         conditions.append({"severity": severity.lower()})
-    if status and status.lower() != "all":
+    if status and status.lower() == "open":
+        conditions.append({"status": {"$in": list(OPEN_STATUSES)}})
+    elif status and status.lower() != "all":
         canonical = VALID_STATUSES.get(status.lower())
         if canonical is None:
-            raise HTTPException(status_code=422, detail=f"status must be one of {sorted(VALID_STATUSES.values())} or 'all'")
+            raise HTTPException(status_code=422, detail=f"status must be one of {sorted(VALID_STATUSES.values())}, 'open' or 'all'")
         conditions.append({"status": canonical})
     if search:
         pattern = re.escape(search)
         conditions.append({"$or": [
-            {"title": {"$regex": pattern, "$options": "i"}},
-            {"host": {"$regex": pattern, "$options": "i"}},
+            {field: {"$regex": pattern, "$options": "i"}}
+            for field in ("title", "host", "user", "rule_name", "dns_query", "mitre_technique", "mitre_mappings.technique")
         ]})
     try:
         alerts = []
-        cursor = db["alerts"].find(scoped_query(user, *conditions), {"raw_events": 0}).sort("created_at", -1).limit(limit)
-        async for document in cursor:
-            # Convert _id to string if it isn't already, ensure serializable
+        pipeline = [
+            {"$match": scoped_query(user, *conditions)},
+            {"$addFields": {"_detected": {"$ifNull": ["$detected_at", "$created_at"]}, "_sev_rank": SEVERITY_RANK}},
+            {"$sort": dict(SORTS[sort])},
+            {"$limit": limit},
+            {"$project": {"raw_events": 0, "_sev_rank": 0, "_detected": 0}},
+        ]
+        async for document in db["alerts"].aggregate(pipeline):
             document["_id"] = str(document["_id"])
-            # Format datetime
-            if "created_at" in document and isinstance(document["created_at"], datetime):
-                document["created_at"] = document["created_at"].isoformat()
+            document["sla"] = sla_state(document)
+            for key in ("created_at", "detected_at", "acknowledged_at", "resolved_at", "assigned_at", "updated_at"):
+                if isinstance(document.get(key), datetime):
+                    document[key] = iso_utc(document[key])
             alerts.append(document)
         return alerts
     except Exception as e:
@@ -210,9 +265,11 @@ async def get_alert(alert_id: str, db: AsyncIOMotorDatabase = Depends(get_db), u
         
         # Ensure proper serialization
         alert["_id"] = str(alert["_id"])
-        if "created_at" in alert and isinstance(alert["created_at"], datetime):
-            alert["created_at"] = alert["created_at"].isoformat()
-            
+        alert["sla"] = sla_state(alert)
+        for key in ("created_at", "detected_at", "acknowledged_at", "resolved_at", "assigned_at", "updated_at", "escalated_at"):
+            if isinstance(alert.get(key), datetime):
+                alert[key] = iso_utc(alert[key])
+
         return alert
     except HTTPException:
         raise
@@ -343,7 +400,7 @@ async def investigate_alert(
             "_id": job_id,
             "alert_id": alert_id,
             "status": "pending",
-            "created_at": datetime.utcnow()
+            "created_at": datetime.now(timezone.utc)
             ,"org_id": tenant_id(user)
         })
         
@@ -385,7 +442,7 @@ async def get_investigation_status(job_id: str, db: AsyncIOMotorDatabase = Depen
         job["_id"] = str(job["_id"])
         for key in ["created_at", "started_at", "completed_at"]:
             if key in job and isinstance(job[key], datetime):
-                job[key] = job[key].isoformat()
+                job[key] = iso_utc(job[key])
                 
         return _sanitize_job(job)
     except HTTPException:
@@ -401,27 +458,51 @@ async def investigation_history(alert_id: str, db: AsyncIOMotorDatabase = Depend
     async for job in db["investigation_jobs"].find(scoped_query(user, {"alert_id": alert_id})).sort("created_at", -1).limit(20):
         job["_id"] = str(job["_id"])
         for key in ("created_at", "started_at", "completed_at"):
-            if isinstance(job.get(key), datetime): job[key] = job[key].isoformat()
+            if isinstance(job.get(key), datetime): job[key] = iso_utc(job[key])
         jobs.append(_sanitize_job(job))
     return jobs
 
+@router.post("/bulk")
+async def bulk_action(payload: BulkRequest, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
+    """Apply one action to many alerts. Each alert is checked on its own; failures do not stop the rest."""
+    results = []
+    for alert_id in dict.fromkeys(payload.alert_ids):  # de-duplicate, keep order
+        try:
+            if payload.action == "assign":
+                await assign_alert(db, user, alert_id, payload.assignee_id)
+            else:
+                await apply_disposition(db, user, alert_id, payload.action, payload.verdict, payload.note)
+            results.append({"alert_id": alert_id, "ok": True})
+        except TriageError as exc:
+            results.append({"alert_id": alert_id, "ok": False, "status_code": exc.status_code, "error": exc.detail})
+    return {"succeeded": sum(r["ok"] for r in results), "failed": sum(not r["ok"] for r in results), "results": results}
+
+
 @router.patch("/{alert_id:path}/disposition")
 async def set_disposition(alert_id: str, payload: DispositionRequest, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
-    statuses = {"close": "Closed", "escalate": "Escalated", "suppress": "Suppressed"}
-    update = {"status": statuses[payload.action], "disposition": payload.action, "updated_at": datetime.utcnow()}
-    if payload.note: update["disposition_note"] = payload.note
-    result = await db["alerts"].update_one(scoped_query(user, {"_id": alert_id}), {"$set": update})
-    if not result.matched_count: raise HTTPException(status_code=404, detail="Alert not found")
-    await record_audit(db, user, f"alert.{payload.action}", "alert", alert_id, {"note": payload.note} if payload.note else {})
-    return {"status": update["status"], "alert_id": alert_id}
+    try:
+        return await apply_disposition(db, user, alert_id, payload.action, payload.verdict, payload.note)
+    except TriageError as exc:
+        raise _triage_error(exc)
+
+
+@router.patch("/{alert_id:path}/assignee")
+async def set_assignee(alert_id: str, payload: AssignRequest, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
+    try:
+        return await assign_alert(db, user, alert_id, payload.assignee_id)
+    except TriageError as exc:
+        raise _triage_error(exc)
 
 @router.post("/{alert_id:path}/notes")
 async def add_note(alert_id: str, payload: NoteRequest, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
     if not await db["alerts"].find_one(scoped_query(user, {"_id": alert_id}), {"_id": 1}): raise HTTPException(status_code=404, detail="Alert not found")
-    note = {"_id": str(uuid.uuid4()), "org_id": tenant_id(user), "alert_id": alert_id, "content": payload.content, "author_email": user.get("email"), "created_at": datetime.utcnow()}
+    now = datetime.now(timezone.utc)
+    note = {"_id": str(uuid.uuid4()), "org_id": tenant_id(user), "alert_id": alert_id, "content": payload.content, "author_email": user.get("email"), "created_at": now}
     await db["alert_notes"].insert_one(note)
+    # A note is a human touching the alert: it starts the acknowledge clock if nothing else has.
+    await db["alerts"].update_one(scoped_query(user, {"_id": alert_id, "acknowledged_at": {"$exists": False}}), {"$set": {"acknowledged_at": now}})
     await record_audit(db, user, "alert.note_added", "alert", alert_id, {"note_id": note["_id"]})
-    note["created_at"] = note["created_at"].isoformat()
+    note["created_at"] = iso_utc(note["created_at"])
     return note
 
 @router.get("/{alert_id:path}/notes")
@@ -429,7 +510,7 @@ async def list_notes(alert_id: str, db: AsyncIOMotorDatabase = Depends(get_db), 
     notes = []
     async for note in db["alert_notes"].find(scoped_query(user, {"alert_id": alert_id})).sort("created_at", 1):
         note["_id"] = str(note["_id"])
-        if isinstance(note.get("created_at"), datetime): note["created_at"] = note["created_at"].isoformat()
+        if isinstance(note.get("created_at"), datetime): note["created_at"] = iso_utc(note["created_at"])
         notes.append(note)
     return notes
 
@@ -438,7 +519,7 @@ async def list_audit(alert_id: str, db: AsyncIOMotorDatabase = Depends(get_db), 
     logs = []
     async for entry in db["audit_logs"].find(scoped_query(user, {"entity_type": "alert", "entity_id": alert_id})).sort("created_at", -1).limit(100):
         entry["_id"] = str(entry["_id"])
-        if isinstance(entry.get("created_at"), datetime): entry["created_at"] = entry["created_at"].isoformat()
+        if isinstance(entry.get("created_at"), datetime): entry["created_at"] = iso_utc(entry["created_at"])
         logs.append(entry)
     return logs
 

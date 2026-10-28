@@ -15,6 +15,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.agents.graph import investigation_graph
 from app.services.correlation import correlate_alert
+from app.core.timeutil import iso_utc
 from app.core.logging import logger
 from app.core.errors import new_request_id
 
@@ -61,7 +62,7 @@ STEP_DEFINITIONS = {
 def json_serial(obj: Any) -> Any:
     """JSON serializer for objects not serializable by default."""
     if isinstance(obj, datetime):
-        return obj.isoformat()
+        return iso_utc(obj)
     if hasattr(obj, "__str__") and type(obj).__name__ == "ObjectId":
         return str(obj)
     return str(obj)
@@ -74,7 +75,7 @@ def serialize_data(data: Any) -> Any:
     if isinstance(data, (list, tuple, set)):
         return [serialize_data(x) for x in data]
     if isinstance(data, datetime):
-        return data.isoformat()
+        return iso_utc(data)
     if hasattr(data, "__str__") and type(data).__name__ == "ObjectId":
         return str(data)
     return data

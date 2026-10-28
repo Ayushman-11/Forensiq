@@ -13,6 +13,10 @@ export type AlertRecord = {
   source_ip?: string; dest_ip?: string; dest_port?: string | number; protocol?: string;
   registry_key?: string; registry_details?: string; dns_query?: string; hashes?: string;
   engines?: Engines; unavailable_feeds?: string[];
+  detected_at?: string; acknowledged_at?: string; resolved_at?: string; resolved_by?: string;
+  assignee_id?: string; assignee_email?: string; verdict?: string; disposition?: string; disposition_note?: string;
+  sla?: { ack_due: string; resolve_due: string; ack_breached: boolean; resolve_breached: boolean } | null;
+  risk_assessment?: { risk_score?: number; priority?: string; confidence_score?: number; reasoning?: string; blast_radius?: string; engine?: string };
 };
 export type InvestigationJob = { _id: string; status: string; created_at?: string; completed_at?: string; recommendation?: string; risk_assessment?: { risk_score?: number; priority?: string; confidence_score?: number } };
 
