@@ -59,6 +59,9 @@ export default function AlertsPage() {
   const [sort, setSort] = useState(searchParams.get("sort") ?? "severity");
   const [alerts, setAlerts] = useState<AlertRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [totalCount, setTotalCount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [cursor, setCursor] = useState(0);
@@ -68,6 +71,8 @@ export default function AlertsPage() {
   const [busy, setBusy] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
   const searchRef = useRef<HTMLInputElement | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
 
   const view = VIEWS.find((v) => v.key === viewKey) ?? VIEWS[2];
 
@@ -79,13 +84,18 @@ export default function AlertsPage() {
 
   const load = useCallback(async () => {
     try {
+      setLoading(true);
       setError(null);
-      const p = new URLSearchParams({ limit: "200", sort, status: view.status });
+      const p = new URLSearchParams({ limit: "50", sort, status: view.status });
       if (view.assignee) p.set("assignee", view.assignee);
       if (search.trim()) p.set("search", search.trim());
       if (severity !== "All") p.set("severity", severity);
       const r = await apiFetch(`/api/v1/alerts?${p}`);
       if (!r.ok) throw new Error("Unable to load alert queue");
+      const cursorHeader = r.headers.get("X-Next-Cursor");
+      const totalHeader = r.headers.get("X-Total-Count");
+      setNextCursor(cursorHeader || null);
+      setTotalCount(totalHeader ? parseInt(totalHeader, 10) : null);
       const next = (await r.json()) as AlertRecord[];
       setAlerts(next);
       setSelected((prev) => new Set([...prev].filter((id) => next.some((a) => a._id === id))));
@@ -96,6 +106,29 @@ export default function AlertsPage() {
       setLoading(false);
     }
   }, [search, severity, sort, view.assignee, view.status]);
+
+  const loadMore = useCallback(async () => {
+    if (!nextCursor || loadingMore) return;
+    try {
+      setLoadingMore(true);
+      const p = new URLSearchParams({ limit: "50", sort, status: view.status, cursor: nextCursor });
+      if (view.assignee) p.set("assignee", view.assignee);
+      if (search.trim()) p.set("search", search.trim());
+      if (severity !== "All") p.set("severity", severity);
+      const r = await apiFetch(`/api/v1/alerts?${p}`);
+      if (!r.ok) throw new Error("Unable to load more alerts");
+      const cursorHeader = r.headers.get("X-Next-Cursor");
+      const totalHeader = r.headers.get("X-Total-Count");
+      setNextCursor(cursorHeader || null);
+      if (totalHeader) setTotalCount(parseInt(totalHeader, 10));
+      const more = (await r.json()) as AlertRecord[];
+      setAlerts((prev) => [...prev, ...more]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load additional alerts");
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [nextCursor, loadingMore, search, severity, sort, view.assignee, view.status]);
 
   useEffect(() => {
     const t = setTimeout(() => void load(), search ? 250 : 0);
@@ -195,6 +228,16 @@ export default function AlertsPage() {
 
   const selectedAlerts = alerts.filter((a) => selected.has(a._id));
 
+  const ROW_HEIGHT = 56;
+  const OVERSCAN = 6;
+  const VIEWPORT_HEIGHT = 650;
+
+  const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+  const endIndex = Math.min(alerts.length, Math.ceil((scrollTop + VIEWPORT_HEIGHT) / ROW_HEIGHT) + OVERSCAN);
+  const topSpacer = startIndex * ROW_HEIGHT;
+  const bottomSpacer = Math.max(0, (alerts.length - endIndex) * ROW_HEIGHT);
+  const visibleAlerts = alerts.slice(startIndex, endIndex);
+
   return (
     <div className="mx-auto flex max-w-[1520px] flex-col gap-4 pb-12">
       <header className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--border-color)] pb-4">
@@ -288,7 +331,7 @@ export default function AlertsPage() {
           </select>
         </label>
         <div className="flex items-center gap-3 text-xs font-mono border-l border-[var(--border-color)] pl-3">
-          <span className="text-[var(--text-muted)]">{alerts.length} shown</span>
+          <span className="text-[var(--text-muted)]">{alerts.length}{totalCount ? ` / ${totalCount}` : ""} shown</span>
           <span className="text-[#EF4444] font-semibold">{counts.critical} critical</span>
           <span className="text-[#F59E0B] font-semibold">{counts.high} high</span>
           {counts.breached > 0 && <span className="text-[#EF4444]">{counts.breached} SLA overdue</span>}
@@ -335,9 +378,13 @@ export default function AlertsPage() {
 
       {/* Table */}
       <section className="card overflow-hidden">
-        <div className="overflow-x-auto">
+        <div
+          ref={scrollContainerRef}
+          onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+          className="overflow-x-auto overflow-y-auto max-h-[650px]"
+        >
           <table className="w-full text-left border-collapse min-w-[900px]">
-            <thead>
+            <thead className="sticky top-0 z-10">
               <tr className="border-b border-[var(--border-color)] bg-[var(--surface-secondary)] text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">
                 <th className="py-2.5 pl-4 w-8">
                   <input
@@ -357,7 +404,7 @@ export default function AlertsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border-color)] text-xs">
-              {loading ? (
+              {loading && alerts.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-12 text-center text-[var(--text-muted)]">
                     <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" /> Loading alert queue…
@@ -370,49 +417,75 @@ export default function AlertsPage() {
                   </td>
                 </tr>
               ) : (
-                alerts.map((a, i) => {
-                  const detail = distinguishing(a);
-                  const href = `/alerts/${encodeURIComponent(a._id)}`;
-                  return (
-                    <tr
-                      key={a._id}
-                      id={`alert-row-${i}`}
-                      onClick={() => {
-                        setCursor(i);
-                        router.push(href);
-                      }}
-                      className={`cursor-pointer ${i === cursor ? "outline outline-1 -outline-offset-1 outline-[var(--text-muted)]" : ""} ${
-                        selected.has(a._id) ? "bg-[var(--sidebar-active-bg)]" : "hover:bg-[var(--surface-hover)]"
-                      }`}
-                    >
-                      <td className="py-3 pl-4" onClick={(e) => e.stopPropagation()}>
-                        <input type="checkbox" checked={selected.has(a._id)} onChange={() => toggle(a._id)} aria-label={`Select ${cleanTitle(a.title)}`} />
-                      </td>
-                      <td className="py-3 px-3"><SeverityBadge severity={a.severity} /></td>
-                      <td className="py-3 px-3 max-w-0">
-                        <Link href={href} onClick={(e) => e.stopPropagation()} className="font-semibold text-[var(--text-primary)] block truncate hover:underline">
-                          {cleanTitle(a.title)}
-                        </Link>
-                        <span className="block truncate font-mono text-[10px] text-[var(--text-muted)]" title={detail}>
-                          {a.rule_name}{detail ? ` · ${detail}` : ""}
-                        </span>
-                      </td>
-                      <td className="py-3 px-3 font-mono text-[var(--text-secondary)] truncate">{a.host || "—"}</td>
-                      <td className="py-3 px-3 truncate text-[var(--text-secondary)]">
-                        {a.assignee_email ? (a.assignee_id === user?.sub ? "You" : a.assignee_email) : <span className="text-[var(--text-muted)]">Unassigned</span>}
-                      </td>
-                      <td className="py-3 px-3"><SlaBadge alert={a} /></td>
-                      <td className="py-3 px-3"><StatusBadge alert={a} /></td>
-                      <td className="py-3 px-3 font-mono text-[var(--text-muted)] whitespace-nowrap" title={a.detected_at ? new Date(a.detected_at).toLocaleString() : undefined}>
-                        {relativeTime(a.detected_at ?? a.created_at)}
-                      </td>
+                <>
+                  {topSpacer > 0 && (
+                    <tr style={{ height: `${topSpacer}px` }} aria-hidden="true">
+                      <td colSpan={8} />
                     </tr>
-                  );
-                })
+                  )}
+                  {visibleAlerts.map((a, relIdx) => {
+                    const i = startIndex + relIdx;
+                    const detail = distinguishing(a);
+                    const href = `/alerts/${encodeURIComponent(a._id)}`;
+                    return (
+                      <tr
+                        key={a._id}
+                        id={`alert-row-${i}`}
+                        onClick={() => {
+                          setCursor(i);
+                          router.push(href);
+                        }}
+                        className={`cursor-pointer ${i === cursor ? "outline outline-1 -outline-offset-1 outline-[var(--text-muted)]" : ""} ${
+                          selected.has(a._id) ? "bg-[var(--sidebar-active-bg)]" : "hover:bg-[var(--surface-hover)]"
+                        }`}
+                        style={{ height: `${ROW_HEIGHT}px` }}
+                      >
+                        <td className="py-3 pl-4" onClick={(e) => e.stopPropagation()}>
+                          <input type="checkbox" checked={selected.has(a._id)} onChange={() => toggle(a._id)} aria-label={`Select ${cleanTitle(a.title)}`} />
+                        </td>
+                        <td className="py-3 px-3"><SeverityBadge severity={a.severity} /></td>
+                        <td className="py-3 px-3 max-w-0">
+                          <Link href={href} onClick={(e) => e.stopPropagation()} className="font-semibold text-[var(--text-primary)] block truncate hover:underline">
+                            {cleanTitle(a.title)}
+                          </Link>
+                          <span className="block truncate font-mono text-[10px] text-[var(--text-muted)]" title={detail}>
+                            {a.rule_name}{detail ? ` · ${detail}` : ""}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 font-mono text-[var(--text-secondary)] truncate">{a.host || "—"}</td>
+                        <td className="py-3 px-3 truncate text-[var(--text-secondary)]">
+                          {a.assignee_email ? (a.assignee_id === user?.sub ? "You" : a.assignee_email) : <span className="text-[var(--text-muted)]">Unassigned</span>}
+                        </td>
+                        <td className="py-3 px-3"><SlaBadge alert={a} /></td>
+                        <td className="py-3 px-3"><StatusBadge alert={a} /></td>
+                        <td className="py-3 px-3 font-mono text-[var(--text-muted)] whitespace-nowrap" title={a.detected_at ? new Date(a.detected_at).toLocaleString() : undefined}>
+                          {relativeTime(a.detected_at ?? a.created_at)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {bottomSpacer > 0 && (
+                    <tr style={{ height: `${bottomSpacer}px` }} aria-hidden="true">
+                      <td colSpan={8} />
+                    </tr>
+                  )}
+                </>
               )}
             </tbody>
           </table>
         </div>
+        {nextCursor && (
+          <div className="p-3 border-t border-[var(--border-color)] flex justify-center bg-[var(--surface-secondary)]">
+            <button
+              onClick={() => void loadMore()}
+              disabled={loadingMore}
+              className="button-secondary text-xs flex items-center gap-2"
+            >
+              {loadingMore ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+              <span>{loadingMore ? "Loading more alerts…" : `Load more (${alerts.length}${totalCount ? ` of ${totalCount}` : ""})`}</span>
+            </button>
+          </div>
+        )}
       </section>
 
       {dialog && (

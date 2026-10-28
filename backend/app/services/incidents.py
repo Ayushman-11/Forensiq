@@ -26,8 +26,77 @@ from typing import Iterable, Optional
 
 from app.core.config import settings
 from app.normalization.noise import NoiseFilter
+from app.services.triage import OPEN_STATUSES
 
 SEVERITY_RANK = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+
+
+async def update_incident_counters(db, incident_id: str) -> None:
+    """Computes and stores open/closed counters, state and assignees directly on the incident document."""
+    if not incident_id:
+        return
+    pipeline = [
+        {"$match": {"incident_id": incident_id}},
+        {"$group": {
+            "_id": "$status",
+            "count": {"$sum": 1},
+            "unassigned_open": {
+                "$sum": {
+                    "$cond": [
+                        {"$and": [
+                            {"$in": ["$status", list(OPEN_STATUSES)]},
+                            {"$or": [{"$eq": ["$assignee_id", None]}, {"$eq": ["$assignee_id", ""]}]}
+                        ]},
+                        1, 0
+                    ]
+                }
+            },
+            "owners": {
+                "$addToSet": {
+                    "$cond": [
+                        {"$and": [{"$in": ["$status", list(OPEN_STATUSES)]}, {"$ne": ["$assignee_email", None]}]},
+                        "$assignee_email",
+                        None
+                    ]
+                }
+            }
+        }}
+    ]
+    by_status: dict[str, int] = {}
+    unassigned_open = 0
+    owners: set[str] = set()
+    async for doc in db["alerts"].aggregate(pipeline):
+        st = doc["_id"] or "New"
+        by_status[st] = doc["count"]
+        unassigned_open += doc.get("unassigned_open", 0)
+        for o in doc.get("owners", []):
+            if o:
+                owners.add(o)
+
+    open_count = sum(cnt for st, cnt in by_status.items() if st in OPEN_STATUSES)
+    total_count = sum(by_status.values())
+    state = "open" if open_count > 0 else "resolved"
+    owner = next(iter(owners)) if len(owners) == 1 and not unassigned_open else None
+    mixed_owners = len(owners) > 1 or (len(owners) == 1 and unassigned_open > 0)
+
+    inc = await db["incidents"].find_one({"_id": incident_id}, {"severity": 1})
+    sev = inc.get("severity", "low") if inc else "low"
+    sev_rank = SEVERITY_RANK.get(sev, 1)
+
+    await db["incidents"].update_one(
+        {"_id": incident_id},
+        {"$set": {
+            "status_counts": by_status,
+            "open_count": open_count,
+            "alert_count": total_count,
+            "unassigned_open": unassigned_open,
+            "owner": owner,
+            "mixed_owners": mixed_owners,
+            "state": state,
+            "severity_rank": sev_rank,
+            "updated_at": datetime.now(timezone.utc),
+        }}
+    )
 
 _HASH_RE = re.compile(r"^(?:[0-9a-f]{32}|[0-9a-f]{40}|[0-9a-f]{64})$")
 _IPV4_RE = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
@@ -104,11 +173,19 @@ async def link_alert(db, alert: dict, noise: Optional[NoiseFilter] = None) -> Op
         "rules": [alert["rule_name"]] if alert.get("rule_name") else [],
     }
 
+    status = alert.get("status", "New")
+    is_open = 1 if status in OPEN_STATUSES else 0
+    sev_rank = SEVERITY_RANK.get(severity, 1)
+
     if not candidates:
         incident_id = str(uuid.uuid4())
         await db["incidents"].insert_one({
             "_id": incident_id, "org_id": org, "keys": keys, "first_seen": when, "last_seen": when,
-            "severity": severity, "alert_count": 1, "created_at": datetime.now(timezone.utc),
+            "severity": severity, "severity_rank": sev_rank, "alert_count": 1, "open_count": is_open,
+            "status_counts": {status: 1}, "state": "open" if is_open else "resolved",
+            "unassigned_open": is_open if not alert.get("assignee_id") else 0,
+            "owner": alert.get("assignee_email") if is_open and alert.get("assignee_email") else None,
+            "created_at": datetime.now(timezone.utc),
             **fields,
         })
     else:
@@ -132,11 +209,12 @@ async def link_alert(db, alert: dict, noise: Optional[NoiseFilter] = None) -> Op
             await db["incidents"].delete_one({"_id": other["_id"]})
         await db["incidents"].update_one({"_id": incident_id}, {"$set": {
             "keys": sorted(merged_keys), "first_seen": first_seen, "last_seen": last_seen,
-            "severity": top, "alert_count": count,
+            "severity": top, "severity_rank": SEVERITY_RANK.get(top, 1), "alert_count": count,
             **{name: sorted(values) for name, values in merged.items()},
         }})
 
     await db["alerts"].update_one({"_id": alert_id}, {"$set": {"incident_id": incident_id}})
+    await update_incident_counters(db, incident_id)
     return incident_id
 
 
@@ -157,9 +235,11 @@ async def rebuild_incidents(db, org_id: str, noise: Optional[NoiseFilter] = None
     await db["alerts"].update_many(tenant, {"$unset": {"incident_id": ""}})
     alerts = []
     projection = {"org_id": 1, "host": 1, "user": 1, "severity": 1, "rule_name": 1, "extracted_iocs": 1,
-                  "first_seen": 1, "created_at": 1, "detected_at": 1}
+                  "first_seen": 1, "created_at": 1, "detected_at": 1, "status": 1, "assignee_id": 1, "assignee_email": 1}
     async for alert in db["alerts"].find(tenant, projection):
         alert.setdefault("org_id", org_id)
         alerts.append(alert)
     linked = await link_alerts(db, alerts, noise)
+    async for inc in db["incidents"].find(tenant, {"_id": 1}):
+        await update_incident_counters(db, inc["_id"])
     return {"alerts": len(alerts), "linked": linked, "incidents": await db["incidents"].count_documents(tenant)}

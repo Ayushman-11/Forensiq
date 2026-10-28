@@ -177,8 +177,31 @@ async def test_only_managers_can_rebuild_and_it_is_audited(db):
     assert (await db["audit_logs"].find_one({"action": "incidents.rebuilt"}))["metadata"]["alerts"] == 2
 
 
+
 @pytest.mark.asyncio
 async def test_alert_queue_can_filter_by_incident(db):
     ids = await group(db, alert(1), alert(2, host="h9", user="x", minutes=1))
     r = await api(db, ANALYST, "GET", f"/alerts/?incident={ids['a1']}&status=all", alerts_module.router, "/alerts")
     assert [a["_id"] for a in r.json()] == ["a1"]
+
+
+@pytest.mark.asyncio
+async def test_incidents_pagination_and_headers(db):
+    # Create 5 distinct incidents
+    alerts_to_group = [alert(i, host=f"host-{i}", user=f"user-{i}", minutes=i) for i in range(1, 6)]
+    await group(db, *alerts_to_group)
+
+    # Fetch page 1 (2 items)
+    r1 = await api(db, ANALYST, "GET", "/incidents?limit=2&skip=0", incidents_module.router, "/incidents")
+    assert r1.status_code == 200
+    p1 = r1.json()
+    assert len(p1) == 2
+    assert r1.headers.get("x-next-cursor") is not None
+
+    # Fetch page 2 (2 items)
+    r2 = await api(db, ANALYST, "GET", "/incidents?limit=2&skip=2", incidents_module.router, "/incidents")
+    assert r2.status_code == 200
+    p2 = r2.json()
+    assert len(p2) == 2
+    # Ensure distinct from page 1
+    assert {i["id"] for i in p1}.isdisjoint({i["id"] for i in p2})

@@ -77,19 +77,25 @@ export default function DashboardPage() {
     try {
       if (!isSilent) setRefreshing(true);
       setError(null);
-      const [metricsRes, alertsRes, timelineRes] = await Promise.all([
-        apiFetch("/api/v1/dashboard/metrics"),
-        apiFetch("/api/v1/alerts?limit=6&status=open&assignee=unassigned&sort=severity"),
-        apiFetch("/api/v1/alerts/stats/timeline"),
-      ]);
-
-      if (!metricsRes.ok || !alertsRes.ok || !timelineRes.ok) {
-        throw new Error("Unable to load SOC telemetry data");
+      const summaryRes = await apiFetch("/api/v1/dashboard/summary");
+      if (summaryRes.ok) {
+        const summary = await summaryRes.json();
+        setMetrics(summary.metrics as Metrics);
+        setAlerts(summary.recent_alerts as Alert[]);
+        setTimeline(summary.timeline as TimelinePoint[]);
+      } else {
+        const [metricsRes, alertsRes, timelineRes] = await Promise.all([
+          apiFetch("/api/v1/dashboard/metrics"),
+          apiFetch("/api/v1/alerts?limit=6&status=open&assignee=unassigned&sort=severity"),
+          apiFetch("/api/v1/alerts/stats/timeline"),
+        ]);
+        if (!metricsRes.ok || !alertsRes.ok || !timelineRes.ok) {
+          throw new Error("Unable to load SOC telemetry data");
+        }
+        setMetrics((await metricsRes.json()) as Metrics);
+        setAlerts((await alertsRes.json()) as Alert[]);
+        setTimeline((await timelineRes.json()) as TimelinePoint[]);
       }
-
-      setMetrics((await metricsRes.json()) as Metrics);
-      setAlerts((await alertsRes.json()) as Alert[]);
-      setTimeline((await timelineRes.json()) as TimelinePoint[]);
       void refreshHealth();
       setRefreshKey((k) => k + 1);
     } catch (err) {

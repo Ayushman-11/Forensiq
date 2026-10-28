@@ -36,7 +36,39 @@ BRUTE_FORCE_RULE = "brute_force_login"
 EVENT_CODES = ("1", "3", "13", "22", "4104", "4625", "4648", "4688")
 
 
-def build_query() -> str:
+def build_prefiltered_query() -> str:
+    """
+    Constructs an SPL query with high-selectivity pushdown predicates.
+    
+    Instead of pulling 100% of EventCode 1, 3, 22, 13, 4688 raw events across the estate,
+    this pushes candidate filtering into Splunk to discard noise early:
+      - EventCode 1: PowerShell/pwsh with suspicious/evasion arguments.
+      - EventCode 3: Outbound/initiated network connections excluding routine internal traffic & ports 80/443/53.
+      - EventCode 13: Registry modifications targeting Run/RunOnce persistence keys.
+      - EventCode 22: DNS queries to suspicious domains or long tunneling queries, excluding benign domains.
+      - EventCode 4104: Script block executions with malicious or evasion keywords.
+      - EventCode 4625: Failed logons (all, for brute-force aggregation).
+      - EventCode 4648: Explicit logon attempts.
+      - EventCode 4688: Process creation with suspicious parent/child anomalies.
+    """
+    clauses = [
+        "EventCode=4625",
+        "EventCode=4648",
+        '(EventCode=4104 (ScriptBlockText="*invoke-expression*" OR ScriptBlockText="*iex*" OR ScriptBlockText="*net.webclient*" OR ScriptBlockText="*downloadstring*" OR ScriptBlockText="*bypass*"))',
+        '(EventCode=13 TargetObject="*CurrentVersion*Run*")',
+        '(EventCode=1 (Image="*powershell*" OR Image="*pwsh*") (CommandLine="*-enc*" OR CommandLine="*-noni*" OR CommandLine="*bypass*" OR CommandLine="*hidden*" OR CommandLine="*downloadstring*" OR CommandLine="*iex*" OR CommandLine="*webclient*"))',
+        '(EventCode=3 Initiated=true NOT (DestinationPort=80 OR DestinationPort=443 OR DestinationPort=53) NOT (DestinationIp="10.*" OR DestinationIp="192.168.*" OR DestinationIp="172.*" OR DestinationIp="127.*"))',
+        '(EventCode=22 (QueryName="*dyndns*" OR QueryName="*ngrok*" OR QueryName="*pastebin*" OR QueryName="*raw.githubusercontent*" OR QueryName="*bit.ly*"))',
+        '(EventCode=4688 (NewProcessName="*cmd.exe*" OR NewProcessName="*powershell.exe*" OR NewProcessName="*pwsh.exe*" OR NewProcessName="*wscript.exe*" OR NewProcessName="*mshta.exe*") (ParentProcessName="*winword.exe*" OR ParentProcessName="*excel.exe*" OR ParentProcessName="*powerpnt.exe*" OR ParentProcessName="*outlook.exe*" OR ParentProcessName="*chrome.exe*" OR ParentProcessName="*firefox.exe*" OR ParentProcessName="*msedge.exe*"))',
+    ]
+    filter_expr = " OR ".join(f"({c})" for c in clauses)
+    return f"search index={settings.SPLUNK_DETECTION_INDEX} | spath | search ({filter_expr}) | sort 0 _time"
+
+
+def build_query(prefilter: bool = True) -> str:
+    """Build the Splunk query, using SPL pushdown filtering by default."""
+    if prefilter:
+        return build_prefiltered_query()
     codes = " OR ".join(f"EventCode={c}" for c in EVENT_CODES)
     return f"search index={settings.SPLUNK_DETECTION_INDEX} | spath | search ({codes}) | sort 0 _time"
 

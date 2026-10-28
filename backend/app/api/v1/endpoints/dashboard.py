@@ -1,5 +1,9 @@
+import time
+import json
+import asyncio
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.database.session import get_db
 from app.models.alert import DashboardMetrics
@@ -9,6 +13,12 @@ from app.core.timeutil import iso_utc
 from app.core.tenancy import scoped_query, tenant_filter, tenant_id
 from app.infrastructure.siem.base import SIEMProvider
 from app.services.triage import OPEN_STATUSES, detected_at, sla_state
+
+_SOC_METRICS_CACHE: dict[str, dict] = {}
+SOC_METRICS_CACHE_TTL = 45.0  # 45 seconds TTL (recommended budget between 30 and 60s)
+
+_DASHBOARD_SUMMARY_CACHE: dict[str, dict] = {}
+DASHBOARD_SUMMARY_CACHE_TTL = 15.0  # 15 seconds TTL for unified summary
 
 router = APIRouter()
 
@@ -191,16 +201,33 @@ def _median(values: list[float]) -> float | None:
 @router.get("/soc-metrics")
 async def soc_metrics(
     days: int = Query(7, ge=1, le=90),
+    force_refresh: bool = Query(False),
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
     """Analyst-workflow metrics computed from triage timestamps and verdicts.
 
-    MTTA = detection to first human action (assign, note or disposition); MTTR = detection to
-    close/suppress. Rule precision = true positives / (true + false positives) among closed alerts.
+    Cached for 45s per tenant/days window to eliminate full table scans on repeated polls.
     """
+    org = tenant_id(user)
+    cache_key = f"{org}:{days}"
+    now_ts = time.monotonic()
+    if not force_refresh and cache_key in _SOC_METRICS_CACHE:
+        entry = _SOC_METRICS_CACHE[cache_key]
+        if now_ts - entry["ts"] < SOC_METRICS_CACHE_TTL:
+            return entry["data"]
+
     now = datetime.now(timezone.utc)
     since = now - timedelta(days=days)
+
+    # Filter to only relevant alerts: open or active within the lookback window
+    query = scoped_query(user, {
+        "$or": [
+            {"status": {"$in": list(OPEN_STATUSES)}},
+            {"detected_at": {"$gte": since}},
+            {"created_at": {"$gte": since}},
+        ]
+    })
     fields = {"severity": 1, "status": 1, "rule_name": 1, "verdict": 1, "assignee_id": 1,
               "detected_at": 1, "created_at": 1, "acknowledged_at": 1, "resolved_at": 1}
     ack_minutes, resolve_minutes = [], []
@@ -210,7 +237,7 @@ async def soc_metrics(
     rules: dict[str, dict] = {}
     unassigned_open = ack_breached = resolve_breached = 0
 
-    cursor = db["alerts"].find(scoped_query(user), fields)
+    cursor = db["alerts"].find(query, fields)
     async for a in cursor:
         start = detected_at(a)
         status = a.get("status")
@@ -249,7 +276,7 @@ async def soc_metrics(
     def _round(v):
         return round(v, 1) if v is not None else None
 
-    return {
+    result = {
         "window_days": days,
         "mtta_minutes": _round(_median(ack_minutes)),
         "mttr_minutes": _round(_median(resolve_minutes)),
@@ -262,3 +289,110 @@ async def soc_metrics(
         "verdicts": verdicts,
         "rule_precision": sorted(rules.values(), key=lambda r: (r["precision"] is None, r["precision"] or 0)),
     }
+    _SOC_METRICS_CACHE[cache_key] = {"data": result, "ts": now_ts}
+    return result
+
+
+@router.get("/summary")
+async def dashboard_summary(
+    days: int = Query(7, ge=1, le=90),
+    force_refresh: bool = Query(False),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Unified single summary endpoint combining metrics, recent alerts, timeline,
+
+    soc-metrics, and ingestion health in one call.
+    Cached for 15s per tenant so multiple browser tabs share the computation.
+    """
+    org = tenant_id(user)
+    cache_key = f"{org}:summary:{days}"
+    now_ts = time.monotonic()
+    if not force_refresh and cache_key in _DASHBOARD_SUMMARY_CACHE:
+        entry = _DASHBOARD_SUMMARY_CACHE[cache_key]
+        if now_ts - entry["ts"] < DASHBOARD_SUMMARY_CACHE_TTL:
+            return entry["data"]
+
+    metrics_task = get_dashboard_metrics(db=db, user=user)
+    soc_metrics_task = soc_metrics(days=days, force_refresh=force_refresh, db=db, user=user)
+    health_task = ingestion_health(db=db, user=user)
+
+    # Fetch recent new alerts (limit 6)
+    recent_alerts = []
+    cursor = db["alerts"].find(
+        scoped_query(user, {"status": "New"}),
+        {"raw_events": 0}
+    ).sort("created_at", -1).limit(6)
+    async for doc in cursor:
+        doc["_id"] = str(doc["_id"])
+        doc["sla"] = sla_state(doc)
+        for key in ("created_at", "detected_at", "acknowledged_at", "resolved_at"):
+            if isinstance(doc.get(key), datetime):
+                doc[key] = iso_utc(doc[key])
+        recent_alerts.append(doc)
+
+    # Fetch 24h timeline
+    twenty_four_hours_ago = datetime.now(timezone.utc) - timedelta(hours=24)
+    timeline_pipeline = [
+        {"$match": tenant_filter(user)},
+        {"$addFields": {"_detected": {"$ifNull": ["$detected_at", "$created_at"]}}},
+        {"$match": {"_detected": {"$gte": twenty_four_hours_ago}}},
+        {"$group": {
+            "_id": {
+                "year": {"$year": "$_detected"},
+                "month": {"$month": "$_detected"},
+                "day": {"$dayOfMonth": "$_detected"},
+                "hour": {"$hour": "$_detected"}
+            },
+            "count": {"$sum": 1}
+        }},
+        {"$sort": {"_id.year": 1, "_id.month": 1, "_id.day": 1, "_id.hour": 1}}
+    ]
+    timeline = []
+    async for doc in db["alerts"].aggregate(timeline_pipeline):
+        hour_str = f"{doc['_id']['hour']:02d}:00"
+        timeline.append({"hour": hour_str, "count": doc["count"]})
+
+    metrics, soc_kpis, ing_health = await asyncio.gather(
+        metrics_task, soc_metrics_task, health_task
+    )
+
+    summary = {
+        "metrics": metrics.model_dump() if hasattr(metrics, "model_dump") else metrics.dict(),
+        "soc_metrics": soc_kpis,
+        "recent_alerts": recent_alerts,
+        "timeline": timeline,
+        "ingestion_health": ing_health,
+        "cached_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _DASHBOARD_SUMMARY_CACHE[cache_key] = {"data": summary, "ts": now_ts}
+    return summary
+
+
+@router.get("/stream")
+async def dashboard_stream(
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Server-Sent Events (SSE) endpoint broadcasting live dashboard summary updates."""
+    async def event_generator():
+        while True:
+            try:
+                data = await dashboard_summary(days=7, force_refresh=True, db=db, user=user)
+                yield f"event: update\ndata: {json.dumps(data, default=str)}\n\n"
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                yield f"event: error\ndata: {json.dumps({'error': str(exc)})}\n\n"
+            await asyncio.sleep(15)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
+

@@ -146,6 +146,9 @@ async def apply_disposition(
     await record_audit(db, user, f"alert.{action}", "alert", alert_id, {
         "from": current, "to": target, "verdict": verdict, "note": note.strip(),
     })
+    if alert.get("incident_id"):
+        from app.services.incidents import update_incident_counters
+        await update_incident_counters(db, alert["incident_id"])
     return {"alert_id": alert_id, "status": target, "verdict": update.get("verdict")}
 
 
@@ -180,4 +183,7 @@ async def assign_alert(db, user: dict, alert_id: str, assignee_id: Optional[str]
     await record_audit(db, user, "alert.assigned" if assignee else "alert.unassigned", "alert", alert_id, {
         "from": alert.get("assignee_email"), "to": assignee.get("email") if assignee else None,
     })
+    if alert.get("incident_id"):
+        from app.services.incidents import update_incident_counters
+        await update_incident_counters(db, alert["incident_id"])
     return {"alert_id": alert_id, "assignee_id": update.get("assignee_id"), "assignee_email": update.get("assignee_email")}

@@ -7,6 +7,7 @@ from app.core.config import settings
 from app.core.logging import logger
 from app.services.ingestion import IngestionService
 from app.services.investigation_streamer import investigation_stream_manager
+from app.services.investigation_queue import FairInvestigationQueue
 from app.services.lease import acquire_lease, release_lease
 
 LEASE_NAME = "alert_poller"
@@ -20,7 +21,11 @@ class AlertPoller:
         self._running = False
         self._task = None
         self._tasks: set = set()
-        self._semaphore = asyncio.Semaphore(settings.INVESTIGATION_CONCURRENCY)
+        self.queue = FairInvestigationQueue(
+            min_workers=getattr(settings, "INVESTIGATION_MIN_WORKERS", settings.INVESTIGATION_CONCURRENCY),
+            max_workers=getattr(settings, "INVESTIGATION_MAX_WORKERS", 10),
+            scale_up_threshold=getattr(settings, "INVESTIGATION_SCALE_UP_THRESHOLD", 2),
+        )
 
     async def _run_cycle(self) -> int:
         """One poll: take/renew the lease, ingest, schedule bounded auto-investigations."""
@@ -41,7 +46,8 @@ class AlertPoller:
 
         logger.info("poller_new_alerts", count=len(new_alerts), rules=sorted({a.get("rule_name") for a in new_alerts}))
         for alert in new_alerts:
-            task = asyncio.create_task(self._bounded_investigation(alert))
+            org_id = alert.get("org_id", "default")
+            task = self.queue.enqueue(alert, org_id, self._dispatch_investigate)
             self._tasks.add(task)  # keep a reference so the task is not garbage-collected
             task.add_done_callback(self._on_investigation_done)
         return len(new_alerts)
@@ -64,9 +70,12 @@ class AlertPoller:
                 logger.warning("poller_lease_lost")
                 return
 
+    async def _dispatch_investigate(self, alert_data: dict) -> None:
+        await self._investigate_alert(alert_data)
+
     async def _bounded_investigation(self, alert: dict) -> None:
-        async with self._semaphore:
-            await self._investigate_alert(alert)
+        org_id = alert.get("org_id", "default")
+        await self.queue.run_job(alert, org_id, self._dispatch_investigate)
 
     async def _poll_loop(self):
         while self._running:
@@ -106,6 +115,7 @@ class AlertPoller:
         if self._task:
             self._task.cancel()
             await asyncio.gather(self._task, return_exceptions=True)
+        await self.queue.stop()
         pending = list(self._tasks)
         for t in pending:
             t.cancel()

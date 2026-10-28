@@ -6,9 +6,9 @@ assigning or escalating alerts (single or bulk) can never leave the incident out
 """
 
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import get_current_user, require_roles
@@ -79,24 +79,113 @@ async def _member_stats(db, user, incident_ids: list[str]) -> tuple[dict, dict]:
     return by_status, assignees
 
 
+def _summarise_from_doc(incident: dict) -> dict:
+    open_count = incident.get("open_count", 0)
+    status_counts = incident.get("status_counts", {})
+    alert_count = incident.get("alert_count", sum(status_counts.values()) or 1)
+    unassigned = incident.get("unassigned_open", 0)
+    return {
+        "id": incident["_id"],
+        "title": _title(incident),
+        "severity": incident.get("severity", "low"),
+        "state": incident.get("state", "open" if open_count else "resolved"),
+        "alert_count": alert_count,
+        "open_count": open_count,
+        "unassigned_open": unassigned,
+        "owner": incident.get("owner"),
+        "mixed_owners": incident.get("mixed_owners", False),
+        "status_counts": status_counts,
+        "hosts": incident.get("hosts", []),
+        "users": incident.get("users", []),
+        "rules": incident.get("rules", []),
+        "first_seen": iso_utc(incident["first_seen"]) if isinstance(incident.get("first_seen"), datetime) else None,
+        "last_seen": iso_utc(incident["last_seen"]) if isinstance(incident.get("last_seen"), datetime) else None,
+    }
+
+
 @router.get("")
 async def list_incidents(
+    response: Response = None,
     state: Literal["open", "resolved", "all"] = Query("open"),
     limit: int = Query(50, ge=1, le=200),
+    skip: int = Query(0, ge=0),
+    cursor: Optional[str] = Query(None),
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    """Incidents most recently active first; open ones are ordered by severity."""
-    incidents = [i async for i in db["incidents"].find(scoped_query(user)).sort("last_seen", -1).limit(1000)]
-    by_status, assignees = await _member_stats(db, user, [i["_id"] for i in incidents])
-    rows = [_summarise(i, by_status[i["_id"]], assignees[i["_id"]]) for i in incidents]
+    """Incidents paginated directly in database; open first, sorted by severity and last_seen."""
+    limit_val = getattr(limit, "default", limit) if not isinstance(limit, int) else limit
+    skip_val = getattr(skip, "default", skip) if not isinstance(skip, int) else skip
+
+    pipeline = [
+        {"$match": scoped_query(user)},
+        {"$lookup": {
+            "from": "alerts",
+            "localField": "_id",
+            "foreignField": "incident_id",
+            "as": "members"
+        }},
+        {"$addFields": {
+            "open_count": {
+                "$size": {
+                    "$filter": {
+                        "input": "$members",
+                        "as": "m",
+                        "cond": {"$in": ["$$m.status", list(OPEN_STATUSES)]}
+                    }
+                }
+            },
+            "alert_count": {"$size": "$members"}
+        }},
+        {"$addFields": {
+            "state": {
+                "$cond": [{"$gt": ["$open_count", 0]}, "open", "resolved"]
+            },
+            "severity_rank": {
+                "$switch": {"branches": [
+                    {"case": {"$eq": ["$severity", "critical"]}, "then": 4},
+                    {"case": {"$eq": ["$severity", "high"]}, "then": 3},
+                    {"case": {"$eq": ["$severity", "medium"]}, "then": 2},
+                    {"case": {"$eq": ["$severity", "low"]}, "then": 1},
+                ], "default": 0}
+            }
+        }}
+    ]
+
     if state != "all":
-        rows = [r for r in rows if r["state"] == state]
-    # Open first, then severity high to low, then most recently active.
-    rows.sort(key=lambda r: r["last_seen"] or "", reverse=True)
-    rows.sort(key=lambda r: -SEVERITY_RANK.get(r["severity"], 0))
-    rows.sort(key=lambda r: r["state"] != "open")
-    return rows[:limit]
+        pipeline.append({"$match": {"state": state}})
+
+    if state == "all":
+        pipeline.append({"$sort": {"state": 1, "severity_rank": -1, "last_seen": -1}})
+    else:
+        pipeline.append({"$sort": {"severity_rank": -1, "last_seen": -1}})
+
+    if skip_val > 0:
+        pipeline.append({"$skip": skip_val})
+    pipeline.append({"$limit": limit_val})
+
+    paged_incidents = [i async for i in db["incidents"].aggregate(pipeline)]
+
+    rows = []
+    for inc in paged_incidents:
+        by_status: dict[str, int] = {}
+        assignees: dict = {"owners": set(), "unassigned_open": 0}
+        for m in inc.get("members", []):
+            st = m.get("status", "New")
+            by_status[st] = by_status.get(st, 0) + 1
+            if st in OPEN_STATUSES:
+                if m.get("assignee_email"):
+                    assignees["owners"].add(m["assignee_email"])
+                else:
+                    assignees["unassigned_open"] += 1
+        rows.append(_summarise(inc, by_status, assignees))
+
+    if response is not None:
+        response.headers["X-Total-Count"] = str(len(rows))
+        if len(rows) == limit_val and rows:
+            response.headers["X-Next-Cursor"] = rows[-1]["id"]
+
+    return rows
 
 
 @router.get("/{incident_id}")

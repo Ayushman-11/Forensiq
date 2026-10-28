@@ -8,10 +8,12 @@ import re
 import uuid
 import asyncio
 import json
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Query
+import base64
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Query, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from app.normalization.clean import parse_ts
 from app.database.session import get_db
 from app.models.alert import AlertModel
 from app.services.ingestion import IngestionService
@@ -81,10 +83,36 @@ VALID_STATUSES = {
     s.lower(): s
     for s in ("New", "Investigating", "Investigated", "Investigation Failed", "Closed", "Escalated", "Suppressed")
 }
+SEV_RANKS = {"critical": 4, "high": 3, "medium": 2, "low": 1}
 
+
+def encode_cursor(doc: dict, sort: str) -> str:
+    payload = {"id": str(doc["_id"]), "s": sort}
+    det = doc.get("detected_at") or doc.get("created_at")
+    payload["d"] = det.isoformat() if isinstance(det, datetime) else str(det or "")
+    if sort == "severity":
+        payload["sev"] = (doc.get("severity") or "low").lower()
+    elif sort == "risk":
+        payload["r"] = float(doc.get("risk_score") or 0.0)
+    raw = json.dumps(payload).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii")
+
+
+def decode_cursor(cursor_str: str) -> Optional[dict]:
+    try:
+        raw = base64.urlsafe_b64decode(cursor_str.encode("ascii"))
+        return json.loads(raw.decode("utf-8"))
+    except Exception:
+        return None
+
+
+@router.get("", response_model=List[dict], include_in_schema=False)
 @router.get("/", response_model=List[dict])
 async def list_alerts(
+    response: Response = None,
     limit: int = Query(50, ge=1, le=200),
+    skip: int = Query(0, ge=0),
+    cursor: Optional[str] = Query(None, description="Opaque cursor for keyset pagination"),
     severity: str = Query(None, description="Filter by severity"),
     status: str = Query(None, description="Filter by status"),
     search: str = Query(None, max_length=100, description="Search title, host, user, rule, DNS query or ATT&CK technique"),
@@ -94,7 +122,121 @@ async def list_alerts(
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    """Fetches alerts with optional filtering. status=open means every not-yet-resolved status."""
+    """Fetches alerts with optional filtering, cursor keyset pagination, and sorting."""
+    # Safely unpack in case function is called directly without FastAPI parameter resolution
+    limit_val = getattr(limit, "default", limit) if not isinstance(limit, int) else limit
+    skip_val = getattr(skip, "default", skip) if not isinstance(skip, int) else skip
+    cursor_val = None if hasattr(cursor, "default") else cursor
+
+    conditions = []
+    if incident:
+        conditions.append({"incident_id": incident})
+    if assignee == "me":
+        conditions.append({"assignee_id": user.get("id")})
+    elif assignee == "unassigned":
+        conditions.append({"assignee_id": {"$in": [None]}})
+    elif assignee:
+        conditions.append({"assignee_id": assignee})
+    if severity and severity.lower() != "all":
+        if severity.lower() not in VALID_SEVERITIES:
+            raise HTTPException(status_code=422, detail=f"severity must be one of {sorted(VALID_SEVERITIES)} or 'all'")
+        conditions.append({"severity": severity.lower()})
+    if status and status.lower() == "open":
+        conditions.append({"status": {"$in": list(OPEN_STATUSES)}})
+    elif status and status.lower() != "all":
+        canonical = VALID_STATUSES.get(status.lower())
+        if canonical is None:
+            raise HTTPException(status_code=422, detail=f"status must be one of {sorted(VALID_STATUSES.values())}, 'open' or 'all'")
+        conditions.append({"status": canonical})
+    if search:
+        pattern = re.escape(search)
+        conditions.append({"$or": [
+            {field: {"$regex": pattern, "$options": "i"}}
+            for field in ("title", "host", "user", "rule_name", "dns_query", "mitre_technique", "mitre_mappings.technique")
+        ]})
+
+    pipeline: List[Dict[str, Any]] = [
+        {"$match": scoped_query(user, *conditions)},
+        {"$addFields": {"_detected": {"$ifNull": ["$detected_at", "$created_at"]}, "_sev_rank": SEVERITY_RANK}},
+    ]
+
+    # Keyset cursor pagination condition
+    if cursor_val:
+        c_data = decode_cursor(cursor_val)
+        if c_data and c_data.get("id"):
+            cur_id = c_data["id"]
+            cur_d = parse_ts(c_data.get("d"))
+            if sort == "newest" and cur_d:
+                pipeline.append({"$match": {
+                    "$or": [
+                        {"_detected": {"$lt": cur_d}},
+                        {"_detected": cur_d, "_id": {"$lt": cur_id}},
+                    ]
+                }})
+            elif sort == "oldest" and cur_d:
+                pipeline.append({"$match": {
+                    "$or": [
+                        {"_detected": {"$gt": cur_d}},
+                        {"_detected": cur_d, "_id": {"$gt": cur_id}},
+                    ]
+                }})
+            elif sort == "risk":
+                cur_r = float(c_data.get("r", 0.0))
+                or_branches: list = [{"risk_score": {"$lt": cur_r}}]
+                if cur_d:
+                    or_branches.append({"risk_score": cur_r, "_detected": {"$lt": cur_d}})
+                    or_branches.append({"risk_score": cur_r, "_detected": cur_d, "_id": {"$lt": cur_id}})
+                else:
+                    or_branches.append({"risk_score": cur_r, "_id": {"$lt": cur_id}})
+                pipeline.append({"$match": {"$or": or_branches}})
+            elif sort == "severity":
+                cur_rank = SEV_RANKS.get(c_data.get("sev", "low"), 1)
+                or_branches = [{"_sev_rank": {"$lt": cur_rank}}]
+                if cur_d:
+                    or_branches.append({"_sev_rank": cur_rank, "_detected": {"$lt": cur_d}})
+                    or_branches.append({"_sev_rank": cur_rank, "_detected": cur_d, "_id": {"$lt": cur_id}})
+                else:
+                    or_branches.append({"_sev_rank": cur_rank, "_id": {"$lt": cur_id}})
+                pipeline.append({"$match": {"$or": or_branches}})
+
+    pipeline.append({"$sort": dict(SORTS[sort])})
+    if skip_val > 0 and not cursor_val:
+        pipeline.append({"$skip": skip_val})
+    pipeline.append({"$limit": limit_val})
+    pipeline.append({"$project": {"raw_events": 0, "_sev_rank": 0, "_detected": 0}})
+
+    try:
+        alerts = []
+        async for document in db["alerts"].aggregate(pipeline):
+            document["_id"] = str(document["_id"])
+            document["sla"] = sla_state(document)
+            for key in ("created_at", "detected_at", "acknowledged_at", "resolved_at", "assigned_at", "updated_at"):
+                if isinstance(document.get(key), datetime):
+                    document[key] = iso_utc(document[key])
+            alerts.append(document)
+
+        if response is not None:
+            total_count = await db["alerts"].count_documents(scoped_query(user, *conditions))
+            response.headers["X-Total-Count"] = str(total_count)
+            if len(alerts) == limit_val:
+                response.headers["X-Next-Cursor"] = encode_cursor(alerts[-1], sort)
+
+        return alerts
+    except Exception as e:
+        raise internal_error("alerts_list_failed", e)
+
+
+@router.get("/count")
+async def count_alerts(
+    severity: str = Query(None, description="Filter by severity"),
+    status: str = Query(None, description="Filter by status"),
+    search: str = Query(None, max_length=100, description="Search in title or host"),
+    assignee: str = Query(None, max_length=100),
+    incident: str = Query(None, max_length=100),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Returns the total number of alerts matching the given filters."""
     conditions = []
     if incident:
         conditions.append({"incident_id": incident})
@@ -122,24 +264,11 @@ async def list_alerts(
             for field in ("title", "host", "user", "rule_name", "dns_query", "mitre_technique", "mitre_mappings.technique")
         ]})
     try:
-        alerts = []
-        pipeline = [
-            {"$match": scoped_query(user, *conditions)},
-            {"$addFields": {"_detected": {"$ifNull": ["$detected_at", "$created_at"]}, "_sev_rank": SEVERITY_RANK}},
-            {"$sort": dict(SORTS[sort])},
-            {"$limit": limit},
-            {"$project": {"raw_events": 0, "_sev_rank": 0, "_detected": 0}},
-        ]
-        async for document in db["alerts"].aggregate(pipeline):
-            document["_id"] = str(document["_id"])
-            document["sla"] = sla_state(document)
-            for key in ("created_at", "detected_at", "acknowledged_at", "resolved_at", "assigned_at", "updated_at"):
-                if isinstance(document.get(key), datetime):
-                    document[key] = iso_utc(document[key])
-            alerts.append(document)
-        return alerts
+        count = await db["alerts"].count_documents(scoped_query(user, *conditions))
+        return {"count": count}
     except Exception as e:
-        raise internal_error("alerts_list_failed", e)
+        raise internal_error("alerts_count_failed", e)
+
 
 @router.get("/stats/by-rule")
 async def alerts_by_rule(db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
@@ -158,13 +287,10 @@ async def alerts_by_rule(db: AsyncIOMotorDatabase = Depends(get_db), user: dict 
         logger.error(f"Error fetching rule stats: {e}")
         return []
 
+
 @router.get("/stats/timeline")
 async def alerts_timeline(db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
-    """Returns alert counts grouped by detection hour (UTC) for the last 24 hours.
-
-    created_at is the event time, which can be weeks old for backfilled data; detected_at is when
-    Forensiq raised the alert. Older alerts without detected_at fall back to created_at.
-    """
+    """Returns alert counts grouped by detection hour (UTC) for the last 24 hours."""
     try:
         twenty_four_hours_ago = datetime.now(timezone.utc) - timedelta(hours=24)
         pipeline = [
@@ -191,46 +317,76 @@ async def alerts_timeline(db: AsyncIOMotorDatabase = Depends(get_db), user: dict
         logger.error(f"Error fetching timeline stats: {e}")
         return []
 
+
 @router.get("/stats/mitre")
 async def alerts_mitre_stats(db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
-    """Returns aggregated MITRE ATT&CK techniques, tactics, hit counts, and rule coverage."""
+    """Returns aggregated MITRE ATT&CK techniques, tactics, hit counts, and rule coverage using MongoDB aggregation."""
     try:
-        cursor = db["alerts"].find(
-            scoped_query(user, {
-                "$or": [
-                    {"mitre_technique": {"$exists": True, "$ne": None, "$ne": ""}},
-                    {"mitre_mappings": {"$exists": True, "$ne": []}}
+        match_scope = scoped_query(user, {
+            "$or": [
+                {"mitre_technique": {"$exists": True, "$ne": None, "$ne": ""}},
+                {"mitre_mappings": {"$exists": True, "$ne": []}}
+            ]
+        })
+        pipeline = [
+            {"$match": match_scope},
+            {"$facet": {
+                "from_mappings": [
+                    {"$match": {"mitre_mappings": {"$exists": True, "$ne": []}}},
+                    {"$unwind": "$mitre_mappings"},
+                    {"$group": {
+                        "_id": "$mitre_mappings.technique",
+                        "tactic": {"$first": "$mitre_mappings.tactic"},
+                        "name": {"$first": "$mitre_mappings.name"},
+                        "count": {"$sum": 1},
+                        "severity": {"$first": "$severity"},
+                        "alert_ids": {"$addToSet": "$_id"}
+                    }}
+                ],
+                "from_technique": [
+                    {"$match": {
+                        "mitre_technique": {"$exists": True, "$ne": None, "$ne": ""},
+                        "$or": [{"mitre_mappings": {"$exists": False}}, {"mitre_mappings": []}]
+                    }},
+                    {"$group": {
+                        "_id": "$mitre_technique",
+                        "tactic": {"$first": "$mitre_tactic"},
+                        "name": {"$first": "$title"},
+                        "count": {"$sum": 1},
+                        "severity": {"$first": "$severity"},
+                        "alert_ids": {"$addToSet": "$_id"}
+                    }}
+                ],
+                "total_count": [
+                    {"$count": "total"}
                 ]
-            }),
-            {"_id": 1, "title": 1, "severity": 1, "mitre_technique": 1, "mitre_tactic": 1, "mitre_mappings": 1}
-        ).limit(500)
-        
-        tech_map = {}
-        tactic_counts = {}
+            }}
+        ]
+
+        tech_map: Dict[str, dict] = {}
+        tactic_counts: Dict[str, int] = {}
         total_mapped = 0
-        
-        async for doc in cursor:
-            total_mapped += 1
-            alert_id = str(doc.get("_id", ""))
-            sev = (doc.get("severity") or "medium").lower()
-            
-            mappings = doc.get("mitre_mappings") or []
-            if not mappings and doc.get("mitre_technique"):
-                mappings = [{
-                    "technique": doc.get("mitre_technique"),
-                    "tactic": doc.get("mitre_tactic") or "Execution",
-                    "name": doc.get("title") or ""
-                }]
-                
-            for m in mappings:
-                tech_id = str(m.get("technique") or "").strip().upper()
+        sev_ranks = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+
+        cursor = db["alerts"].aggregate(pipeline)
+        docs = await cursor.to_list(length=1)
+        if docs:
+            facet_data = docs[0]
+            total_list = facet_data.get("total_count", [])
+            total_mapped = total_list[0]["total"] if total_list else 0
+
+            raw_groups = facet_data.get("from_mappings", []) + facet_data.get("from_technique", [])
+            for group in raw_groups:
+                tech_id = str(group.get("_id") or "").strip().upper()
                 if not tech_id:
                     continue
-                tactic = str(m.get("tactic") or "Execution").strip()
-                name = str(m.get("name") or "").strip()
-                
-                tactic_counts[tactic] = tactic_counts.get(tactic, 0) + 1
-                
+                tactic = str(group.get("tactic") or "Execution").strip()
+                name = str(group.get("name") or "").strip()
+                count = int(group.get("count", 0))
+                sev = (group.get("severity") or "medium").lower()
+                ids = [str(aid) for aid in (group.get("alert_ids") or [])[:50]]
+
+                tactic_counts[tactic] = tactic_counts.get(tactic, 0) + count
                 if tech_id not in tech_map:
                     tech_map[tech_id] = {
                         "id": tech_id,
@@ -241,11 +397,10 @@ async def alerts_mitre_stats(db: AsyncIOMotorDatabase = Depends(get_db), user: d
                         "alert_ids": []
                     }
                 entry = tech_map[tech_id]
-                entry["count"] += 1
-                if alert_id and alert_id not in entry["alert_ids"]:
-                    entry["alert_ids"].append(alert_id)
-                
-                sev_ranks = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+                entry["count"] += count
+                for aid in ids:
+                    if aid and aid not in entry["alert_ids"]:
+                        entry["alert_ids"].append(aid)
                 if sev_ranks.get(sev, 1) > sev_ranks.get(entry["severity"], 1):
                     entry["severity"] = sev
 
@@ -257,6 +412,7 @@ async def alerts_mitre_stats(db: AsyncIOMotorDatabase = Depends(get_db), user: d
     except Exception as e:
         logger.error(f"Error fetching MITRE stats: {e}")
         return {"techniques": [], "tactics_summary": {}, "total_mapped_alerts": 0}
+
 
 @router.get("/{alert_id}", response_model=dict)
 async def get_alert(alert_id: str, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):

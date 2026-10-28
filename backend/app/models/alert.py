@@ -1,6 +1,6 @@
 from typing import Optional, List, Any
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AlertModel(BaseModel):
@@ -40,8 +40,7 @@ class AlertModel(BaseModel):
     correlations: Optional[List[dict]] = None
     evidence: Optional[dict] = None
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class DashboardMetrics(BaseModel):
