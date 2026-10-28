@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { 
   CircleAlert, 
   Clock3, 
@@ -47,13 +48,21 @@ export default function AlertsPage() {
   const searchParams = useSearchParams();
   const [alerts, setAlerts] = useState<AlertRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(() => searchParams.get("search") || "");
   const [severity, setSeverity] = useState("All");
   const [status, setStatus] = useState("All");
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [investigatingAlert, setInvestigatingAlert] = useState<AlertRecord | null>(null);
+
+  // Sync search state if URL search param changes
+  useEffect(() => {
+    const querySearch = searchParams.get("search");
+    if (querySearch !== null && querySearch !== search) {
+      setSearch(querySearch);
+    }
+  }, [searchParams]);
 
   const selected = useMemo(
     () => (selectedId ? alerts.find((a) => a._id === selectedId) ?? null : alerts[0] ?? null),
@@ -278,10 +287,19 @@ export default function AlertsPage() {
                             <span>Investigate</span>
                           </button>
                           <button
-                            onClick={() => setSelectedId(a._id)}
-                            className="button-secondary text-[11px] py-1 px-2.5"
+                            onClick={() => {
+                              setSelectedId(a._id);
+                              setTimeout(() => {
+                                const detailElem = document.getElementById("selected-alert-details");
+                                if (detailElem) {
+                                  detailElem.scrollIntoView({ behavior: "smooth", block: "start" });
+                                }
+                              }, 50);
+                            }}
+                            className="button-secondary text-[11px] py-1 px-2.5 cursor-pointer"
+                            title="View Alert Dossier & Telemetry"
                           >
-                            <Eye className="w-3 h-3" />
+                            <Eye className="w-3 h-3 text-[var(--text-muted)]" />
                             <span>View</span>
                           </button>
                         </div>
@@ -297,7 +315,7 @@ export default function AlertsPage() {
 
       {/* Selected Alert Details View */}
       {selected && (
-        <section className="card p-5 mt-2">
+        <section id="selected-alert-details" className="card p-5 mt-2 scroll-mt-6 border-[var(--border-active)]">
           <AlertDetailSection 
             alert={selected} 
             onInvestigate={() => setInvestigatingAlert(selected)}
@@ -338,9 +356,7 @@ function AlertDetailSection({
     setDownloading(type);
     setReportError(null);
     try {
-      const endpoint = type === "full"
-        ? `/api/v1/alerts/${alert._id}/report/full`
-        : `/api/v1/alerts/${alert._id}/report/executive`;
+      const endpoint = `/api/v1/alerts/${encodeURIComponent(alert._id)}/report/pdf?report_type=${type}`;
       const response = await apiFetch(endpoint);
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
@@ -350,7 +366,7 @@ function AlertDetailSection({
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `forensiq_${type}_report.pdf`;
+      anchor.download = `forensiq_${type === "full" ? "investigation_report" : "executive_summary"}_${alert._id.slice(0, 8)}.pdf`;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
@@ -364,7 +380,7 @@ function AlertDetailSection({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between border-b border-[var(--border-color)] pb-3">
+      <div className="flex flex-wrap items-center justify-between border-b border-[var(--border-color)] pb-3 gap-3">
         <div>
           <div className="flex items-center gap-2">
             <span className="font-mono text-xs uppercase font-semibold text-[var(--text-muted)]">
@@ -375,16 +391,24 @@ function AlertDetailSection({
             {formatAlertTitle(alert.title)}
           </h2>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => void downloadReport("executive")} disabled={downloading !== null} className="button-secondary text-xs">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Link
+            href={`/investigations?alert=${encodeURIComponent(alert._id)}`}
+            className="button-secondary text-xs flex items-center gap-1.5"
+            title="Open interactive process tree and deep forensic timeline"
+          >
+            <Layers className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Process Tree & Workbench</span>
+          </Link>
+          <button onClick={() => void downloadReport("executive")} disabled={downloading !== null} className="button-secondary text-xs cursor-pointer">
             {downloading === "executive" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
             <span>{downloading === "executive" ? "Generating..." : "Exec Summary"}</span>
           </button>
-          <button onClick={() => void downloadReport("full")} disabled={downloading !== null} className="button-secondary text-xs">
+          <button onClick={() => void downloadReport("full")} disabled={downloading !== null} className="button-secondary text-xs cursor-pointer">
             {downloading === "full" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
             <span>{downloading === "full" ? "Generating..." : "Full Report"}</span>
           </button>
-          <button onClick={onInvestigate} className="button-primary text-xs">
+          <button onClick={onInvestigate} className="button-primary text-xs cursor-pointer">
             <Play className="w-3.5 h-3.5" />
             <span>Start AI Pipeline</span>
           </button>

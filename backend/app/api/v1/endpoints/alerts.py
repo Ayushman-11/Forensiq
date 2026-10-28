@@ -68,6 +68,8 @@ async def list_alerts(
         conditions.append({"$or": [
             {"title": {"$regex": pattern, "$options": "i"}},
             {"host": {"$regex": pattern, "$options": "i"}},
+            {"mitre_technique": {"$regex": pattern, "$options": "i"}},
+            {"rule_name": {"$regex": pattern, "$options": "i"}},
         ]})
     try:
         alerts = []
