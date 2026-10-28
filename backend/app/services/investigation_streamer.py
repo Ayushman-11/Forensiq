@@ -1,4 +1,4 @@
-"""
+﻿"""
 Unified Investigation Streaming Service for WebSocket & SSE.
 Handles LangGraph multi-agent pipeline streaming, pub/sub broadcasting to connected
 WebSockets, and real-time state synchronization.
@@ -7,17 +7,19 @@ WebSockets, and real-time state synchronization.
 import asyncio
 import json
 import uuid
-from collections.abc import AsyncGenerator
-from datetime import UTC, datetime
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, AsyncGenerator, Dict, List, Optional, Set
 
 from fastapi import WebSocket
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.agents.graph import investigation_graph
-from app.core.errors import new_request_id
-from app.core.logging import logger
 from app.services.correlation import correlate_alert
+from app.core.config import settings
+from app.core.timeutil import iso_utc
+from app.core.logging import logger
+from app.core.errors import new_request_id
+
 
 STEP_DEFINITIONS = {
     "extract_context": {
@@ -47,7 +49,7 @@ STEP_DEFINITIONS = {
     },
     "assess_risk": {
         "step": 6,
-        "name": "AI Risk Assessment",
+        "name": "Risk Assessment",
         "description": "Evaluating threat severity, blast radius, and confidence score",
     },
     "generate_recommendations": {
@@ -61,7 +63,7 @@ STEP_DEFINITIONS = {
 def json_serial(obj: Any) -> Any:
     """JSON serializer for objects not serializable by default."""
     if isinstance(obj, datetime):
-        return obj.isoformat()
+        return iso_utc(obj)
     if hasattr(obj, "__str__") and type(obj).__name__ == "ObjectId":
         return str(obj)
     return str(obj)
@@ -74,7 +76,7 @@ def serialize_data(data: Any) -> Any:
     if isinstance(data, (list, tuple, set)):
         return [serialize_data(x) for x in data]
     if isinstance(data, datetime):
-        return data.isoformat()
+        return iso_utc(data)
     if hasattr(data, "__str__") and type(data).__name__ == "ObjectId":
         return str(data)
     return data
@@ -152,10 +154,26 @@ async def finalize_and_save_investigation(
         "mitre_count": len(mitre_mappings),
     }
 
-    ai_confidence = risk_assessment.get("confidence_score", alert.get("ai_confidence", 50))
-    for e in enrichments:
-        if isinstance(e, dict) and e.get("reputation") in ["malicious", "suspicious"]:
-            ai_confidence = min(99, ai_confidence + 20)
+    # Confidence is whatever the risk engine reported; no extra boosts on top.
+    ai_confidence = risk_assessment.get("confidence_score", 0)
+    engines = {
+        "risk": risk_assessment.get("engine", "unknown"),
+        "recommendation": final_state.get("recommendation_engine") or "unknown",
+    }
+    unavailable_feeds = sorted({
+        e.get("source") for e in enrichments
+        if isinstance(e, dict) and e.get("status", "ok") != "ok" and e.get("source")
+    })
+
+    llm_metadata = final_state.get("llm_metadata") or {}
+    model_name = llm_metadata.get("model", settings.XAI_MODEL) if engines.get("risk") == "grok_llm" else "deterministic_engine"
+    prompt_version = llm_metadata.get("prompt_version", settings.LLM_PROMPT_VERSION)
+    token_usage = {
+        "prompt_tokens": llm_metadata.get("prompt_tokens", 0),
+        "completion_tokens": llm_metadata.get("completion_tokens", 0),
+        "total_tokens": llm_metadata.get("total_tokens", 0),
+    }
+    cost_usd = llm_metadata.get("estimated_cost_usd", 0.0)
 
     alert_update = {
         "status": "Investigated",
@@ -169,20 +187,43 @@ async def finalize_and_save_investigation(
         "mitre_mappings": mitre_mappings,
         "timeline": timeline,
         "recommendation": recommendation,
+        "containment_advice": "suggested",
         "correlations": correlations,
         "evidence": evidence,
+        "engines": engines,
+        "unavailable_feeds": unavailable_feeds,
+        "model": model_name,
+        "prompt_version": prompt_version,
+        "cost_usd": cost_usd,
+    }
+
+    run_history_record = {
+        "job_id": job_id,
+        "completed_at": datetime.now(timezone.utc),
+        "risk_score": alert_update["risk_score"],
+        "priority": alert_update["priority"],
+        "model": model_name,
+        "prompt_version": prompt_version,
+        "token_usage": token_usage,
+        "cost_usd": cost_usd,
+        "recommendation": recommendation,
+        "containment_advice": "suggested",
+        "engines": engines,
     }
 
     await db["alerts"].update_one(
         {"_id": alert_id},
-        {"$set": alert_update},
+        {
+            "$set": alert_update,
+            "$push": {"investigation_history": run_history_record},
+        },
     )
 
     await db["investigation_jobs"].update_one(
         {"_id": job_id},
         {"$set": {
             "status": "complete",
-            "completed_at": datetime.now(UTC),
+            "completed_at": datetime.now(timezone.utc),
             "logs": investigation_log,
             "context": context,
             "enrichments": enrichments,
@@ -190,15 +231,21 @@ async def finalize_and_save_investigation(
             "mitre_mappings": mitre_mappings,
             "timeline": timeline,
             "recommendation": recommendation,
+            "containment_advice": "suggested",
             "correlations": correlations,
             "evidence": evidence,
+            "engines": engines,
+            "model": model_name,
+            "prompt_version": prompt_version,
+            "token_usage": token_usage,
+            "cost_usd": cost_usd,
         }}
     )
     logger.info("investigation_completed_and_saved", job_id=job_id, alert_id=alert_id)
     return {**alert, **alert_update}
 
 
-def reconstruct_steps_from_alert(alert: dict) -> list[dict]:
+def reconstruct_steps_from_alert(alert: dict) -> List[dict]:
     """Reconstructs node_complete step payloads for an alert that was previously investigated."""
     steps_data = []
 
@@ -285,9 +332,9 @@ class InvestigationStreamManager:
     """
 
     def __init__(self):
-        self._subscribers: dict[str, set[WebSocket]] = {}
-        self._event_history: dict[str, list[dict]] = {}
-        self._active_runs: dict[str, asyncio.Task] = {}
+        self._subscribers: Dict[str, Set[WebSocket]] = {}
+        self._event_history: Dict[str, List[dict]] = {}
+        self._active_runs: Dict[str, asyncio.Task] = {}
         self._lock = asyncio.Lock()
 
     def register(self, alert_id: str, ws: WebSocket) -> None:
@@ -305,8 +352,18 @@ class InvestigationStreamManager:
                 del self._subscribers[alert_id]
         logger.info("ws_client_unregistered", alert_id=alert_id)
 
-    async def broadcast(self, alert_id: str, event_type: str, data: dict) -> None:
-        """Broadcasts an investigation event to all registered WebSocket clients for this alert."""
+    async def broadcast(
+        self,
+        alert_id: str,
+        event_type: str,
+        data: dict,
+        db: Optional[AsyncIOMotorDatabase] = None,
+        job_id: Optional[str] = None,
+    ) -> None:
+        """
+        Broadcasts an investigation event to all registered WebSocket clients for this alert
+        and persists it to MongoDB investigation_events for multi-worker support.
+        """
         message = {
             "event": event_type,
             "data": serialize_data(data),
@@ -321,11 +378,25 @@ class InvestigationStreamManager:
             # Clear or retain final state
             self._event_history[alert_id].append(message)
 
+        # Persist event for multi-process / multi-worker pub-sub
+        if db is not None:
+            try:
+                await db["investigation_events"].insert_one({
+                    "_id": str(uuid.uuid4()),
+                    "alert_id": alert_id,
+                    "job_id": job_id,
+                    "event": event_type,
+                    "data": serialize_data(data),
+                    "created_at": datetime.now(timezone.utc),
+                })
+            except Exception as exc:
+                logger.debug("event_persistence_failed", alert_id=alert_id, error=str(exc))
+
         subscribers = self._subscribers.get(alert_id, set()).copy()
         if not subscribers:
             return
 
-        dead_sockets: list[WebSocket] = []
+        dead_sockets: List[WebSocket] = []
         payload_text = json.dumps(message, default=json_serial)
 
         for ws in subscribers:
@@ -338,9 +409,25 @@ class InvestigationStreamManager:
         for ws in dead_sockets:
             self.unregister(alert_id, ws)
 
-    def get_history(self, alert_id: str) -> list[dict]:
-        """Returns in-flight event history for an alert."""
+    def get_history(self, alert_id: str) -> List[dict]:
+        """Returns in-flight event history for an alert from local memory."""
         return list(self._event_history.get(alert_id, []))
+
+    async def get_persisted_history(self, alert_id: str, db: AsyncIOMotorDatabase) -> List[dict]:
+        """Returns in-flight or past event history from MongoDB for multi-worker support."""
+        events = []
+        try:
+            cursor = db["investigation_events"].find({"alert_id": alert_id}).sort("created_at", 1)
+            async for doc in cursor:
+                events.append({
+                    "event": doc.get("event"),
+                    "data": doc.get("data"),
+                })
+        except Exception as exc:
+            logger.debug("failed_to_fetch_persisted_events", alert_id=alert_id, error=str(exc))
+        
+        # If DB had events, return them; otherwise fallback to local memory
+        return events if events else self.get_history(alert_id)
 
     def clear_history(self, alert_id: str) -> None:
         """Clears in-flight history for an alert."""
@@ -351,8 +438,8 @@ class InvestigationStreamManager:
         alert_id: str,
         alert: dict,
         db: AsyncIOMotorDatabase,
-        job_id: str | None = None,
-        org_id: str | None = None,
+        job_id: Optional[str] = None,
+        org_id: Optional[str] = None,
     ) -> AsyncGenerator[dict, None]:
         """
         Executes the LangGraph investigation pipeline while:
@@ -365,15 +452,20 @@ class InvestigationStreamManager:
 
         self.clear_history(alert_id)
 
-        # Record job in database
-        await db["investigation_jobs"].insert_one({
-            "_id": job_id,
-            "alert_id": alert_id,
-            "status": "running",
-            "created_at": datetime.now(UTC),
-            "started_at": datetime.now(UTC),
-            "org_id": org_id or alert.get("org_id", "default"),
-        })
+        # Record job in database. Upsert: POST /investigate creates the row before the run starts.
+        now = datetime.now(timezone.utc)
+        await db["investigation_jobs"].update_one(
+            {"_id": job_id},
+            {
+                "$set": {"status": "running", "started_at": now},
+                "$setOnInsert": {
+                    "alert_id": alert_id,
+                    "created_at": now,
+                    "org_id": org_id or alert.get("org_id", "default"),
+                },
+            },
+            upsert=True,
+        )
 
         # Update alert status
         await db["alerts"].update_one(
@@ -388,7 +480,7 @@ class InvestigationStreamManager:
             "status": "running",
             "message": "Investigation pipeline initialized",
         }
-        await self.broadcast(alert_id, "init", init_payload)
+        await self.broadcast(alert_id, "init", init_payload, db=db, job_id=job_id)
         yield {"event": "init", "data": init_payload}
 
         initial_state = {
@@ -403,6 +495,7 @@ class InvestigationStreamManager:
             "correlations": [],
             "timeline": [],
             "recommendation": None,
+            "recommendation_engine": None,
         }
 
         accumulated_state = dict(initial_state)
@@ -429,7 +522,7 @@ class InvestigationStreamManager:
                         "data": {k: v for k, v in node_output.items() if k != "alert_data"},
                     }
 
-                    await self.broadcast(alert_id, "node_complete", node_event)
+                    await self.broadcast(alert_id, "node_complete", node_event, db=db, job_id=job_id)
                     yield {"event": "node_complete", "data": node_event}
 
             # Finalize and persist in MongoDB
@@ -450,7 +543,7 @@ class InvestigationStreamManager:
                 "alert": serialized_alert,
             }
 
-            await self.broadcast(alert_id, "complete", complete_event)
+            await self.broadcast(alert_id, "complete", complete_event, db=db, job_id=job_id)
             yield {"event": "complete", "data": complete_event}
 
         except Exception as e:
@@ -460,7 +553,7 @@ class InvestigationStreamManager:
                 {"_id": job_id},
                 {"$set": {
                     "status": "failed",
-                    "completed_at": datetime.now(UTC),
+                    "completed_at": datetime.now(timezone.utc),
                     "error": "investigation_failed",
                     "error_ref": ref,
                 }}
@@ -474,7 +567,7 @@ class InvestigationStreamManager:
                 "alert_id": alert_id,
                 "error": f"Investigation failed (ref {ref})",
             }
-            await self.broadcast(alert_id, "error", error_payload)
+            await self.broadcast(alert_id, "error", error_payload, db=db, job_id=job_id)
             yield {"event": "error", "data": error_payload}
 
 

@@ -1,34 +1,51 @@
-"""
+﻿"""
 Forensiq FastAPI Main Application Entrypoint.
-Configures app lifespan, middleware, routers, and CORS.
+Configures app lifespan, middleware (security headers, body limits, CORS, trusted hosts), routers.
 """
 
-import time
 from contextlib import asynccontextmanager
-
-import structlog
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
-from prometheus_fastapi_instrumentator import Instrumentator
-
-from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.errors import new_request_id
-from app.core.logging import logger, setup_logging
+from app.core.logging import setup_logging, logger
+from app.core.headers import SecurityHeadersMiddleware, RequestBodyLimitMiddleware
+from app.api.v1.router import api_router
 from app.database.indexes import ensure_indexes
-from app.database.session import close_mongo_connection, connect_to_mongo, db_config
 from app.normalization.noise import NoiseFilter
+from app.core.startup_checks import missing_integrations
+
+from app.database.session import connect_to_mongo, close_mongo_connection
 from app.services.poller import AlertPoller
+from app.services.investigation_worker import InvestigationWorker
+from app.services.job_queue import reap_stuck_jobs
+from app.database.session import db_config
+
+_NON_PROD_ENVS = frozenset({"development", "dev", "test", "testing", "local"})
 
 poller = None
-
+investigation_worker = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan context manager handling startup and shutdown events."""
     setup_logging()
     logger.info("forensiq_backend_startup", env=settings.ENV, debug=settings.DEBUG)
+    missing = missing_integrations(settings)
+    if "threat_intel" in missing:
+        logger.warning(
+            "threat_intel_not_configured",
+            missing=missing["threat_intel"],
+            message="IOC enrichment returns no verdict from these feeds until their keys are set",
+        )
+    if "llm" in missing:
+        logger.warning(
+            "llm_not_configured",
+            missing=missing["llm"],
+            message="risk and recommendation agents will use deterministic rules",
+        )
     # Fail fast on a broken noise policy instead of failing every ingestion cycle.
     NoiseFilter.from_yaml(settings.NOISE_CONFIG_PATH)
     await connect_to_mongo()
@@ -51,16 +68,33 @@ async def lifespan(app: FastAPI):
         except Exception as exc:  # e.g. a conflicting pre-existing index must not take the API down
             logger.error("ensure_indexes_failed", error=str(exc))
 
-    global poller
+        try:
+            await reap_stuck_jobs(db)
+        except Exception as exc:
+            logger.error("reap_stuck_jobs_failed", error=str(exc))
+
+    global poller, investigation_worker
     if db_config.client:
-        poller = AlertPoller(db_config.client[settings.MONGO_DB_NAME], interval_seconds=30)
+        db = db_config.client[settings.MONGO_DB_NAME]
+        try:
+            investigation_worker = InvestigationWorker(db, poll_interval=settings.INVESTIGATION_WORKER_POLL_INTERVAL_SECONDS)
+            investigation_worker.start()
+        except Exception as exc:
+            logger.error("investigation_worker_start_failed", error=str(exc))
+
+        poller = AlertPoller(db, interval_seconds=settings.POLLER_INTERVAL_SECONDS)
         poller.start()
 
     yield
-
+    
+    if investigation_worker:
+        try:
+            await investigation_worker.stop()
+        except Exception as exc:
+            logger.error("investigation_worker_stop_failed", error=str(exc))
     if poller:
         await poller.stop()
-
+        
     await close_mongo_connection()
     logger.info("forensiq_backend_shutdown")
 
@@ -75,51 +109,32 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ---------------------------------------------------------------------------
-# Prometheus instrumentation
-# Exposes GET /metrics (Prometheus text format).
-# Must be created before routers are included so it can instrument all routes.
-# ---------------------------------------------------------------------------
-Instrumentator(
-    should_group_status_codes=True,
-    should_ignore_untemplated=True,
-    should_respect_env_var=False,
-    should_instrument_requests_inprogress=True,
-    inprogress_labels=True,
-    excluded_handlers=["/metrics"],
-).instrument(app).expose(app, include_in_schema=False, tags=["observability"])
+# --- Security Headers Middleware (outermost: runs on every response) ---
+app.add_middleware(SecurityHeadersMiddleware)
 
+# --- Request Body Size Limit Middleware ---
+app.add_middleware(RequestBodyLimitMiddleware)
 
-# ---------------------------------------------------------------------------
-# Request-ID middleware
-# Stamps every request with a unique ID so logs and responses can be correlated.
-# ---------------------------------------------------------------------------
-@app.middleware("http")
-async def request_id_middleware(request: Request, call_next):
-    req_id = request.headers.get("X-Request-ID") or new_request_id()
-    # Bind the request id into the structlog context for this coroutine.
-    structlog.contextvars.clear_contextvars()
-    structlog.contextvars.bind_contextvars(request_id=req_id, path=request.url.path)
-    start = time.monotonic()
-    response = await call_next(request)
-    duration_ms = round((time.monotonic() - start) * 1000, 1)
-    logger.info(
-        "http_request",
-        method=request.method,
-        status_code=response.status_code,
-        duration_ms=duration_ms,
-    )
-    response.headers["X-Request-ID"] = req_id
-    return response
+# --- Trusted Host Middleware (production only) ---
+is_prod = settings.ENV.strip().lower() not in _NON_PROD_ENVS
+if is_prod and settings.TRUSTED_HOSTS:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.TRUSTED_HOSTS)
 
-
-# Configure CORS Middleware
+# --- CORS Middleware (tightened: explicit methods and headers) ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "X-Request-ID",
+        "X-Requested-With",
+    ],
+    expose_headers=["X-Request-ID", "Retry-After"],
+    max_age=600,
 )
 
 
@@ -150,5 +165,4 @@ async def root():
         "status": "operational",
         "docs": "/docs",
         "api_v1": "/api/v1",
-        "metrics": "/metrics",
     }

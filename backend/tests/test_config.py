@@ -21,7 +21,7 @@ def test_production_with_default_secret_key_raises():
 
 def test_production_with_custom_secret_key_succeeds():
     """A production deployment that actually set a real secret must boot fine."""
-    s = Settings(_env_file=None, ENV="production", SECRET_KEY="a-real-unique-production-secret-key-value", SPLUNK_PASSWORD="a-real-splunk-password")
+    s = Settings(_env_file=None, ENV="production", SECRET_KEY="a-real-unique-production-secret-key-value", SPLUNK_PASSWORD="a-real-splunk-password", TRUSTED_HOSTS=["forensiq.example.com"], MONGO_URI="mongodb://user:pass@mongo.corp:27017/db?tls=true")
     assert s.SECRET_KEY == "a-real-unique-production-secret-key-value"
 
 
