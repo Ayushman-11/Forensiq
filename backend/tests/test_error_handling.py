@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi import FastAPI, HTTPException
 from httpx import ASGITransport, AsyncClient
-
 from app.api.v1.endpoints import alerts as alerts_module
 from app.core.errors import internal_error, new_request_id
 from app.main import global_exception_handler

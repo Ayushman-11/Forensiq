@@ -1,5 +1,5 @@
+from typing import Optional, List, Any
 from datetime import datetime
-
 from pydantic import BaseModel, Field
 
 
@@ -13,32 +13,32 @@ class AlertModel(BaseModel):
     status: str
     created_at: datetime
     # New real-data fields (all optional for backward compat)
-    alert_type: str | None = None
-    rule_name: str | None = None
-    mitre_technique: str | None = None
-    mitre_tactic: str | None = None
-    event_code: str | None = None
-    source_ip: str | None = None
-    dest_ip: str | None = None
-    dest_port: str | None = None
-    protocol: str | None = None
-    process_name: str | None = None
-    command_line: str | None = None
-    parent_process: str | None = None
-    registry_key: str | None = None
-    dns_query: str | None = None
-    hashes: str | None = None
-    extracted_iocs: list[str] | None = None
-    description: str | None = None
-    source_siem: str | None = None
-    risk_score: int | None = None
-    priority: str | None = None
-    recommendation: str | None = None
-    risk_assessment: dict | None = None
-    mitre_mappings: list[dict] | None = None
-    timeline: list[dict] | None = None
-    correlations: list[dict] | None = None
-    evidence: dict | None = None
+    alert_type: Optional[str] = None
+    rule_name: Optional[str] = None
+    mitre_technique: Optional[str] = None
+    mitre_tactic: Optional[str] = None
+    event_code: Optional[str] = None
+    source_ip: Optional[str] = None
+    dest_ip: Optional[str] = None
+    dest_port: Optional[str] = None
+    protocol: Optional[str] = None
+    process_name: Optional[str] = None
+    command_line: Optional[str] = None
+    parent_process: Optional[str] = None
+    registry_key: Optional[str] = None
+    dns_query: Optional[str] = None
+    hashes: Optional[str] = None
+    extracted_iocs: Optional[List[str]] = None
+    description: Optional[str] = None
+    source_siem: Optional[str] = None
+    risk_score: Optional[int] = None
+    priority: Optional[str] = None
+    recommendation: Optional[str] = None
+    risk_assessment: Optional[dict] = None
+    mitre_mappings: Optional[List[dict]] = None
+    timeline: Optional[List[dict]] = None
+    correlations: Optional[List[dict]] = None
+    evidence: Optional[dict] = None
 
     class Config:
         populate_by_name = True
@@ -52,4 +52,4 @@ class DashboardMetrics(BaseModel):
     open_investigations: int
     investigated_alerts: int
     ai_confidence_avg: int
-    last_ingested_at: str | None = None
+    last_ingested_at: Optional[str] = None

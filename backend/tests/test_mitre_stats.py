@@ -1,10 +1,10 @@
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient, ASGITransport
 from mongomock_motor import AsyncMongoMockClient
 
-from app.core.security import create_access_token
-from app.database.session import get_db
 from app.main import app
+from app.database.session import get_db
+from app.core.security import create_access_token
 
 
 @pytest.fixture

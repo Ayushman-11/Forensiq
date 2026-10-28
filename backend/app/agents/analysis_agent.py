@@ -6,18 +6,18 @@ timeline, and analyst next step. A model-backed agent can replace this node
 later without changing the state contract.
 """
 
-from datetime import UTC, datetime
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Dict
 
 from app.agents.state import AgentState
 
 
-def analyze_investigation_node(state: AgentState) -> dict[str, Any]:
+def analyze_investigation_node(state: AgentState) -> Dict[str, Any]:
     alert = state.get("alert_data", {})
     enrichments = state.get("enrichment_results", [])
     correlations = state.get("correlations", [])
     mitre_mappings = state.get("mitre_mappings") or []
-
+    
     # Fallback for mitre_mappings if not present in state
     if not mitre_mappings:
         technique = alert.get("mitre_technique")
@@ -28,13 +28,13 @@ def analyze_investigation_node(state: AgentState) -> dict[str, Any]:
     severity_score = {"critical": 75, "high": 58, "medium": 38, "low": 18}.get(severity, 25)
     malicious = sum(1 for item in enrichments if item.get("reputation") == "malicious")
     suspicious = sum(1 for item in enrichments if item.get("reputation") == "suspicious")
-
+    
     # Factor in correlation breadth
     correlation_bump = min(20, len(correlations) * 5)
     risk_score = min(100, severity_score + malicious * 15 + suspicious * 8 + correlation_bump)
     priority = "critical" if risk_score >= 80 else "high" if risk_score >= 60 else "medium" if risk_score >= 35 else "low"
 
-    timestamp = alert.get("created_at") or datetime.now(UTC).isoformat()
+    timestamp = alert.get("created_at") or datetime.now(timezone.utc).isoformat()
     timeline = [{
         "timestamp": timestamp,
         "event_type": alert.get("alert_type", "Detection"),

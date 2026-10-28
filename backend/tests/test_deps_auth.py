@@ -1,10 +1,11 @@
 """Tests for the get_current_user / require_roles dependencies."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
-from fastapi import Depends, FastAPI
-from httpx import ASGITransport, AsyncClient
+from fastapi import FastAPI, Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials
+from httpx import AsyncClient, ASGITransport
 from jose import jwt as jose_jwt
 from mongomock_motor import AsyncMongoMockClient
 
@@ -20,7 +21,7 @@ def _make_expired_access_token(user_id: str, email: str, role: str) -> str:
     depends on its documented signature), so we mint the expired token
     directly with jose, signed the same way decode_token expects.
     """
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     payload = {
         "sub": user_id,
         "email": email,

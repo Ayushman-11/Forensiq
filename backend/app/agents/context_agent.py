@@ -1,27 +1,25 @@
-from typing import Any
-
-from app.agents.state import AgentState
+from typing import Dict, Any
 from app.core.logging import logger
+from app.agents.state import AgentState
 from app.normalization.ioc import public_domain, public_ip
 
-
-def extract_context_node(state: AgentState) -> dict[str, Any]:
+def extract_context_node(state: AgentState) -> Dict[str, Any]:
     """
     LangGraph node: Parses the raw alert payload to extract contextual information and IOCs.
     """
     alert_data = state.get("alert_data", {})
     logger.info("context_node_start", alert_id=alert_data.get("_id"))
-
+    
     # The new pipeline stores all top-level keys in raw_event
     raw = alert_data.get("raw_event", {})
     if not raw:
         # Fallback for old mock data
         raw = alert_data.get("raw_alert_data", {}).get("content", {})
-
+        
     event_code = str(raw.get("EventCode", ""))
-
+    
     context = {}
-
+    
     if event_code == "1":
         context["process_name"] = raw.get("Image")
         context["command_line"] = raw.get("CommandLine")
@@ -64,10 +62,10 @@ def extract_context_node(state: AgentState) -> dict[str, Any]:
 
     # Clean up empty values in context
     context = {k: v for k, v in context.items() if v}
-
+    
     # We already have IOCs extracted during ingestion, but we can augment them
     existing_iocs = set(alert_data.get("extracted_iocs", []))
-
+    
     # Re-extract just in case, using the shared global-address check
     for candidate in (raw.get("SourceIp"), raw.get("DestinationIp"), raw.get("IpAddress")):
         ip = public_ip(candidate)
@@ -80,14 +78,14 @@ def extract_context_node(state: AgentState) -> dict[str, Any]:
             existing_iocs.add(domain)
 
     extracted_iocs = list(existing_iocs)
-
-    logger.info("context_node_complete",
-                alert_id=alert_data.get("_id", ""),
+    
+    logger.info("context_node_complete", 
+                alert_id=alert_data.get("_id", ""), 
                 extracted_iocs=len(extracted_iocs))
-
+    
     current_log = state.get("investigation_log", [])
     new_log = current_log + [f"Context extraction complete: found {len(context)} key properties and {len(extracted_iocs)} IOCs"]
-
+    
     return {
         "context": context,
         "extracted_iocs": extracted_iocs,

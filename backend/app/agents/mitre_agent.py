@@ -4,16 +4,15 @@ Maps alert indicators, detection rules, process activity, and telemetry
 to the MITRE ATT&CK framework with taxonomy enrichment, tactics, and references.
 """
 
+from typing import Dict, Any, List, Optional
 import re
-from typing import Any
-
-from app.agents.state import AgentState
 from app.core.logging import logger
+from app.agents.state import AgentState
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MITRE ATT&CK Taxonomy Knowledge Base
 # ─────────────────────────────────────────────────────────────────────────────
-ATTACK_CATALOG: dict[str, dict[str, str]] = {
+ATTACK_CATALOG: Dict[str, Dict[str, str]] = {
     "T1059.001": {
         "name": "Command and Scripting Interpreter: PowerShell",
         "tactic": "Execution",
@@ -183,7 +182,7 @@ PATTERN_RULES = [
 ]
 
 
-def _build_mitre_entry(technique_id: str, evidence: str, confidence: str = "high") -> dict[str, Any]:
+def _build_mitre_entry(technique_id: str, evidence: str, confidence: str = "high") -> Dict[str, Any]:
     catalog_entry = ATTACK_CATALOG.get(technique_id, {})
     return {
         "technique": technique_id,
@@ -197,7 +196,7 @@ def _build_mitre_entry(technique_id: str, evidence: str, confidence: str = "high
     }
 
 
-def map_mitre_node(state: AgentState) -> dict[str, Any]:
+def map_mitre_node(state: AgentState) -> Dict[str, Any]:
     """
     LangGraph node: Analyzes the alert and its extracted context to generate
     standardized MITRE ATT&CK technique and tactic mappings with evidence citations.
@@ -205,12 +204,12 @@ def map_mitre_node(state: AgentState) -> dict[str, Any]:
     alert = state.get("alert_data", {})
     context = state.get("context", {})
     current_log = state.get("investigation_log", [])
-
+    
     alert_id = str(alert.get("_id", "unknown"))
     logger.info("mitre_mapping_start", alert_id=alert_id)
-
-    matched_techniques: dict[str, dict[str, Any]] = {}
-
+    
+    matched_techniques: Dict[str, Dict[str, Any]] = {}
+    
     # 1. Direct mapping from alert metadata if present
     explicit_technique = alert.get("mitre_technique")
     if explicit_technique:
@@ -225,7 +224,7 @@ def map_mitre_node(state: AgentState) -> dict[str, Any]:
     # 2. EventCode based mapping
     raw = alert.get("raw_event") or alert.get("raw_alert_data", {}).get("content", {})
     event_code = str(raw.get("EventCode") or alert.get("event_code") or "")
-
+    
     if event_code == "4625":
         matched_techniques["T1110.001"] = _build_mitre_entry(
             technique_id="T1110.001",
@@ -261,7 +260,7 @@ def map_mitre_node(state: AgentState) -> dict[str, Any]:
         "command_line": str(context.get("command_line") or alert.get("command_line") or ""),
         "registry_key": str(context.get("registry_key") or alert.get("registry_key") or ""),
     }
-
+    
     for rule in PATTERN_RULES:
         tech_id = rule["technique_id"]
         field_val = check_fields.get(rule["field"], "")
@@ -274,7 +273,7 @@ def map_mitre_node(state: AgentState) -> dict[str, Any]:
                 )
 
     mitre_mappings = list(matched_techniques.values())
-
+    
     # Build logging summary
     if mitre_mappings:
         tech_list = ", ".join(f"{m['technique']} ({m['name']})" for m in mitre_mappings[:3])
@@ -283,13 +282,13 @@ def map_mitre_node(state: AgentState) -> dict[str, Any]:
         log_entry = f"MITRE ATT&CK Agent: mapped {len(mitre_mappings)} technique(s): {tech_list}"
     else:
         log_entry = "MITRE ATT&CK Agent: no specific ATT&CK techniques matched alert heuristics"
-
-    logger.info("mitre_mapping_complete",
-                alert_id=alert_id,
+        
+    logger.info("mitre_mapping_complete", 
+                alert_id=alert_id, 
                 mapped_count=len(mitre_mappings))
-
+                
     new_log = current_log + [log_entry]
-
+    
     return {
         "mitre_mappings": mitre_mappings,
         "investigation_log": new_log

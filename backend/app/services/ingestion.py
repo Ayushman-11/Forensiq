@@ -13,26 +13,15 @@ Design (see docs/superpowers/specs/2026-10-06-forensiq-usp-pipeline-design.md):
 
 from __future__ import annotations
 
-import time
 import uuid
-from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from typing import Callable, List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.config import settings
 from app.core.errors import new_request_id
 from app.core.logging import logger
-from app.core.metrics import (
-    INGEST_ALERTS_NEW_TOTAL,
-    INGEST_ALERTS_SEEN_TOTAL,
-    INGEST_CYCLE_DURATION_SECONDS,
-    INGEST_CYCLE_ERRORS_TOTAL,
-    INGEST_EVENTS_TOTAL,
-    INGEST_LAG_SECONDS,
-    INGEST_RULE_ERRORS_TOTAL,
-    INGEST_SUPPRESSED_TOTAL,
-)
 from app.infrastructure.siem.splunk import SplunkClient
 from app.normalization.alerts import build_alert_doc
 from app.normalization.canonical import CanonicalEvent
@@ -61,14 +50,14 @@ class IngestionService:
         db: AsyncIOMotorDatabase,
         org_id: str = "default",
         splunk_factory: Callable[[], SplunkClient] = SplunkClient,
-        noise: NoiseFilter | None = None,
+        noise: Optional[NoiseFilter] = None,
     ) -> None:
         self.db = db
         self.org_id = org_id
         self._splunk_factory = splunk_factory
         self.noise = noise or NoiseFilter.from_yaml(settings.NOISE_CONFIG_PATH)
         self.rules = DetectionRuleEngine().get_all_rules()
-        self.errors: list[dict] = []
+        self.errors: List[dict] = []
         self.total_fetched = 0
         self.rules_run = 0
 
@@ -78,7 +67,7 @@ class IngestionService:
     def _cursor_id(self) -> str:
         return f"cursor:{self.org_id}:splunk"
 
-    async def _load_cursor(self) -> tuple[datetime | None, bool, int]:
+    async def _load_cursor(self) -> tuple[Optional[datetime], bool, int]:
         for doc_id in (self._cursor_id, "last_ingested"):  # legacy doc keeps existing installs from re-ingesting
             doc = await self.db[self.STATE_COLLECTION].find_one({"_id": doc_id})
             if doc and doc.get("ts"):
@@ -87,7 +76,7 @@ class IngestionService:
                     return parsed, bool(doc.get("truncated", False)), int(doc.get("fetched", 0))
         return None, False, 0
 
-    async def _save_cursor(self, newest: datetime | None, truncated: bool, fetched: int = 0) -> None:
+    async def _save_cursor(self, newest: Optional[datetime], truncated: bool, fetched: int = 0) -> None:
         if newest is None:
             return
         for doc_id in (self._cursor_id, "last_ingested"):
@@ -99,9 +88,9 @@ class IngestionService:
                 fields["fetched"] = fetched
             await self.db[self.STATE_COLLECTION].update_one({"_id": doc_id}, {"$set": fields}, upsert=True)
 
-    def _earliest_epoch(self, cursor: datetime | None, truncated: bool = False, prev_fetched: int = 0) -> str:
+    def _earliest_epoch(self, cursor: Optional[datetime], truncated: bool = False, prev_fetched: int = 0) -> str:
         if cursor is None:
-            start = datetime.now(UTC) - timedelta(hours=settings.INGEST_INITIAL_LOOKBACK_HOURS)
+            start = datetime.now(timezone.utc) - timedelta(hours=settings.INGEST_INITIAL_LOOKBACK_HOURS)
             return str(int(start.timestamp()))
         if truncated:
             # Previous cycle hit the page cap: resume exactly at the cursor so progress is guaranteed.
@@ -121,8 +110,8 @@ class IngestionService:
     # -- pipeline stages ------------------------------------------------
 
     async def _collect(self, splunk: SplunkClient, earliest: str, run: dict):
-        events: list[CanonicalEvent] = []
-        newest: datetime | None = None
+        events: List[CanonicalEvent] = []
+        newest: Optional[datetime] = None
         pages = 0
         last_page_len = 0
         async for page in splunk.search_raw_pages(
@@ -152,8 +141,8 @@ class IngestionService:
         run["truncated"] = pages >= settings.INGEST_MAX_PAGES and last_page_len >= settings.INGEST_PAGE_SIZE
         return events, newest
 
-    def _detect(self, events: list[CanonicalEvent], run: dict) -> list[RuleHit]:
-        hits: list[RuleHit] = []
+    def _detect(self, events: List[CanonicalEvent], run: dict) -> List[RuleHit]:
+        hits: List[RuleHit] = []
         brute = next((r for r in self.rules if r.name == BRUTE_FORCE_RULE), None)
         for event in events:
             for rule in self.rules:
@@ -175,7 +164,7 @@ class IngestionService:
         self.rules_run = len(self.rules)
         return hits
 
-    async def _store(self, groups, run: dict, new_alerts: list[dict]) -> list[dict]:
+    async def _store(self, groups, run: dict, new_alerts: List[dict]) -> List[dict]:
         collection = self.db[self.ALERTS_COLLECTION]
         for group in groups:
             doc = build_alert_doc(group, self.org_id, self.noise)
@@ -194,17 +183,16 @@ class IngestionService:
 
     # -- public entry point ---------------------------------------------
 
-    async def fetch_and_store_alerts(self, limit: int | None = None) -> list[dict]:
+    async def fetch_and_store_alerts(self, limit: Optional[int] = None) -> List[dict]:
         run = {
-            "_id": str(uuid.uuid4()), "org_id": self.org_id, "started_at": datetime.now(UTC),
+            "_id": str(uuid.uuid4()), "org_id": self.org_id, "started_at": datetime.now(timezone.utc),
             "status": "ok", "fetched": 0, "unmapped": 0, "suppressed": {}, "rule_errors": 0,
             "hits": 0, "alerts_new": 0, "alerts_seen": 0, "truncated": False, "lag_seconds": None, "errors": [],
         }
         self.errors, self.total_fetched = [], 0
-        new_alerts: list[dict] = []
+        new_alerts: List[dict] = []
         stage = "fetch"
         splunk = self._splunk_factory()
-        _cycle_start = time.monotonic()
         try:
             cursor, was_truncated, prev_fetched = await self._load_cursor()
             events, newest = await self._collect(splunk, self._earliest_epoch(cursor, was_truncated, prev_fetched), run)
@@ -216,30 +204,17 @@ class IngestionService:
             await self._store(groups, run, new_alerts)
             await self._save_cursor(newest, run["truncated"], run["fetched"])  # only reached when every stage succeeded
             if newest:
-                lag = max(0, int((datetime.now(UTC) - newest).total_seconds()))
-                run["lag_seconds"] = lag
-                INGEST_LAG_SECONDS.set(lag)
+                run["lag_seconds"] = max(0, int((datetime.now(timezone.utc) - newest).total_seconds()))
         except Exception as exc:
             run["status"] = "error"
             ref = new_request_id()
             self.errors.append({"stage": stage, "error": "ingestion_failed", "ref": ref})
             run["errors"] = list(self.errors)
             logger.error("ingestion_cycle_failed", stage=stage, request_id=ref, error=str(exc))
-            INGEST_CYCLE_ERRORS_TOTAL.inc()
         finally:
             await splunk.close()
-            run["finished_at"] = datetime.now(UTC)
+            run["finished_at"] = datetime.now(timezone.utc)
             self.total_fetched = run["fetched"]
-
-            # Record Prometheus metrics for this cycle
-            INGEST_EVENTS_TOTAL.inc(run["fetched"])
-            INGEST_ALERTS_NEW_TOTAL.inc(run["alerts_new"])
-            INGEST_ALERTS_SEEN_TOTAL.inc(run["alerts_seen"])
-            INGEST_RULE_ERRORS_TOTAL.inc(run["rule_errors"])
-            for reason, count in run["suppressed"].items():
-                INGEST_SUPPRESSED_TOTAL.labels(reason=reason).inc(count)
-            INGEST_CYCLE_DURATION_SECONDS.observe(time.monotonic() - _cycle_start)
-
             try:
                 await self.db[self.RUNS_COLLECTION].insert_one(run)
             except Exception as exc:  # health bookkeeping must never mask the real result

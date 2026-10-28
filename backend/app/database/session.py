@@ -3,9 +3,7 @@ MongoDB Async Database Client Provider.
 """
 
 from motor.motor_asyncio import AsyncIOMotorClient
-
 from app.core.config import settings
-
 
 class DatabaseConfig:
     client: AsyncIOMotorClient = None

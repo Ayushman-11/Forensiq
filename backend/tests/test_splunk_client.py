@@ -2,6 +2,7 @@
 Unit tests for SplunkClient normalization and event conversion logic.
 """
 
+import pytest
 from app.infrastructure.siem.splunk import SplunkClient
 from app.schemas.normalized_event import NormalizedEvent
 
