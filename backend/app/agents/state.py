@@ -28,3 +28,4 @@ class AgentState(TypedDict):
     mitre_mappings: List[Dict[str, Any]]
     timeline: List[Dict[str, Any]]
     recommendation: Optional[str]
+    recommendation_engine: Optional[str]

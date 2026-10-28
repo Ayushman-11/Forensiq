@@ -29,6 +29,19 @@ async def lifespan(app: FastAPI):
     """Application lifespan context manager handling startup and shutdown events."""
     setup_logging()
     logger.info("forensiq_backend_startup", env=settings.ENV, debug=settings.DEBUG)
+    missing = missing_integrations(settings)
+    if "threat_intel" in missing:
+        logger.warning(
+            "threat_intel_not_configured",
+            missing=missing["threat_intel"],
+            message="IOC enrichment returns no verdict from these feeds until their keys are set",
+        )
+    if "llm" in missing:
+        logger.warning(
+            "llm_not_configured",
+            missing=missing["llm"],
+            message="risk and recommendation agents will use deterministic rules",
+        )
     # Fail fast on a broken noise policy instead of failing every ingestion cycle.
     NoiseFilter.from_yaml(settings.NOISE_CONFIG_PATH)
     await connect_to_mongo()
@@ -53,7 +66,7 @@ async def lifespan(app: FastAPI):
 
     global poller
     if db_config.client:
-        poller = AlertPoller(db_config.client[settings.MONGO_DB_NAME], interval_seconds=30)
+        poller = AlertPoller(db_config.client[settings.MONGO_DB_NAME], interval_seconds=settings.POLLER_INTERVAL_SECONDS)
         poller.start()
 
     yield
