@@ -29,6 +29,7 @@ from app.normalization.clean import parse_ts
 from app.normalization.dedup import RuleHit, aggregate_failed_logons, group_hits
 from app.normalization.mappers import to_canonical
 from app.normalization.noise import NoiseFilter
+from app.services.incidents import link_alerts
 from app.services.detection_rules import DetectionRuleEngine
 
 BRUTE_FORCE_RULE = "brute_force_login"
@@ -179,6 +180,11 @@ class IngestionService:
                 run["alerts_new"] += 1
             else:
                 run["alerts_seen"] += 1
+        if new_alerts:
+            try:
+                await link_alerts(self.db, new_alerts, self.noise)
+            except Exception as exc:  # grouping is derived data; it must never fail ingestion
+                logger.error("incident_linking_failed", error=str(exc))
         return new_alerts
 
     # -- public entry point ---------------------------------------------
