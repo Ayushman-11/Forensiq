@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 
-import { API_BASE, getAccessToken } from "@/lib/auth";
+import { API_BASE, getAccessToken, getWsTicket } from "@/lib/auth";
 import type { AlertRecord, PipelineStep, StepStatus } from "@/lib/types";
 import ProcessTreeGraph from "@/components/investigation/ProcessTreeGraph";
 
@@ -68,8 +68,8 @@ const INITIAL_STEPS: PipelineStep[] = [
   {
     step: 6,
     node: "assess_risk",
-    name: "AI Risk Assessment",
-    description: "Scoring threat impact, confidence, and blast radius via Grok AI engine",
+    name: "Risk Assessment",
+    description: "Scoring threat impact, confidence, and blast radius (LLM when configured, otherwise rules engine)",
     status: "pending",
   },
   {
@@ -161,21 +161,13 @@ export default function InvestigationModal({
     setStreamError(null);
     setFinalAlert(null);
     setTransport("connecting");
-    setLogs([`[${new Date().toLocaleTimeString()}] Initializing AI agent investigation pipeline for alert: ${alert.title}`]);
+    setLogs([`[${new Date().toLocaleTimeString()}] Initializing investigation pipeline for alert: ${alert.title}`]);
 
     let isCancelled = false;
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
-    function buildWebSocketUrl(): string {
-      const token = getAccessToken() || "";
-      let base = API_BASE;
-      if (typeof window !== "undefined" && !base.startsWith("http")) {
-        base = `${window.location.protocol}//${window.location.host}${base}`;
-      }
-      const wsBase = base.replace(/^http:/, "ws:").replace(/^https:/, "wss:");
-      return `${wsBase}/api/v1/alerts/${encodeURIComponent(alert._id)}/ws?token=${encodeURIComponent(token)}`;
-    }
+
 
     async function startSSEFallback() {
       if (isCancelled || completedRef.current) return;
@@ -379,7 +371,7 @@ export default function InvestigationModal({
       setFinalAlert(updated);
       setLogs((prev) => [
         ...prev,
-        `[${time}] Pipeline investigation complete! Risk Score: ${updated?.risk_score ?? "N/A"}/100, AI Confidence: ${updated?.ai_confidence ?? "N/A"}%.`,
+        `[${time}] Pipeline investigation complete! Risk Score: ${updated?.risk_score ?? "N/A"}/100, Confidence: ${updated?.ai_confidence ?? "N/A"}% (${engineLabel(updated?.engines?.risk)}).`,
       ]);
       if (updated) {
         onComplete(updated);
@@ -788,7 +780,7 @@ export default function InvestigationModal({
                 <span>
                   Priority:{" "}
                   <strong className="capitalize text-[var(--color-text)]">
-                    {finalAlert.priority ?? "medium"}
+                    {finalAlert.priority ?? "—"}
                   </strong>
                 </span>
                 <span>•</span>
@@ -798,6 +790,19 @@ export default function InvestigationModal({
                     {finalAlert.mitre_mappings?.length ?? 0}
                   </strong>
                 </span>
+                <span>•</span>
+                <span title="Engine that produced the risk score">
+                  Assessed by:{" "}
+                  <strong className="text-[var(--color-text)]">{engineLabel(finalAlert.engines?.risk)}</strong>
+                </span>
+                {finalAlert.unavailable_feeds && finalAlert.unavailable_feeds.length > 0 && (
+                  <>
+                    <span>•</span>
+                    <span className="text-[#F59E0B]" title="These threat-intel feeds returned no verdict for this run">
+                      No verdict from: {finalAlert.unavailable_feeds.join(", ")}
+                    </span>
+                  </>
+                )}
               </span>
             )}
           </div>

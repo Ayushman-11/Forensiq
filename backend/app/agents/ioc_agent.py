@@ -1,7 +1,8 @@
 """
 IOC Enrichment Agent Node for LangGraph.
 Queries threat intelligence feeds (VirusTotal v3 and AbuseIPDB v2) with
-persistent MongoDB caching and fallback heuristics to identify malicious indicators.
+persistent MongoDB caching. A feed that is unconfigured or failing yields no verdict,
+never a simulated one.
 """
 
 import asyncio
@@ -26,6 +27,9 @@ class Enrichment(BaseModel):
     source: str
     raw_response: dict
     cached: bool = False
+    # ok: the feed answered. not_configured / error: no verdict exists, so the
+    # result must not raise risk, be cached, or be shown as a reputation.
+    status: str = "ok"
 
 
 def _get_ioc_type(ioc: str) -> str:
@@ -53,7 +57,16 @@ async def _get_cached_enrichment(db, ioc: str, source: str) -> Enrichment | None
                     return None
             data = doc.get("data", {})
             data["cached"] = True
-            return Enrichment(**data)
+            enrichment = Enrichment(**data)
+            if enrichment.status != "ok":
+                return None
+            # Re-derive the verdict so threshold changes apply to cached entries too.
+            raw = enrichment.raw_response or {}
+            if source == "VirusTotal":
+                enrichment.reputation = _vt_verdict(raw)
+            elif source == "AbuseIPDB" and "abuseConfidenceScore" in raw:
+                enrichment.reputation = _abuseipdb_verdict(int(raw["abuseConfidenceScore"]))
+            return enrichment
     except Exception as e:
         logger.warning("ioc_cache_read_error", ioc=ioc, source=source, error=str(e))
     return None
@@ -78,66 +91,38 @@ async def _save_cached_enrichment(db, enrichment: Enrichment) -> None:
         logger.warning("ioc_cache_write_error", ioc=enrichment.ioc, source=enrichment.source, error=str(e))
 
 
-def _mock_vt_enrichment(ioc: str, ioc_type: str, source: str) -> Enrichment:
-    """Simulates realistic VirusTotal intelligence based on indicator patterns."""
-    is_malicious = False
-    reputation = "benign"
-    threat_score = 0
-
-    if ioc_type == "ip":
-        if ioc.startswith("47.") or ioc.startswith("185.") or ioc.startswith("104.") or ioc.startswith("194.") or ioc.startswith("45."):
-            is_malicious = True
-            threat_score = 88
-            reputation = "malicious"
-    elif ioc_type == "domain":
-        if any(bad in ioc.lower() for bad in ["ngrok", "raw.githubusercontent", "pastebin", "dyndns", "bit.ly", "payload"]):
-            is_malicious = True
-            threat_score = 95
-            reputation = "malicious"
-    elif ioc_type == "hash":
-        if any(h in ioc.lower() for h in ["ba4038fd", "097ce576"]):
-            is_malicious = True
-            threat_score = 92
-            reputation = "malicious"
-
+def _unavailable(ioc: str, ioc_type: str, source: str, status: str, reason: str) -> Enrichment:
+    """A feed that could not be consulted: no verdict, and never cached or counted as evidence."""
     return Enrichment(
         ioc=ioc,
         ioc_type=ioc_type,
-        reputation=reputation,
-        threat_score=threat_score,
+        reputation="unknown",
+        threat_score=0,
         source=source,
-        raw_response={"mock_reason": f"Simulated VT {reputation} telemetry"},
-        cached=False,
+        raw_response={"reason": reason},
+        status=status,
     )
 
 
-def _mock_abuseipdb_enrichment(ioc: str, source: str) -> Enrichment:
-    """Simulates realistic AbuseIPDB abuse reports based on IP ranges."""
-    is_malicious = False
-    reputation = "benign"
-    threat_score = 0
-    total_reports = 0
+def _vt_verdict(stats: dict) -> str:
+    """One stray engine is noise; only a quorum of engines makes an IOC malicious."""
+    malicious = stats.get("malicious", 0)
+    suspicious = stats.get("suspicious", 0)
+    if malicious >= settings.VT_MALICIOUS_MIN_ENGINES:
+        return "malicious"
+    if malicious > 0 or suspicious > 0:
+        return "suspicious"
+    if stats.get("harmless", 0) > 0:
+        return "benign"
+    return "unknown"
 
-    if ioc.startswith("45.") or ioc.startswith("185.") or ioc.startswith("194.") or ioc.startswith("47."):
-        is_malicious = True
-        threat_score = 85
-        total_reports = 64
-        reputation = "malicious"
 
-    return Enrichment(
-        ioc=ioc,
-        ioc_type="ip",
-        reputation=reputation,
-        threat_score=threat_score,
-        source=source,
-        raw_response={
-            "abuseConfidenceScore": threat_score,
-            "totalReports": total_reports,
-            "countryCode": "RU" if is_malicious else "US",
-            "mock_reason": f"Simulated AbuseIPDB {reputation} data",
-        },
-        cached=False,
-    )
+def _abuseipdb_verdict(score: int) -> str:
+    if score >= settings.ABUSEIPDB_MALICIOUS_MIN_SCORE:
+        return "malicious"
+    if score >= settings.ABUSEIPDB_SUSPICIOUS_MIN_SCORE:
+        return "suspicious"
+    return "benign"
 
 
 async def _query_vt(ioc: str, ioc_type: str, db=None) -> Enrichment:
@@ -153,9 +138,7 @@ async def _query_vt(ioc: str, ioc_type: str, db=None) -> Enrichment:
     }.get(ioc_type, "domains")
 
     if not settings.VT_API_KEY:
-        res = _mock_vt_enrichment(ioc, ioc_type, "VirusTotal (Mock)")
-        await _save_cached_enrichment(db, res)
-        return res
+        return _unavailable(ioc, ioc_type, "VirusTotal", "not_configured", "VT_API_KEY is not set")
 
     url = f"https://www.virustotal.com/api/v3/{endpoint}/{ioc}"
     headers = {"x-apikey": settings.VT_API_KEY, "Accept": "application/json"}
@@ -175,14 +158,7 @@ async def _query_vt(ioc: str, ioc_type: str, db=None) -> Enrichment:
             total = malicious + suspicious + harmless + undetected
             threat_score = int((malicious / total) * 100) if total > 0 else 0
 
-            if malicious > 0:
-                reputation = "malicious"
-            elif suspicious > 0:
-                reputation = "suspicious"
-            elif harmless > 0:
-                reputation = "benign"
-            else:
-                reputation = "unknown"
+            reputation = _vt_verdict(stats)
 
             res = Enrichment(
                 ioc=ioc,
@@ -197,8 +173,7 @@ async def _query_vt(ioc: str, ioc_type: str, db=None) -> Enrichment:
             return res
     except Exception as e:
         logger.error("vt_api_error", ioc=ioc, error=str(e))
-        res = _mock_vt_enrichment(ioc, ioc_type, "VirusTotal (Error Fallback)")
-        return res
+        return _unavailable(ioc, ioc_type, "VirusTotal", "error", type(e).__name__)
 
 
 async def _query_abuseipdb(ioc: str, db=None) -> Enrichment:
@@ -208,9 +183,7 @@ async def _query_abuseipdb(ioc: str, db=None) -> Enrichment:
         return cached
 
     if not settings.ABUSEIPDB_API_KEY:
-        res = _mock_abuseipdb_enrichment(ioc, "AbuseIPDB (Mock)")
-        await _save_cached_enrichment(db, res)
-        return res
+        return _unavailable(ioc, "ip", "AbuseIPDB", "not_configured", "ABUSEIPDB_API_KEY is not set")
 
     url = "https://api.abuseipdb.com/api/v2/check"
     headers = {"Key": settings.ABUSEIPDB_API_KEY, "Accept": "application/json"}
@@ -223,12 +196,7 @@ async def _query_abuseipdb(ioc: str, db=None) -> Enrichment:
             data = resp.json().get("data", {})
 
             abuse_score = int(data.get("abuseConfidenceScore", 0))
-            if abuse_score >= 50:
-                reputation = "malicious"
-            elif abuse_score >= 20:
-                reputation = "suspicious"
-            else:
-                reputation = "benign"
+            reputation = _abuseipdb_verdict(abuse_score)
 
             res = Enrichment(
                 ioc=ioc,
@@ -249,8 +217,7 @@ async def _query_abuseipdb(ioc: str, db=None) -> Enrichment:
             return res
     except Exception as e:
         logger.error("abuseipdb_api_error", ioc=ioc, error=str(e))
-        res = _mock_abuseipdb_enrichment(ioc, "AbuseIPDB (Error Fallback)")
-        return res
+        return _unavailable(ioc, "ip", "AbuseIPDB", "error", type(e).__name__)
 
 
 async def enrich_ioc_node(state: AgentState) -> dict[str, Any]:
@@ -285,12 +252,14 @@ async def enrich_ioc_node(state: AgentState) -> dict[str, Any]:
     malicious_count = sum(1 for r in results if r.reputation == "malicious")
     suspicious_count = sum(1 for r in results if r.reputation == "suspicious")
     cached_count = sum(1 for r in results if r.cached)
+    unavailable = sorted({f"{r.source} ({r.status})" for r in results if r.status != "ok"})
 
     cache_str = f" ({cached_count} served from MongoDB cache)" if cached_count > 0 else ""
+    gap_str = f" No verdict from: {', '.join(unavailable)}." if unavailable else ""
     current_log = state.get("investigation_log", [])
     new_log = current_log + [
         f"IOC Enrichment Agent: checked {len(results)} feed records across {len(extracted_iocs)} IOCs{cache_str}. "
-        f"{malicious_count} malicious, {suspicious_count} suspicious."
+        f"{malicious_count} malicious, {suspicious_count} suspicious.{gap_str}"
     ]
 
     logger.info(

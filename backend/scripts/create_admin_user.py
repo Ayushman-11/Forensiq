@@ -3,11 +3,16 @@ CLI script to bootstrap the first admin user in MongoDB.
 
 Usage:
     cd backend
-    ./venv/Scripts/python.exe scripts/create_admin_user.py --email admin@forensiq.ai --password "change-me"
+    ./venv/Scripts/python.exe scripts/create_admin_user.py --email admin@corp.local
+
+The password is prompted for (never pass it on the command line: it lands in shell history).
+Set FORENSIQ_BOOTSTRAP_PASSWORD to supply it non-interactively, e.g. in automation.
 """
 
 import argparse
 import asyncio
+import getpass
+import os
 import sys
 import uuid
 
@@ -17,12 +22,13 @@ sys.path.insert(0, ".")  # allow `python scripts/create_admin_user.py` from back
 
 from app.core.config import settings
 from app.core.security import hash_password
+from app.schemas.auth import normalize_email
 
 
 async def create_admin(email: str, password: str, role: str) -> None:
     client = AsyncIOMotorClient(settings.MONGO_URI)
     db = client[settings.MONGO_DB_NAME]
-    email = email.strip().lower()
+    email = normalize_email(email)
 
     existing = await db["users"].find_one({"email": email})
     if existing:
@@ -49,12 +55,18 @@ async def create_admin(email: str, password: str, role: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Bootstrap a Forensiq user.")
     parser.add_argument("--email", required=True)
-    parser.add_argument("--password", required=True)
     parser.add_argument(
         "--role", default="admin", choices=["admin", "soc_manager", "soc_analyst"]
     )
     args = parser.parse_args()
-    asyncio.run(create_admin(args.email, args.password, args.role))
+    try:
+        normalize_email(args.email)
+    except ValueError as exc:
+        parser.error(str(exc))
+    password = os.environ.get("FORENSIQ_BOOTSTRAP_PASSWORD") or getpass.getpass("Password: ")
+    if not password or len(password.encode("utf-8")) > 72:
+        parser.error("password must be 1-72 bytes")
+    asyncio.run(create_admin(args.email, password, args.role))
 
 
 if __name__ == "__main__":

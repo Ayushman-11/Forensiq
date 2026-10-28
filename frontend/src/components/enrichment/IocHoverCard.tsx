@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Copy, Check, ExternalLink, ShieldAlert, ShieldCheck, AlertTriangle, Search, Globe, Hash } from "lucide-react";
 import Link from "next/link";
 import { defangIoc, detectIocType, type IocType } from "@/lib/defang";
-import type { Enrichment } from "@/lib/types";
+import { noVerdictLabel, type Enrichment } from "@/lib/types";
 
 interface IocHoverCardProps {
   ioc: string;
@@ -43,7 +43,7 @@ export default function IocHoverCard({
     setTimeout(() => setCopiedDefanged(false), 2000);
   };
 
-  const reputation = enrichment?.reputation?.toLowerCase() || "unknown";
+  const reputation = (enrichment && !noVerdictLabel(enrichment) && enrichment.reputation?.toLowerCase()) || "unknown";
   const isMalicious = reputation === "malicious";
   const isSuspicious = reputation === "suspicious";
   const isClean = reputation === "clean" || reputation === "benign";

@@ -16,8 +16,28 @@ _HEX_RE = re.compile(r"^[0-9a-fA-F]+$")
 _IPV4_ONLY_RE = re.compile(r"^[\d.]+$")
 
 
+def flatten_value(value: Any) -> Any:
+    """Collapse a multi-value Splunk field (list/tuple) to one string; scalars and None pass through.
+
+    Empty items are dropped and the rest joined with a single newline, so an XML blob that Splunk
+    returned in several pieces can still be parsed.
+    """
+    if isinstance(value, (list, tuple)):
+        return chr(10).join(str(item) for item in value if item is not None and str(item) != "")
+    return value
+
+
 def clean_value(value: Any) -> str | None:
-    """Strip whitespace and map Splunk/Windows 'empty' markers to None."""
+    """Strip whitespace and map Splunk/Windows 'empty' markers to None.
+
+    For a multi-value (list) field the first non-empty element is the value.
+    """
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            cleaned = clean_value(item)
+            if cleaned is not None:
+                return cleaned
+        return None
     if value is None:
         return None
     text = str(value).strip().strip("\x00")
@@ -26,7 +46,9 @@ def clean_value(value: Any) -> str | None:
 
 def xml_fields(raw: dict) -> dict[str, str]:
     """Recover `<Data Name='X'>value</Data>` pairs from the EventData_Xml blob."""
-    xml = raw.get("EventData_Xml") or ""
+    xml = flatten_value(raw.get("EventData_Xml")) or ""
+    if not isinstance(xml, str):
+        xml = str(xml)
     return {name: html.unescape(value) for name, value in _XML_DATA_RE.findall(xml)}
 
 

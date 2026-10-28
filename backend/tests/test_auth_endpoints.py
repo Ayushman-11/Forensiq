@@ -91,3 +91,19 @@ async def test_logout_revokes_refresh_token(auth_app, seeded_user):
 
         refresh_after_logout = await c.post("/auth/refresh", json={"refresh_token": refresh_token})
         assert refresh_after_logout.status_code == 401
+
+
+@pytest.mark.parametrize("email", ["admin@corp.local", "soc@forensiq.test", "Analyst@Example.COM"])
+def test_login_accepts_directory_style_domains(email):
+    from app.schemas.auth import LoginRequest
+
+    assert LoginRequest(email=email, password="x").email == email.lower()
+
+
+@pytest.mark.parametrize("email", ["no-at-sign", "two@@at.com", "space in@corp.local", ""])
+def test_login_rejects_malformed_emails(email):
+    from pydantic import ValidationError
+    from app.schemas.auth import LoginRequest
+
+    with pytest.raises(ValidationError):
+        LoginRequest(email=email, password="x")

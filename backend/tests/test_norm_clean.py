@@ -90,3 +90,45 @@ def test_real_rows_have_recoverable_fields(splunk_rows):
         for row in rows:
             merged = merged_fields(row)
             assert merged["EventCode"] == code
+
+
+# --- list-valued (multi-value) Splunk fields -------------------------------
+
+def test_flatten_value_joins_lists_and_keeps_scalars():
+    from app.normalization.clean import flatten_value
+    assert flatten_value(["a", "", None, "b"]) == "a\nb"
+    assert flatten_value(("x",)) == "x"
+    assert flatten_value([]) == ""
+    assert flatten_value("s") == "s"
+    assert flatten_value(5) == 5
+    assert flatten_value(None) is None
+
+
+def test_clean_value_uses_first_non_empty_list_element():
+    assert clean_value(["a", "b"]) == "a"
+    assert clean_value(["", "-", " c "]) == "c"
+    assert clean_value(["-", ""]) is None
+    assert clean_value([]) is None
+    assert clean_value(("t", "u")) == "t"
+
+
+def test_xml_fields_parses_blob_split_across_list_items():
+    parts = ["<Data Name='Image'>C:/a/b.exe</Data>", "<Data Name='User'>Lab/usr</Data>"]
+    assert xml_fields({"EventData_Xml": parts}) == {"Image": "C:/a/b.exe", "User": "Lab/usr"}
+    assert xml_fields({"EventData_Xml": [parts[0], "", None]}) == {"Image": "C:/a/b.exe"}
+    assert xml_fields({"EventData_Xml": []}) == {}
+
+
+def test_merged_fields_handles_list_valued_scalars():
+    raw = {
+        "EventData_Xml": ["<Data Name='Image'>C:/x.exe</Data>"],
+        "host": ["H1", "H1"],
+        "Channel": ["", "Security", "Security"],
+        "empty": [],
+        "_time": ["2026-01-01T00:00:00Z"],
+    }
+    merged = merged_fields(raw)
+    assert merged["Image"] == "C:/x.exe"
+    assert merged["host"] == "H1"
+    assert merged["Channel"] == "Security"
+    assert "empty" not in merged and "_time" not in merged

@@ -1,4 +1,4 @@
-"""Collapse repeated detections into one alert and derive stable IDs."""
+"""Collapse repeated detections into one alert and derive deterministic fingerprint IDs."""
 
 from __future__ import annotations
 
@@ -33,8 +33,9 @@ class AlertGroup:
 
 
 def stable_id(*parts: object) -> str:
-    material = "\x1f".join("" if p is None else str(p) for p in parts)
-    return hashlib.sha256(material.encode()).hexdigest()[:32]
+    """Calculates deterministic SHA-256 fingerprint for deduplication."""
+    material = "\x1f".join("" if p is None else str(p).strip().lower() for p in parts)
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:32]
 
 
 def _utc(ts: datetime) -> datetime:
@@ -47,38 +48,59 @@ def _bucket(ts: datetime, bucket_seconds: int) -> int:
 
 
 def _entity_key(ev: CanonicalEvent) -> tuple:
-    """Fields that define 'the same detection' for each event type."""
+    """Normalized fields that define 'the same detection' for each event type across ingestion cycles."""
     code = ev.event_code
     if code in ("1", "4688"):
-        return (ev.process, ev.command_line)
+        cmd_clean = " ".join((ev.command_line or "").lower().split())
+        return (ev.process or "", cmd_clean)
     if code == "3":
-        return (ev.process, ev.dst_ip, ev.dst_port)
+        return (ev.process or "", ev.dst_ip or "", str(ev.dst_port or 0))
     if code == "13":
-        return (ev.registry_key,)
+        return ((ev.registry_key or "").lower(),)
     if code == "22":
-        return (ev.process, ev.query_name)
+        return (ev.process or "", (ev.query_name or "").lower())
     if code == "4104":
-        return (hashlib.sha256((ev.script_block or "").encode()).hexdigest(),)
+        return (hashlib.sha256((ev.script_block or "").strip().encode("utf-8")).hexdigest()[:16],)
     if code == "4648":
-        return (ev.subject_user, ev.target_user)
+        return (ev.subject_user or "", ev.target_user or "")
     if code == "4625":
         return (ev.src_ip or ev.workstation or "unknown",)
-    return (ev.event_id,)
+    return (ev.event_id or "",)
 
 
 def group_hits(hits: Iterable[RuleHit], org_id: str, bucket_seconds: int) -> list[AlertGroup]:
+    """
+    Groups hits using deterministic fingerprinting.
+    Includes rule name, host_key, target user, time bucket, and core entity keys.
+    Prevents duplicates even when polling cycles overlap.
+    """
     groups: dict[str, AlertGroup] = {}
     for hit in hits:
         ev = hit.event
         ts = _utc(ev.ts)
         bucket = _bucket(ts, bucket_seconds)
         user = None if ev.event_code == "4625" else ev.user
-        alert_id = stable_id(org_id, hit.rule.name, ev.host_key, user, bucket, *_entity_key(ev))
+        
+        # Build deterministic fingerprint
+        alert_id = stable_id(
+            org_id,
+            hit.rule.name,
+            ev.host_key,
+            user,
+            bucket,
+            *_entity_key(ev),
+        )
+        
         group = groups.get(alert_id)
         if group is None:
             groups[alert_id] = AlertGroup(
-                alert_id=alert_id, rule=hit.rule, first=ev, count=hit.count,
-                first_seen=ts, last_seen=ts, events=[ev],
+                alert_id=alert_id,
+                rule=hit.rule,
+                first=ev,
+                count=hit.count,
+                first_seen=ts,
+                last_seen=ts,
+                events=[ev],
             )
             continue
         group.count += hit.count

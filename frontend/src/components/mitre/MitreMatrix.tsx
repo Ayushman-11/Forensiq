@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   Crosshair, 
@@ -146,6 +146,7 @@ export default function MitreMatrix({ className = "" }: { className?: string }) 
   const [loading, setLoading] = useState(true);
   const [searchFilter, setSearchFilter] = useState("");
   const [selectedTech, setSelectedTech] = useState<MitreTechnique | null>(null);
+  const [totals, setTotals] = useState<{ techniques: number; mappedAlerts: number } | null>(null);
 
   const loadMitreData = async () => {
     try {
@@ -162,6 +163,7 @@ export default function MitreMatrix({ className = "" }: { className?: string }) 
           }
         }
         setMitreStats(map);
+        setTotals({ techniques: (data.techniques || []).length, mappedAlerts: data.total_mapped_alerts ?? 0 });
       }
     } catch (e) {
       console.error("Failed to load MITRE stats:", e);
@@ -174,15 +176,6 @@ export default function MitreMatrix({ className = "" }: { className?: string }) 
     void loadMitreData();
   }, []);
 
-  const { totalActiveDetections, totalAlertHits } = useMemo(() => {
-    let detections = 0;
-    let hits = 0;
-    Object.values(mitreStats).forEach((t) => {
-      detections++;
-      hits += t.count;
-    });
-    return { totalActiveDetections: detections, totalAlertHits: hits };
-  }, [mitreStats]);
 
   const [filterActiveOnly, setFilterActiveOnly] = useState(false);
 
@@ -200,7 +193,7 @@ export default function MitreMatrix({ className = "" }: { className?: string }) 
                 MITRE ATT&CK Matrix & Heatmap
               </h2>
               <span className="text-[10px] px-1.5 py-0.2 rounded font-mono font-medium bg-[var(--surface-elevated)] text-[var(--text-secondary)] border border-[var(--border-color)]">
-                Enterprise v14
+                Curated subset
               </span>
             </div>
             <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
@@ -214,11 +207,11 @@ export default function MitreMatrix({ className = "" }: { className?: string }) 
           {/* Quick Metrics */}
           <div className="flex items-center gap-2.5 text-xs font-mono border-r border-[var(--border-color)] pr-2.5">
             <span className="text-[var(--text-muted)]">
-              Active TTPs: <strong className="text-[var(--text-primary)]">{totalActiveDetections || 6}</strong>
+              Observed techniques: <strong className="text-[var(--text-primary)]">{totals ? totals.techniques : "—"}</strong>
             </span>
             <span className="text-[var(--text-muted)]">•</span>
             <span className="text-[var(--text-muted)]">
-              Hits: <strong className="text-[var(--text-primary)]">{totalAlertHits || 112}</strong>
+              Mapped alerts: <strong className="text-[var(--text-primary)]">{totals ? totals.mappedAlerts : "—"}</strong>
             </span>
           </div>
 
@@ -300,7 +293,7 @@ export default function MitreMatrix({ className = "" }: { className?: string }) 
           {ENTERPRISE_TACTICS.map((tactic) => {
             const visibleTechniques = tactic.techniques.filter((tech) => {
               const stats = mitreStats[tech.id.toUpperCase()] || mitreStats[tech.id.split(".")[0].toUpperCase()];
-              const count = stats?.count || (tech.id === "T1059.001" ? 42 : tech.id === "T1003" ? 28 : tech.id === "T1110" ? 18 : tech.id === "T1547.001" ? 14 : tech.id === "T1071.001" ? 9 : 0);
+              const count = stats?.count ?? 0;
               
               if (filterActiveOnly && count === 0) return false;
               if (!searchFilter) return true;
@@ -335,7 +328,7 @@ export default function MitreMatrix({ className = "" }: { className?: string }) 
                   ) : (
                     visibleTechniques.map((tech) => {
                       const stats = mitreStats[tech.id.toUpperCase()] || mitreStats[tech.id.split(".")[0].toUpperCase()];
-                      const count = stats?.count || (tech.id === "T1059.001" ? 42 : tech.id === "T1003" ? 28 : tech.id === "T1110" ? 18 : tech.id === "T1547.001" ? 14 : tech.id === "T1071.001" ? 9 : 0);
+                      const count = stats?.count ?? 0;
                       const severity = stats?.severity || (count > 25 ? "critical" : count > 10 ? "high" : count > 0 ? "medium" : "low");
 
                       return (

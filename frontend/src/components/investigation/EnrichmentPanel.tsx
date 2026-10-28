@@ -3,7 +3,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Radar, AlertTriangle, Eye, CheckCircle, Clock, ShieldAlert } from 'lucide-react';
-import type { AlertRecord, Enrichment } from '@/lib/types';
+import { noVerdictLabel, type AlertRecord, type Enrichment } from '@/lib/types';
 import IocHoverCard from '@/components/enrichment/IocHoverCard';
 
 export default function EnrichmentPanel({ alert }: { alert: AlertRecord }) {
@@ -31,8 +31,8 @@ export default function EnrichmentPanel({ alert }: { alert: AlertRecord }) {
     );
   }
 
-  const maliciousCount = enrichments.filter((e: Enrichment) => e.reputation === 'malicious').length;
-  const suspiciousCount = enrichments.filter((e: Enrichment) => e.reputation === 'suspicious').length;
+  const maliciousCount = enrichments.filter((e: Enrichment) => !noVerdictLabel(e) && e.reputation === 'malicious').length;
+  const suspiciousCount = enrichments.filter((e: Enrichment) => !noVerdictLabel(e) && e.reputation === 'suspicious').length;
   const notEnrichedYet = enrichments.length === 0;
 
   return (
@@ -99,6 +99,14 @@ export default function EnrichmentPanel({ alert }: { alert: AlertRecord }) {
                       <IocHoverCard ioc={e.ioc} type={e.ioc_type} enrichment={e} showBadge={false} />
                       <div className="text-[10px] text-slate-400 uppercase tracking-wider mt-1 font-semibold">{e.ioc_type}</div>
                     </div>
+                    {noVerdictLabel(e) ? (
+                      <span
+                        className="px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase tracking-wider border shrink-0 bg-amber-500/10 text-amber-300 border-amber-500/40"
+                        title="This feed gave no verdict; the result is not used as evidence"
+                      >
+                        {noVerdictLabel(e)}
+                      </span>
+                    ) : (
                     <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase tracking-wider border shrink-0 ${
                       e.reputation === 'malicious' ? 'bg-rose-500/15 text-rose-300 border-rose-500/40 shadow-[0_0_8px_rgba(244,63,94,0.3)]' :
                       e.reputation === 'suspicious' ? 'bg-orange-500/15 text-orange-300 border-orange-500/40' :
@@ -107,9 +115,11 @@ export default function EnrichmentPanel({ alert }: { alert: AlertRecord }) {
                     }`}>
                       {e.reputation}
                     </span>
+                    )}
                   </div>
 
                   {/* Threat Score Bar */}
+                  {!noVerdictLabel(e) && (
                   <div className="flex items-center gap-3 mt-3">
                     <div className="flex-1 bg-[#070B12] border border-[#1C2C44] rounded-full h-2 overflow-hidden p-0.5">
                       <motion.div
@@ -127,6 +137,7 @@ export default function EnrichmentPanel({ alert }: { alert: AlertRecord }) {
                       {e.threat_score ?? 0}<span className="text-slate-400 text-[10px]">/100</span>
                     </span>
                   </div>
+                  )}
 
                   <div className="mt-1.5 text-[10px] text-slate-400 font-mono flex items-center justify-between">
                     <span>Source: {e.source || "Threat Intel Feed"}</span>

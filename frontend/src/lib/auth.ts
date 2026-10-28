@@ -1,34 +1,30 @@
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
 
-const ACCESS_TOKEN_KEY = "forensiq_access_token";
-const REFRESH_TOKEN_KEY = "forensiq_refresh_token";
+// In-memory token storage to defend against XSS account takeover
+let _inMemoryAccessToken: string | null = null;
 
 export function getAccessToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return window.localStorage.getItem(ACCESS_TOKEN_KEY);
+  return _inMemoryAccessToken;
 }
 
-export function getRefreshToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return window.localStorage.getItem(REFRESH_TOKEN_KEY);
-}
-
-export function setTokens(access: string, refresh: string): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(ACCESS_TOKEN_KEY, access);
-  window.localStorage.setItem(REFRESH_TOKEN_KEY, refresh);
+export function setAccessToken(token: string | null): void {
+  _inMemoryAccessToken = token;
 }
 
 export function clearTokens(): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.removeItem(ACCESS_TOKEN_KEY);
-  window.localStorage.removeItem(REFRESH_TOKEN_KEY);
+  _inMemoryAccessToken = null;
+  if (typeof window !== "undefined") {
+    // Clean up any legacy localStorage tokens from older sessions
+    window.localStorage.removeItem("forensiq_access_token");
+    window.localStorage.removeItem("forensiq_refresh_token");
+  }
 }
 
 export interface DecodedUser {
   email: string;
   role: string;
   sub: string;
+  org_id?: string;
 }
 
 export function decodeUser(accessToken: string): DecodedUser | null {
@@ -41,7 +37,29 @@ export function decodeUser(accessToken: string): DecodedUser | null {
     if (typeof json.email !== "string" || typeof json.role !== "string" || typeof json.sub !== "string") {
       return null;
     }
-    return { email: json.email, role: json.role, sub: json.sub };
+    return { email: json.email, role: json.role, sub: json.sub, org_id: json.org_id };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetches a single-use ticket for connecting WebSocket streams securely without
+ * leaking access tokens into query strings.
+ */
+export async function getWsTicket(): Promise<string | null> {
+  const token = getAccessToken();
+  if (!token) return null;
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/auth/ws-ticket`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.ticket || null;
   } catch {
     return null;
   }
