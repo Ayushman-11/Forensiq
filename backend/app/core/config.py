@@ -1,15 +1,18 @@
 """
 Core Application Configuration Module.
 Enforces type safety and environment variable loading using Pydantic Settings v2.
+Integrates file-based secrets mounts (Vault/K8s/Docker secrets) and key rotation.
 """
 
 from pathlib import Path
-from typing import List
+from typing import List, Optional
+import os
+import urllib.parse
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from app.core.secrets import load_secret_from_file_or_env
+from app.core.logging import logger
 
-# Named constant so the "insecure default" comparison isn't a fragile string
-# duplicate between the field default and the production fail-fast check.
 DEFAULT_SECRET_KEY = "default-development-secret-key-must-change-in-prod-min-32-chars"
 DEFAULT_SPLUNK_PASSWORD = "ChangedPassword123!"
 
@@ -26,25 +29,48 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-
     # General Configuration
     ENV: str = Field(default="development", description="Application runtime environment")
     DEBUG: bool = Field(default=False, description="Enable debug mode and verbose logs")
+    SECRETS_DIR: Optional[str] = Field(
+        default=None,
+        description="Path to directory containing mounted secrets (e.g. /run/secrets or Vault mount)",
+    )
+
+    # Secret keys with rotation support
     SECRET_KEY: str = Field(
         default=DEFAULT_SECRET_KEY,
-        description="JWT signature secret key",
+        description="Active JWT signature secret key",
     )
+    PREVIOUS_SECRET_KEY: Optional[str] = Field(
+        default=None,
+        description="Previous JWT secret key accepted for 1 TTL during graceful key rotation",
+    )
+
     ALGORITHM: str = Field(default="HS256", description="JWT signing algorithm")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=30, description="Access token TTL in minutes")
     REFRESH_TOKEN_EXPIRE_MINUTES: int = Field(
         default=60 * 24 * 7, description="Refresh token TTL in minutes (7 days)"
     )
 
+    # Request body size limit
+    MAX_REQUEST_BODY_BYTES: int = Field(
+        default=2 * 1024 * 1024, # 2 MB default limit
+        description="Maximum allowed request payload size in bytes",
+    )
+
     # Splunk Provider Configuration
     SPLUNK_URL: str = Field(default="https://localhost:8089", description="Splunk REST Management API URL")
     SPLUNK_USERNAME: str = Field(default="admin", description="Splunk REST API username")
     SPLUNK_PASSWORD: str = Field(default=DEFAULT_SPLUNK_PASSWORD, description="Splunk REST API password")
-    SPLUNK_VERIFY_SSL: bool = Field(default=False, description="Verify SSL certificates for Splunk API")
+    SPLUNK_VERIFY_SSL: bool = Field(
+        default=True,
+        description="Verify TLS certificates for Splunk REST API. Only disable in dev with FORENSIQ_SPLUNK_VERIFY_SSL=false.",
+    )
+    SPLUNK_CA_BUNDLE: Optional[str] = Field(
+        default=None,
+        description="Path to a custom CA bundle (PEM file) for Splunk TLS verification. Leave empty to use system CAs.",
+    )
     SPLUNK_DEFAULT_INDEX: str = Field(default="main", description="Default Splunk index to search")
     SPLUNK_DETECTION_INDEX: str = Field(default="windows", description="Index containing detection telemetry")
     SPLUNK_ALLOWED_INDEXES: List[str] = Field(
@@ -55,6 +81,22 @@ class Settings(BaseSettings):
     # Login throttling
     LOGIN_MAX_FAILURES: int = Field(default=5, description="Failed logins per email+IP before lockout")
     LOGIN_LOCKOUT_MINUTES: int = Field(default=15, description="Lockout duration in minutes")
+
+    # API rate limiting (per-user sliding window)
+    RATE_LIMIT_SEARCH_MAX: int = Field(default=30, description="Max /search requests per window")
+    RATE_LIMIT_SEARCH_WINDOW: int = Field(default=60, description="/search rate limit window in seconds")
+    RATE_LIMIT_INVESTIGATE_MAX: int = Field(default=10, description="Max /investigate requests per window")
+    RATE_LIMIT_INVESTIGATE_WINDOW: int = Field(default=60, description="/investigate rate limit window in seconds")
+    RATE_LIMIT_REPORT_MAX: int = Field(default=10, description="Max report/PDF requests per window")
+    RATE_LIMIT_REPORT_WINDOW: int = Field(default=60, description="Report rate limit window in seconds")
+    RATE_LIMIT_BULK_MAX: int = Field(default=15, description="Max bulk-action requests per window")
+    RATE_LIMIT_BULK_WINDOW: int = Field(default=60, description="Bulk-action rate limit window in seconds")
+
+    # Trusted hosts (production)
+    TRUSTED_HOSTS: List[str] = Field(
+        default=["*"],
+        description="Allowed Host header values. Set to your domain(s) in production.",
+    )
 
     # Database Configuration
     MONGO_URI: str = Field(
@@ -118,23 +160,74 @@ class Settings(BaseSettings):
     )
 
     @model_validator(mode="after")
-    def _reject_insecure_production_settings(self) -> "Settings":
-        """Fail fast at startup if any non-development environment runs with insecure defaults."""
+    def _load_mounted_secrets_and_validate(self) -> "Settings":
+        """
+        1. Checks mounted secrets directory for external secrets override (e.g. Vault / K8s).
+        2. Validates security constraints for production environments.
+        """
+        # Load secrets from SECRETS_DIR if configured
+        if self.SECRETS_DIR:
+            self.SECRET_KEY = load_secret_from_file_or_env("secret_key", self.SECRET_KEY, self.SECRETS_DIR)
+            self.PREVIOUS_SECRET_KEY = load_secret_from_file_or_env("previous_secret_key", self.PREVIOUS_SECRET_KEY or "", self.SECRETS_DIR) or None
+            self.SPLUNK_PASSWORD = load_secret_from_file_or_env("splunk_password", self.SPLUNK_PASSWORD, self.SECRETS_DIR)
+            self.XAI_API_KEY = load_secret_from_file_or_env("xai_api_key", self.XAI_API_KEY, self.SECRETS_DIR)
+            self.VT_API_KEY = load_secret_from_file_or_env("vt_api_key", self.VT_API_KEY, self.SECRETS_DIR)
+            self.ABUSEIPDB_API_KEY = load_secret_from_file_or_env("abuseipdb_api_key", self.ABUSEIPDB_API_KEY, self.SECRETS_DIR)
+
+        # Warn if Threat Intel or LLM keys are absent in any environment
+        if not self.XAI_API_KEY:
+            logger.warning("config_warning_missing_llm_key", detail="FORENSIQ_XAI_API_KEY is not configured; AI agent investigations will fail.")
+        if not self.VT_API_KEY and not self.ABUSEIPDB_API_KEY:
+            logger.warning("config_warning_missing_threat_intel_keys", detail="Neither VT_API_KEY nor ABUSEIPDB_API_KEY are configured; IOC enrichment will be disabled.")
+
         if self.ENV.strip().lower() in _NON_PRODUCTION_ENVS:
             return self
+
         problems = []
+        # Production secret checks
         if self.SECRET_KEY == DEFAULT_SECRET_KEY:
             problems.append("FORENSIQ_SECRET_KEY must not be the insecure default development key")
         elif len(self.SECRET_KEY) < 32:
             problems.append("FORENSIQ_SECRET_KEY must be at least 32 characters")
+
         if self.SPLUNK_PASSWORD == DEFAULT_SPLUNK_PASSWORD:
             problems.append("FORENSIQ_SPLUNK_PASSWORD must not be the default")
         if not self.SPLUNK_PASSWORD:
             problems.append("FORENSIQ_SPLUNK_PASSWORD must not be empty")
+
         if self.DEBUG:
             problems.append("FORENSIQ_DEBUG must be false in production")
+
+        if not self.SPLUNK_VERIFY_SSL:
+            problems.append(
+                "FORENSIQ_SPLUNK_VERIFY_SSL must be true in production "
+                "(set FORENSIQ_SPLUNK_CA_BUNDLE for custom CAs)"
+            )
+
+        if "*" in self.CORS_ORIGINS:
+            problems.append("FORENSIQ_CORS_ORIGINS must not contain '*' wildcard in production")
+
+        if self.TRUSTED_HOSTS == ["*"]:
+            problems.append(
+                "FORENSIQ_TRUSTED_HOSTS must be set to your domain(s) in production, not '*'"
+            )
+
+        # Production MongoDB authentication and network checks
+        parsed_mongo = urllib.parse.urlparse(self.MONGO_URI)
+        host = parsed_mongo.hostname or ""
+        is_local_unauth = (
+            host in ("localhost", "127.0.0.1", "::1")
+            and not parsed_mongo.username
+        )
+        if is_local_unauth:
+            problems.append(
+                "FORENSIQ_MONGO_URI in production must not point to an unauthenticated localhost instance. "
+                "Configure replica set with credentials and TLS."
+            )
+
         if problems:
             raise ValueError("Refusing to start in production: " + "; ".join(problems))
+
         return self
 
 

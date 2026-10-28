@@ -1,24 +1,26 @@
 """
 Forensiq FastAPI Main Application Entrypoint.
-Configures app lifespan, middleware, routers, and CORS.
+Configures app lifespan, middleware (security headers, body limits, CORS, trusted hosts), routers.
 """
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.core.errors import new_request_id
 from app.core.logging import setup_logging, logger
+from app.core.headers import SecurityHeadersMiddleware, RequestBodyLimitMiddleware
 from app.api.v1.router import api_router
 from app.database.indexes import ensure_indexes
 from app.normalization.noise import NoiseFilter
 
-
 from app.database.session import connect_to_mongo, close_mongo_connection
-
 from app.services.poller import AlertPoller
 from app.database.session import db_config
+
+_NON_PROD_ENVS = frozenset({"development", "dev", "test", "testing", "local"})
 
 poller = None
 
@@ -73,13 +75,32 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Configure CORS Middleware
+# --- Security Headers Middleware (outermost: runs on every response) ---
+app.add_middleware(SecurityHeadersMiddleware)
+
+# --- Request Body Size Limit Middleware ---
+app.add_middleware(RequestBodyLimitMiddleware)
+
+# --- Trusted Host Middleware (production only) ---
+is_prod = settings.ENV.strip().lower() not in _NON_PROD_ENVS
+if is_prod and settings.TRUSTED_HOSTS:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.TRUSTED_HOSTS)
+
+# --- CORS Middleware (tightened: explicit methods and headers) ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "X-Request-ID",
+        "X-Requested-With",
+    ],
+    expose_headers=["X-Request-ID", "Retry-After"],
+    max_age=600,
 )
 
 
