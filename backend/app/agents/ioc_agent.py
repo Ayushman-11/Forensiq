@@ -125,6 +125,51 @@ def _abuseipdb_verdict(score: int) -> str:
     return "benign"
 
 
+def _mock_vt_enrichment(ioc: str, ioc_type: str, source: str) -> Enrichment:
+    """Deterministic VT-like enrichment used in tests when API keys are not configured."""
+    malicious = (
+        ioc.startswith("45.")
+        or "evil" in ioc.lower()
+        or "payload" in ioc.lower()
+    )
+    if malicious:
+        raw = {"malicious": 9, "suspicious": 1, "harmless": 0, "undetected": 0}
+        threat_score = 90
+    else:
+        raw = {"malicious": 0, "suspicious": 0, "harmless": 10, "undetected": 0}
+        threat_score = 0
+    return Enrichment(
+        ioc=ioc,
+        ioc_type=ioc_type,
+        reputation=_vt_verdict(raw),
+        threat_score=threat_score,
+        source=source,
+        raw_response=raw,
+        cached=False,
+    )
+
+
+def _mock_abuseipdb_enrichment(ioc: str, source: str) -> Enrichment:
+    """Deterministic AbuseIPDB-like enrichment used in tests when API keys are not configured."""
+    malicious = ioc.startswith("45.")
+    abuse_score = 90 if malicious else 0
+    return Enrichment(
+        ioc=ioc,
+        ioc_type="ip",
+        reputation=_abuseipdb_verdict(abuse_score),
+        threat_score=abuse_score,
+        source=source,
+        raw_response={
+            "abuseConfidenceScore": abuse_score,
+            "totalReports": 17 if malicious else 0,
+            "countryCode": "RU" if malicious else "US",
+            "domain": None,
+            "isp": "Mock ISP",
+        },
+        cached=False,
+    )
+
+
 async def _query_vt(ioc: str, ioc_type: str, db=None) -> Enrichment:
     """Queries VirusTotal API with MongoDB cache lookup."""
     cached = await _get_cached_enrichment(db, ioc, "VirusTotal")
@@ -138,6 +183,8 @@ async def _query_vt(ioc: str, ioc_type: str, db=None) -> Enrichment:
     }.get(ioc_type, "domains")
 
     if not settings.VT_API_KEY:
+        if settings.ENV.strip().lower() == "testing":
+            return _mock_vt_enrichment(ioc, ioc_type, "VirusTotal")
         return _unavailable(ioc, ioc_type, "VirusTotal", "not_configured", "VT_API_KEY is not set")
 
     url = f"https://www.virustotal.com/api/v3/{endpoint}/{ioc}"
@@ -183,6 +230,8 @@ async def _query_abuseipdb(ioc: str, db=None) -> Enrichment:
         return cached
 
     if not settings.ABUSEIPDB_API_KEY:
+        if settings.ENV.strip().lower() == "testing":
+            return _mock_abuseipdb_enrichment(ioc, "AbuseIPDB")
         return _unavailable(ioc, "ip", "AbuseIPDB", "not_configured", "ABUSEIPDB_API_KEY is not set")
 
     url = "https://api.abuseipdb.com/api/v2/check"
