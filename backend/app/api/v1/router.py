@@ -4,7 +4,18 @@ Wires endpoint routers with authentication, role gates, and rate limiting.
 """
 
 from fastapi import APIRouter, Depends
-from app.api.v1.endpoints import alerts, health, search, dashboard, auth, reports, investigation_ws, admin
+from app.api.v1.endpoints import (
+    alerts,
+    health,
+    search,
+    dashboard,
+    auth,
+    reports,
+    investigation_ws,
+    admin,
+    notifications,
+    rules,
+)
 from app.api.deps import get_current_user
 from app.services.rate_limiter import rate_limiter
 from app.core.config import settings
@@ -32,10 +43,22 @@ _report_rate_limit = rate_limiter(
 api_router.include_router(health.router, prefix="/health", tags=["health"])
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 
-# --- Admin routes (role-gated inside the router) ---
+# --- Admin & Notification routes ---
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
+api_router.include_router(
+    notifications.router,
+    prefix="/notifications",
+    tags=["notifications"],
+    dependencies=[Depends(get_current_user)],
+)
+api_router.include_router(
+    rules.router,
+    prefix="/rules",
+    tags=["rules"],
+    dependencies=[Depends(get_current_user)],
+)
 
-# --- WebSocket route (authenticates via ticket/subprotocol internally) ---
+# --- WebSocket route ---
 api_router.include_router(
     investigation_ws.router, prefix="/alerts", tags=["websocket"]
 )

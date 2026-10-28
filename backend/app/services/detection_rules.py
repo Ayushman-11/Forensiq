@@ -1,45 +1,43 @@
 """
-DetectionRuleEngine – static registry of MITRE-mapped detection rules.
-
-Each rule carries:
-  - name            : unique rule identifier
-  - description     : human-readable description
-  - severity        : critical | high | medium | low
-  - alert_type      : logical category for UI grouping
-  - mitre_technique : ATT&CK technique ID
-  - mitre_tactic    : ATT&CK tactic phase
-  - spl_query       : complete Splunk SPL executed by IngestionService
-  - event_codes     : list of Sysmon/Security EventCodes this rule targets
-                      (used by evaluate_raw_event for fast local matching)
-  - match_fn        : optional callable(raw: dict) -> bool for local evaluation
+Dynamic Detection Rule Engine.
+Supports loading declarative YAML detection rules with metadata, owners, test tags,
+fast regex matching, and execution of built-in and dynamic rules.
 """
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional
+import yaml
 
+from app.core.logging import logger
+from app.core.mitre_stix import lookup_technique, ATTACK_VERSION
 
-# ---------------------------------------------------------------------------
-# Dataclass
-# ---------------------------------------------------------------------------
 
 @dataclass
 class DetectionRule:
     name: str
     description: str
-    severity: str               # critical | high | medium | low
+    severity: str # critical | high | medium | low
     alert_type: str
     mitre_technique: str
     mitre_tactic: str
-    spl_query: str
     event_codes: List[str] = field(default_factory=list)
+    spl_query: str = ""
+    owner: str = "Detection Engineering"
+    tags: List[str] = field(default_factory=list)
+    last_fired: Optional[datetime] = None
+    fire_count: int = 0
+    patterns: List[Dict[str, Any]] = field(default_factory=list)
     match_fn: Optional[Callable[[dict], bool]] = field(default=None, repr=False, compare=False)
 
 
 # ---------------------------------------------------------------------------
-# Helper predicates
+# Predicates
 # ---------------------------------------------------------------------------
 
 _PRIVATE_IP_PATTERN = re.compile(
@@ -51,9 +49,15 @@ def _is_private_ip(ip: str) -> bool:
     return bool(_PRIVATE_IP_PATTERN.match(str(ip or "")))
 
 
-def _field_contains_any(raw: dict, field_name: str, patterns: List[str]) -> bool:
-    value = str(raw.get(field_name) or "").lower()
-    return any(p.lower() in value for p in patterns)
+def _mimikatz_dump(raw: dict) -> bool:
+    """EC1 or EC4104 or EC4688: Detects Mimikatz invocation / LSASS dump."""
+    cmd = str(raw.get("CommandLine") or raw.get("ScriptBlockText") or "").lower()
+    terms = ["sekurlsa", "logonpasswords", "invoke-mimikatz", "mimikatz", "comsvcs", "minidump"]
+    if any(t in cmd for t in terms):
+        # Correlate with lsass target or explicit mimikatz flag
+        if "mimikatz" in cmd or "lsass" in cmd or "sekurlsa" in cmd:
+            return True
+    return False
 
 
 def _suspicious_powershell(raw: dict) -> bool:
@@ -97,15 +101,24 @@ def _external_network(raw: dict) -> bool:
     return dest_port not in (80, 443, 53, 0)
 
 
-def _dns_suspicious(raw: dict) -> bool:
+def _dns_suspicious_domain_lookup(raw: dict) -> bool:
+    """
+    EC22: Flag fast-flux/dynamic DNS domains and suspicious C2 staging.
+    Excludes benign developer repositories (github.com, raw.githubusercontent.com)
+    to prevent false positives.
+    """
     ec = str(raw.get("EventCode", ""))
     if ec != "22":
         return False
     qname = str(raw.get("QueryName") or "").lower()
-    suspicious_patterns = ["dyndns", "ngrok", "pastebin", "raw.githubusercontent", "bit.ly"]
+    # Explicit exclusions for normal developer/IT lookups
+    if any(whitelisted in qname for whitelisted in ("github.com", "githubusercontent.com", "microsoft.com", "windows.com")):
+        return False
+
+    suspicious_patterns = ["dyndns", "ngrok.io", "duckdns.org", "no-ip.com", "pastebin.com"]
     if any(p in qname for p in suspicious_patterns):
         return True
-    return len(qname) > 60
+    return len(qname) > 85 # Higher threshold to avoid benign CDNs
 
 
 def _powershell_script_block(raw: dict) -> bool:
@@ -118,10 +131,6 @@ def _powershell_script_block(raw: dict) -> bool:
 
 
 def _brute_force(raw: dict) -> bool:
-    """
-    For aggregate/grouped results from Splunk stats query.
-    The SPL returns rows with {IpAddress, TargetUserName, count}.
-    """
     ec = str(raw.get("EventCode", ""))
     if ec and ec != "4625":
         return False
@@ -142,10 +151,6 @@ def _lateral_movement(raw: dict) -> bool:
 
 
 def _process_anomaly(raw: dict) -> bool:
-    """
-    EC4688 suspicious parent/child combos.
-    Flag when Office or browser apps spawn cmd/powershell/wscript.
-    """
     ec = str(raw.get("EventCode", ""))
     if ec != "4688":
         return False
@@ -160,216 +165,194 @@ def _process_anomaly(raw: dict) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Rule Registry
-# ---------------------------------------------------------------------------
-
-_RULES: List[DetectionRule] = [
-    DetectionRule(
-        name="brute_force_login",
-        description=(
-            "Detects brute force attacks: 5 or more failed logon attempts (EC4625) "
-            "from the same IP address within the polling window."
-        ),
-        severity="high",
-        alert_type="Brute Force",
-        mitre_technique="T1110",
-        mitre_tactic="Credential Access",
-        spl_query=(
-            "search index=windows | spath | search EventCode=4625 "
-            "| stats count by IpAddress, TargetUserName "
-            "| where count >= 5"
-        ),
-        event_codes=["4625"],
-        match_fn=_brute_force,
-    ),
-    DetectionRule(
-        name="suspicious_powershell_execution",
-        description=(
-            "Detects suspicious PowerShell process creation (Sysmon EC1) with encoded, "
-            "bypass, hidden, or download cradle indicators in the command line."
-        ),
-        severity="critical",
-        alert_type="Malicious PowerShell",
-        mitre_technique="T1059.001",
-        mitre_tactic="Execution",
-        spl_query=(
-            "search index=windows | spath | search EventCode=1 "
-            "(Image=\"*powershell*\" OR Image=\"*pwsh*\") "
-            "(CommandLine=\"*-enc*\" OR CommandLine=\"*-EncodedCommand*\" OR "
-            "CommandLine=\"*-NonI*\" OR CommandLine=\"*bypass*\" OR "
-            "CommandLine=\"*hidden*\" OR CommandLine=\"*downloadstring*\" OR "
-            "CommandLine=\"*IEX*\" OR CommandLine=\"*WebClient*\")"
-        ),
-        event_codes=["1"],
-        match_fn=_suspicious_powershell,
-    ),
-    DetectionRule(
-        name="registry_run_key_persistence",
-        description=(
-            "Detects persistence via Windows Registry Run keys (Sysmon EC13): "
-            "modification of HKLM/HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run."
-        ),
-        severity="high",
-        alert_type="Registry Persistence",
-        mitre_technique="T1547.001",
-        mitre_tactic="Persistence",
-        spl_query=(
-            "search index=windows | spath | search EventCode=13 TargetObject=\"*CurrentVersion\\\\Run*\""
-        ),
-        event_codes=["13"],
-        match_fn=_registry_persistence,
-    ),
-    DetectionRule(
-        name="suspicious_external_connection",
-        description=(
-            "Detects Sysmon EC3 outbound network connections to non-private IP ranges "
-            "on non-standard ports (excluding 80, 443, 53). Potential C2 beaconing."
-        ),
-        severity="medium",
-        alert_type="Suspicious Network Connection",
-        mitre_technique="T1071",
-        mitre_tactic="Command and Control",
-        spl_query=(
-            "search index=windows | spath | search EventCode=3 Initiated=true "
-            "NOT (DestinationIp=\"10.*\" OR DestinationIp=\"192.168.*\" OR "
-            "DestinationIp=\"172.*\" OR DestinationIp=\"127.*\") "
-            "NOT (DestinationPort=80 OR DestinationPort=443 OR DestinationPort=53)"
-        ),
-        event_codes=["3"],
-        match_fn=_external_network,
-    ),
-    DetectionRule(
-        name="dns_suspicious_query",
-        description=(
-            "Detects Sysmon EC22 DNS queries to known suspicious domains "
-            "(dyndns, ngrok, pastebin, raw.githubusercontent, bit.ly) or "
-            "unusually long domain names (>60 chars) indicating DNS tunneling."
-        ),
-        severity="medium",
-        alert_type="DNS Tunneling / Suspicious DNS",
-        mitre_technique="T1071.004",
-        mitre_tactic="Command and Control",
-        spl_query=(
-            "search index=windows | spath | search EventCode=22 "
-            "(QueryName=\"*dyndns*\" OR QueryName=\"*ngrok*\" OR QueryName=\"*pastebin*\" "
-            "OR QueryName=\"*raw.githubusercontent*\" OR QueryName=\"*bit.ly*\")"
-        ),
-        event_codes=["22"],
-        match_fn=_dns_suspicious,
-    ),
-    DetectionRule(
-        name="powershell_script_block_logging",
-        description=(
-            "Detects PowerShell Script Block Logging events (EC4104) containing "
-            "Invoke-Expression, IEX, Net.WebClient, DownloadString, or bypass. "
-            "Indicates script-based attack or living-off-the-land technique."
-        ),
-        severity="critical",
-        alert_type="Malicious PowerShell",
-        mitre_technique="T1059.001",
-        mitre_tactic="Execution",
-        spl_query=(
-            "search index=windows | spath | search EventCode=4104 "
-            "(ScriptBlockText=\"*Invoke-Expression*\" OR ScriptBlockText=\"*IEX*\" OR "
-            "ScriptBlockText=\"*Net.WebClient*\" OR ScriptBlockText=\"*DownloadString*\" "
-            "OR ScriptBlockText=\"*bypass*\")"
-        ),
-        event_codes=["4104"],
-        match_fn=_powershell_script_block,
-    ),
-    DetectionRule(
-        name="lateral_movement_explicit_credentials",
-        description=(
-            "Detects explicit credential use (EC4648) from one account authenticating "
-            "as another, a common lateral movement technique."
-        ),
-        severity="high",
-        alert_type="Lateral Movement",
-        mitre_technique="T1550.002",
-        mitre_tactic="Lateral Movement",
-        spl_query=(
-            "search index=windows | spath | search EventCode=4648 "
-            "NOT SubjectUserName=\"-\" NOT TargetUserName=\"-\""
-        ),
-        event_codes=["4648"],
-        match_fn=_lateral_movement,
-    ),
-    DetectionRule(
-        name="process_creation_anomaly",
-        description=(
-            "Detects suspicious parent-child process relationships (EC4688): "
-            "Office apps or browsers spawning command interpreters or scripting engines, "
-            "indicative of macro execution or drive-by exploitation."
-        ),
-        severity="medium",
-        alert_type="Process Anomaly",
-        mitre_technique="T1566.001",
-        mitre_tactic="Initial Access",
-        spl_query=(
-            "search index=windows | spath | search EventCode=4688 "
-            "(ParentProcessName=\"*winword*\" OR ParentProcessName=\"*excel*\" OR "
-            "ParentProcessName=\"*powerpnt*\" OR ParentProcessName=\"*outlook*\" OR "
-            "ParentProcessName=\"*chrome*\" OR ParentProcessName=\"*firefox*\" OR "
-            "ParentProcessName=\"*iexplore*\" OR ParentProcessName=\"*msedge*\") "
-            "(NewProcessName=\"*cmd.exe*\" OR NewProcessName=\"*powershell.exe*\" OR "
-            "NewProcessName=\"*pwsh.exe*\" OR NewProcessName=\"*wscript.exe*\" OR "
-            "NewProcessName=\"*cscript.exe*\" OR NewProcessName=\"*mshta.exe*\")"
-        ),
-        event_codes=["4688"],
-        match_fn=_process_anomaly,
-    ),
-]
-
-
-# ---------------------------------------------------------------------------
-# Engine
+# Engine with YAML Loader
 # ---------------------------------------------------------------------------
 
 class DetectionRuleEngine:
-    """
-    Registry and evaluation engine for all Forensiq detection rules.
+    def __init__(self, rules_dir: Optional[str] = None):
+        self._rules: Dict[str, DetectionRule] = {}
+        self.rules_dir = rules_dir or str(Path(__file__).resolve().parent.parent.parent / "rules")
+        self._register_defaults()
+        self.load_yaml_rules()
 
-    Usage
-    -----
-    engine = DetectionRuleEngine()
-    rules  = engine.get_all_rules()
-    result = engine.evaluate_raw_event(raw_splunk_dict)
-    """
+    def _register_defaults(self):
+        defaults = [
+            DetectionRule(
+                name="mimikatz_credential_dumping",
+                description="Detects Mimikatz invocation, LSASS memory dumping, or sekurlsa module execution (Atomic Red Team T1003).",
+                severity="critical",
+                alert_type="Credential Access",
+                mitre_technique="T1003.001",
+                mitre_tactic="Credential Access",
+                event_codes=["1", "4104", "4688"],
+                match_fn=_mimikatz_dump,
+                owner="Detection Engineering",
+                tags=["atomic-red-team", "credential-dumping", "mimikatz"],
+            ),
+            DetectionRule(
+                name="brute_force_login",
+                description="Detects brute force attacks: 5 or more failed logon attempts (EC4625).",
+                severity="high",
+                alert_type="Brute Force",
+                mitre_technique="T1110",
+                mitre_tactic="Credential Access",
+                event_codes=["4625"],
+                match_fn=_brute_force,
+                owner="Identity Security",
+            ),
+            DetectionRule(
+                name="suspicious_powershell_execution",
+                description="Detects suspicious PowerShell process creation (Sysmon EC1) with encoded or download cradles.",
+                severity="critical",
+                alert_type="Malicious PowerShell",
+                mitre_technique="T1059.001",
+                mitre_tactic="Execution",
+                event_codes=["1"],
+                match_fn=_suspicious_powershell,
+                owner="Endpoint Defense",
+            ),
+            DetectionRule(
+                name="registry_run_key_persistence",
+                description="Detects persistence via Windows Registry Run keys (Sysmon EC13).",
+                severity="high",
+                alert_type="Registry Persistence",
+                mitre_technique="T1547.001",
+                mitre_tactic="Persistence",
+                event_codes=["13"],
+                match_fn=_registry_persistence,
+                owner="Endpoint Defense",
+            ),
+            DetectionRule(
+                name="suspicious_external_connection",
+                description="Detects outbound network connections to non-private IPs on non-standard ports.",
+                severity="medium",
+                alert_type="Suspicious Network Connection",
+                mitre_technique="T1071",
+                mitre_tactic="Command and Control",
+                event_codes=["3"],
+                match_fn=_external_network,
+                owner="Network Security",
+            ),
+            DetectionRule(
+                name="dns_suspicious_domain_lookup",
+                description="Detects DNS queries to suspicious dynamic DNS providers or tunneling infrastructure.",
+                severity="medium",
+                alert_type="Suspicious Domain Lookup",
+                mitre_technique="T1071.004",
+                mitre_tactic="Command and Control",
+                event_codes=["22"],
+                match_fn=_dns_suspicious_domain_lookup,
+                owner="Network Security",
+            ),
+            DetectionRule(
+                name="powershell_script_block_logging",
+                description="Detects PowerShell Script Block Logging events (EC4104) containing malicious cradles.",
+                severity="critical",
+                alert_type="Malicious PowerShell",
+                mitre_technique="T1059.001",
+                mitre_tactic="Execution",
+                event_codes=["4104"],
+                match_fn=_powershell_script_block,
+                owner="Endpoint Defense",
+            ),
+            DetectionRule(
+                name="lateral_movement_explicit_credentials",
+                description="Detects explicit credential use (EC4648) from one account authenticating as another.",
+                severity="high",
+                alert_type="Lateral Movement",
+                mitre_technique="T1550.002",
+                mitre_tactic="Lateral Movement",
+                event_codes=["4648"],
+                match_fn=_lateral_movement,
+                owner="Identity Security",
+            ),
+            DetectionRule(
+                name="process_creation_anomaly",
+                description="Detects suspicious parent-child process relationships (EC4688).",
+                severity="high",
+                alert_type="Process Anomaly",
+                mitre_technique="T1059.003",
+                mitre_tactic="Execution",
+                event_codes=["4688"],
+                match_fn=_process_anomaly,
+                owner="Endpoint Defense",
+            ),
+        ]
+        for r in defaults:
+            self._rules[r.name] = r
 
-    def get_all_rules(self) -> List[DetectionRule]:
-        """Returns the complete list of registered DetectionRule objects."""
-        return list(_RULES)
+    def load_yaml_rules(self):
+        """Loads and updates rules from YAML files in rules_dir."""
+        rules_path = Path(self.rules_dir)
+        if not rules_path.is_dir():
+            return
 
-    def evaluate_raw_event(self, raw: dict) -> Optional[Dict]:
-        """
-        Evaluates a single raw Splunk event dict against every rule's match_fn.
-
-        Returns the *first* matching rule's metadata dict, or None if no rule matches.
-        The returned dict contains:
-            rule_name, description, severity, alert_type,
-            mitre_technique, mitre_tactic
-        """
-        for rule in _RULES:
-            if rule.match_fn is None:
-                continue
+        for yml_file in rules_path.glob("*.yaml"):
             try:
-                if rule.match_fn(raw):
-                    return {
-                        "rule_name": rule.name,
-                        "description": rule.description,
-                        "severity": rule.severity,
-                        "alert_type": rule.alert_type,
-                        "mitre_technique": rule.mitre_technique,
-                        "mitre_tactic": rule.mitre_tactic,
-                    }
-            except Exception:
-                # Defensive: never crash the pipeline due to a bad event field
-                continue
-        return None
+                data = yaml.safe_load(yml_file.read_text(encoding="utf-8"))
+                if not isinstance(data, list):
+                    continue
+                for item in data:
+                    name = item.get("name")
+                    if not name:
+                        continue
+                    
+                    # Validate against official ATT&CK STIX
+                    tech_id = item.get("mitre_technique", "T1059.001")
+                    validated = lookup_technique(tech_id)
 
-    def get_rule_by_name(self, name: str) -> Optional[DetectionRule]:
-        """Returns the DetectionRule with the given name, or None."""
-        for rule in _RULES:
-            if rule.name == name:
-                return rule
-        return None
+                    rule = DetectionRule(
+                        name=name,
+                        description=item.get("description", ""),
+                        severity=item.get("severity", "medium"),
+                        alert_type=item.get("alert_type", "General Detection"),
+                        mitre_technique=validated["technique_id"],
+                        mitre_tactic=validated["tactic"],
+                        event_codes=item.get("event_codes", []),
+                        owner=item.get("owner", "Detection Engineering"),
+                        tags=item.get("tags", []),
+                        patterns=item.get("patterns", []),
+                    )
+                    # Bind pattern matcher if not already provided
+                    if name in self._rules and self._rules[name].match_fn:
+                        rule.match_fn = self._rules[name].match_fn
+                    else:
+                        rule.match_fn = self._build_yaml_pattern_matcher(rule.patterns)
+                    self._rules[name] = rule
+            except Exception as e:
+                logger.error("yaml_rule_load_error", file=str(yml_file), error=str(e))
+
+    def _build_yaml_pattern_matcher(self, patterns: List[Dict[str, Any]]) -> Callable[[dict], bool]:
+        def _match(raw: dict) -> bool:
+            if not patterns:
+                return False
+            for pat in patterns:
+                field_val = str(raw.get(pat.get("field", "")) or "").lower()
+                any_of = pat.get("any_of", [])
+                if not any(term.lower() in field_val for term in any_of):
+                    return False
+            return True
+        return _match
+
+    def list_rules(self) -> List[DetectionRule]:
+        return list(self._rules.values())
+
+    def get_rule(self, name: str) -> Optional[DetectionRule]:
+        return self._rules.get(name)
+
+    def evaluate_raw_event(self, raw: dict) -> List[DetectionRule]:
+        """Matches a raw event against all loaded rules and tracks last_fired timestamps."""
+        matched = []
+        ec = str(raw.get("EventCode", ""))
+        now = datetime.now(timezone.utc)
+        for rule in self._rules.values():
+            if rule.event_codes and ec not in rule.event_codes:
+                continue
+            if rule.match_fn and rule.match_fn(raw):
+                rule.last_fired = now
+                rule.fire_count += 1
+                matched.append(rule)
+        return matched
+
+
+detection_engine = DetectionRuleEngine()

@@ -1,6 +1,6 @@
 """
 Forensiq FastAPI Main Application Entrypoint.
-Configures app lifespan, middleware (security headers, body limits, CORS, trusted hosts), routers.
+Configures app lifespan, background alert poller, SLA escalation monitor, middleware, and routers.
 """
 
 from contextlib import asynccontextmanager
@@ -18,11 +18,14 @@ from app.normalization.noise import NoiseFilter
 
 from app.database.session import connect_to_mongo, close_mongo_connection
 from app.services.poller import AlertPoller
+from app.services.sla_monitor import SLAEscalationMonitor
+from app.services.notifications import notification_dispatcher
 from app.database.session import db_config
 
 _NON_PROD_ENVS = frozenset({"development", "dev", "test", "testing", "local"})
 
 poller = None
+sla_monitor = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -51,16 +54,25 @@ async def lifespan(app: FastAPI):
         except Exception as exc:  # e.g. a conflicting pre-existing index must not take the API down
             logger.error("ensure_indexes_failed", error=str(exc))
 
-    global poller
+    global poller, sla_monitor
     if db_config.client:
-        poller = AlertPoller(db_config.client[settings.MONGO_DB_NAME], interval_seconds=30)
+        db = db_config.client[settings.MONGO_DB_NAME]
+        poller = AlertPoller(db, interval_seconds=30)
         poller.start()
+
+        # Start background SLA & Escalation Monitor (sweeps every 60 seconds)
+        sla_monitor = SLAEscalationMonitor(db, sweep_interval_seconds=60)
+        sla_monitor.start()
 
     yield
     
+    if sla_monitor:
+        await sla_monitor.stop()
+
     if poller:
         await poller.stop()
-        
+
+    await notification_dispatcher.close()
     await close_mongo_connection()
     logger.info("forensiq_backend_shutdown")
 
