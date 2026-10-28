@@ -1,308 +1,410 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { 
-  CircleAlert, 
-  Clock3, 
-  Filter, 
-  Loader2, 
-  Play, 
-  RefreshCw, 
-  Search, 
-  X, 
-  Server, 
-  Terminal, 
-  ShieldAlert,
-  ArrowRight,
-  Eye,
-  CheckCircle,
-  Layers,
-  Braces,
-  Radar,
-  Download,
-  FileDown
-} from "lucide-react";
-import ContextPanel from "@/components/investigation/ContextPanel";
-import EnrichmentPanel from "@/components/investigation/EnrichmentPanel";
-import InvestigationModal from "@/components/investigation/InvestigationModal";
+import { useRouter, useSearchParams } from "next/navigation";
+import { CircleAlert, Keyboard, Loader2, RefreshCw, Search, X } from "lucide-react";
+import DispositionDialog from "@/components/triage/DispositionDialog";
+import { SeverityBadge, SlaBadge, StatusBadge } from "@/components/triage/Badges";
+import { useAuth } from "@/context/AuthContext";
 import { apiFetch } from "@/lib/api";
-import type { AlertRecord, InvestigationJob } from "@/lib/types";
+import {
+  MANAGER_ROLES,
+  bulkAction,
+  fetchUsers,
+  relativeTime,
+  type BulkResult,
+  type DirectoryUser,
+  type DispositionAction,
+} from "@/lib/triage";
+import type { AlertRecord } from "@/lib/types";
 
-function formatAlertTitle(title: string) {
+type View = { key: string; label: string; status: string; assignee?: string };
+
+const VIEWS: View[] = [
+  { key: "mine", label: "My open", status: "open", assignee: "me" },
+  { key: "unassigned", label: "Unassigned", status: "open", assignee: "unassigned" },
+  { key: "open", label: "All open", status: "open" },
+  { key: "escalated", label: "Escalated", status: "Escalated" },
+  { key: "closed", label: "Closed", status: "Closed" },
+  { key: "suppressed", label: "Suppressed", status: "Suppressed" },
+  { key: "all", label: "Everything", status: "All" },
+];
+
+const SORTS = [
+  { key: "severity", label: "Severity" },
+  { key: "newest", label: "Newest" },
+  { key: "oldest", label: "Oldest" },
+  { key: "risk", label: "Risk score" },
+];
+
+function cleanTitle(title: string) {
   return title.replace(/^\[(CRITICAL|HIGH|MEDIUM|LOW)\]\s*/i, "").trim();
 }
 
-function ageLabel(v: string) {
-  const m = Math.max(0, Math.round((Date.now() - new Date(v).getTime()) / 60000));
-  if (m < 1) return "Just now";
-  if (m < 60) return `${m}m ago`;
-  const hours = Math.round(m / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.round(hours / 24);
-  return `${days}d ago`;
+/** The field that tells otherwise identical alerts apart. */
+function distinguishing(a: AlertRecord): string | undefined {
+  return a.dns_query || a.command_line || (a.dest_ip ? `${a.dest_ip}${a.dest_port ? `:${a.dest_port}` : ""}` : undefined) || a.registry_key || undefined;
 }
 
 export default function AlertsPage() {
+  const router = useRouter();
   const searchParams = useSearchParams();
-  const [alerts, setAlerts] = useState<AlertRecord[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [search, setSearch] = useState(() => searchParams.get("search") || "");
+  const { user } = useAuth();
+  const isManager = !!user && MANAGER_ROLES.includes(user.role);
+
+  const [viewKey, setViewKey] = useState(searchParams.get("view") ?? "open");
+  const [search, setSearch] = useState(searchParams.get("search") ?? "");
   const [severity, setSeverity] = useState("All");
-  const [status, setStatus] = useState("All");
+  const [sort, setSort] = useState(searchParams.get("sort") ?? "severity");
+  const [alerts, setAlerts] = useState<AlertRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [investigatingAlert, setInvestigatingAlert] = useState<AlertRecord | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [cursor, setCursor] = useState(0);
+  const [dialog, setDialog] = useState<DispositionAction | null>(null);
+  const [users, setUsers] = useState<DirectoryUser[]>([]);
+  const [bulkMsg, setBulkMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [showKeys, setShowKeys] = useState(false);
+  const searchRef = useRef<HTMLInputElement | null>(null);
 
-  // Sync search state if URL search param changes
+  const view = VIEWS.find((v) => v.key === viewKey) ?? VIEWS[2];
+
+  // Old deep links (/alerts?alert=<id>) go to the detail page.
   useEffect(() => {
-    const querySearch = searchParams.get("search");
-    if (querySearch !== null && querySearch !== search) {
-      setSearch(querySearch);
-    }
-  }, [searchParams]);
-
-  const selected = useMemo(
-    () => (selectedId ? alerts.find((a) => a._id === selectedId) ?? null : alerts[0] ?? null),
-    [alerts, selectedId]
-  );
+    const legacy = searchParams.get("alert");
+    if (legacy) router.replace(`/alerts/${encodeURIComponent(legacy)}`);
+  }, [router, searchParams]);
 
   const load = useCallback(async () => {
     try {
       setError(null);
-      const p = new URLSearchParams({ limit: "100" });
+      const p = new URLSearchParams({ limit: "200", sort, status: view.status });
+      if (view.assignee) p.set("assignee", view.assignee);
       if (search.trim()) p.set("search", search.trim());
       if (severity !== "All") p.set("severity", severity);
-      if (status !== "All") p.set("status", status);
       const r = await apiFetch(`/api/v1/alerts?${p}`);
       if (!r.ok) throw new Error("Unable to load alert queue");
       const next = (await r.json()) as AlertRecord[];
       setAlerts(next);
-      const requestedAlertId = searchParams.get("alert");
-      setSelectedId((prev) => {
-        if (requestedAlertId && next.some((a) => a._id === requestedAlertId)) return requestedAlertId;
-        if (prev && next.some((a) => a._id === prev)) return prev;
-        return next.length > 0 ? next[0]._id : null;
-      });
+      setSelected((prev) => new Set([...prev].filter((id) => next.some((a) => a._id === id))));
+      setCursor((c) => Math.min(c, Math.max(0, next.length - 1)));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to load alert queue");
     } finally {
       setLoading(false);
     }
-  }, [search, searchParams, severity, status]);
+  }, [search, severity, sort, view.assignee, view.status]);
 
   useEffect(() => {
-    const t = setTimeout(() => void load(), 0);
+    const t = setTimeout(() => void load(), search ? 250 : 0);
     return () => clearTimeout(t);
-  }, [load]);
+  }, [load, search]);
 
-  const counts = useMemo(
-    () =>
-      alerts.reduce<Record<string, number>>((o, a) => {
-        const s = a.severity.toLowerCase();
-        o[s] = (o[s] ?? 0) + 1;
-        return o;
-      }, {}),
-    [alerts]
-  );
+  useEffect(() => {
+    fetchUsers().then(setUsers).catch(() => setUsers([]));
+  }, []);
+
+  // Keep the view, sort and search in the URL so a queue can be bookmarked or shared.
+  useEffect(() => {
+    const p = new URLSearchParams();
+    if (viewKey !== "open") p.set("view", viewKey);
+    if (sort !== "severity") p.set("sort", sort);
+    if (search.trim()) p.set("search", search.trim());
+    const qs = p.toString();
+    window.history.replaceState(null, "", qs ? `/alerts?${qs}` : "/alerts");
+  }, [viewKey, sort, search]);
+
+  const counts = useMemo(() => {
+    const c = { critical: 0, high: 0, breached: 0 };
+    for (const a of alerts) {
+      if (a.severity === "critical") c.critical++;
+      if (a.severity === "high") c.high++;
+      if (a.sla && (a.acknowledged_at ? a.sla.resolve_breached : a.sla.ack_breached) && !["Closed", "Suppressed"].includes(a.status)) c.breached++;
+    }
+    return c;
+  }, [alerts]);
+
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const allSelected = alerts.length > 0 && selected.size === alerts.length;
+
+  const runBulk = async (fn: () => Promise<BulkResult>) => {
+    setBusy(true);
+    setBulkMsg(null);
+    try {
+      const res = await fn();
+      const failures = res.results.filter((r) => !r.ok);
+      const reasons = [...new Set(failures.map((f) => f.error))].join("; ");
+      setBulkMsg(`${res.succeeded} updated${res.failed ? `, ${res.failed} not changed: ${reasons}` : ""}`);
+      setSelected(new Set(failures.map((f) => f.alert_id)));
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Bulk action failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Queue keyboard: j/k move, x select, Enter or o open, a assign to me, / search, ? help.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (dialog || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) {
+        if (e.key === "Escape") target.blur();
+        return;
+      }
+      const current = alerts[cursor];
+      if (e.key === "j" || e.key === "ArrowDown") {
+        e.preventDefault();
+        setCursor((c) => Math.min(c + 1, alerts.length - 1));
+      } else if (e.key === "k" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setCursor((c) => Math.max(c - 1, 0));
+      } else if (e.key === "x" && current) {
+        e.preventDefault();
+        toggle(current._id);
+      } else if ((e.key === "Enter" || e.key === "o") && current) {
+        e.preventDefault();
+        router.push(`/alerts/${encodeURIComponent(current._id)}`);
+      } else if (e.key === "a" && current && user) {
+        e.preventDefault();
+        void runBulk(() => bulkAction([current._id], "assign", { assigneeId: user.sub }));
+      } else if (e.key === "/") {
+        e.preventDefault();
+        searchRef.current?.focus();
+      } else if (e.key === "?") {
+        setShowKeys((s) => !s);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  useEffect(() => {
+    document.getElementById(`alert-row-${cursor}`)?.scrollIntoView({ block: "nearest" });
+  }, [cursor]);
+
+  const selectedAlerts = alerts.filter((a) => selected.has(a._id));
 
   return (
-    <div className="mx-auto flex max-w-[1520px] flex-col gap-5 pb-12">
-      {/* Header */}
+    <div className="mx-auto flex max-w-[1520px] flex-col gap-4 pb-12">
       <header className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--border-color)] pb-4">
         <div>
-          <h1 className="text-xl font-bold tracking-tight text-[var(--text-primary)]">
-            Alerts
-          </h1>
-          <p className="text-xs text-[var(--text-secondary)] mt-0.5">
-            Security alert queue · Real-time triage, AI investigation, and disposition.
-          </p>
+          <h1 className="text-xl font-bold tracking-tight text-[var(--text-primary)]">Alerts</h1>
+          <p className="text-xs text-[var(--text-secondary)] mt-0.5">Triage queue · assign, investigate and resolve.</p>
         </div>
-        <button onClick={() => void load()} className="button-secondary text-xs">
-          <RefreshCw className="h-3.5 w-3.5 text-[var(--text-muted)]" />
-          <span>Refresh</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setShowKeys((s) => !s)} className="button-secondary text-xs" aria-label="Keyboard shortcuts">
+            <Keyboard className="h-3.5 w-3.5" />
+          </button>
+          <button onClick={() => void load()} className="button-secondary text-xs">
+            <RefreshCw className="h-3.5 w-3.5" /> <span>Refresh</span>
+          </button>
+        </div>
       </header>
+
+      {showKeys && (
+        <div className="card p-3 text-xs text-[var(--text-secondary)] flex flex-wrap gap-x-5 gap-y-1">
+          <span><kbd>j</kbd>/<kbd>k</kbd> move</span>
+          <span><kbd>x</kbd> select</span>
+          <span><kbd>Enter</kbd> open</span>
+          <span><kbd>a</kbd> assign to me</span>
+          <span><kbd>/</kbd> search</span>
+          <span>On an alert: <kbd>c</kbd> close, <kbd>e</kbd> escalate, <kbd>s</kbd> suppress, <kbd>n</kbd> note</span>
+        </div>
+      )}
 
       {error && (
         <div className="feedback-error">
-          <CircleAlert className="h-4 w-4 shrink-0 text-[#EF4444]" />
+          <CircleAlert className="h-4 w-4 shrink-0" />
           <span>{error}</span>
         </div>
       )}
 
-      {/* Filter and Search Bar */}
+      {/* Views */}
+      <nav className="flex flex-wrap gap-1" aria-label="Queue views">
+        {VIEWS.map((v) => (
+          <button
+            key={v.key}
+            onClick={() => {
+              setViewKey(v.key);
+              setSelected(new Set());
+              setCursor(0);
+            }}
+            aria-current={v.key === viewKey ? "page" : undefined}
+            className={`px-3 py-1.5 rounded text-xs font-medium border ${
+              v.key === viewKey
+                ? "bg-[var(--surface-primary)] border-[var(--text-primary)] text-[var(--text-primary)]"
+                : "border-[var(--border-color)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+            }`}
+          >
+            {v.label}
+          </button>
+        ))}
+      </nav>
+
+      {/* Filters */}
       <section className="card flex flex-wrap items-center gap-3 p-3">
-        <div className="relative min-w-[260px] flex-1">
+        <div className="relative min-w-[240px] flex-1">
           <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" />
           <input
+            ref={searchRef}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by title, host, or rule name..."
+            placeholder="Search title, host, user, rule, DNS query, technique…  ( / )"
+            aria-label="Search alerts"
             className="field w-full pl-9 h-8 text-xs"
           />
         </div>
-
-        {/* Severity Tabs */}
         <div className="flex items-center gap-1 bg-[var(--surface-secondary)] p-0.5 rounded border border-[var(--border-color)]">
-          {["All", "critical", "high", "medium", "low"].map((sev) => {
-            const isSelected = severity === sev;
-            return (
-              <button
-                key={sev}
-                onClick={() => setSeverity(sev)}
-                className={`px-2.5 py-1 rounded text-xs font-medium capitalize transition-colors ${
-                  isSelected
-                    ? "bg-[var(--surface-primary)] text-[var(--text-primary)] shadow-sm font-semibold"
-                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                }`}
-              >
-                {sev}
-              </button>
-            );
-          })}
+          {["All", "critical", "high", "medium", "low"].map((sev) => (
+            <button
+              key={sev}
+              onClick={() => setSeverity(sev)}
+              aria-pressed={severity === sev}
+              className={`px-2.5 py-1 rounded text-xs font-medium capitalize ${
+                severity === sev ? "bg-[var(--surface-primary)] text-[var(--text-primary)] font-semibold" : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+              }`}
+            >
+              {sev}
+            </button>
+          ))}
         </div>
-
-        <select
-          value={status}
-          onChange={(e) => setStatus(e.target.value)}
-          className="field h-8 text-xs cursor-pointer"
-        >
-          <option value="All">All Statuses</option>
-          <option value="New">New</option>
-          <option value="Investigating">Investigating</option>
-          <option value="Investigated">Investigated</option>
-          <option value="Closed">Closed</option>
-          <option value="Escalated">Escalated</option>
-        </select>
-
-        <div className="border-l border-[var(--border-color)] pl-3 flex items-center gap-2 text-xs font-mono">
-          <span className="text-[var(--text-muted)]">{alerts.length} total</span>
-          <span className="text-[#EF4444] font-semibold">{counts.critical ?? 0} Critical</span>
-          <span className="text-[#F59E0B] font-semibold">{counts.high ?? 0} High</span>
+        <label className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
+          Sort
+          <select value={sort} onChange={(e) => setSort(e.target.value)} className="field h-8 text-xs cursor-pointer">
+            {SORTS.map((s) => (
+              <option key={s.key} value={s.key}>{s.label}</option>
+            ))}
+          </select>
+        </label>
+        <div className="flex items-center gap-3 text-xs font-mono border-l border-[var(--border-color)] pl-3">
+          <span className="text-[var(--text-muted)]">{alerts.length} shown</span>
+          <span className="text-[#EF4444] font-semibold">{counts.critical} critical</span>
+          <span className="text-[#F59E0B] font-semibold">{counts.high} high</span>
+          {counts.breached > 0 && <span className="text-[#EF4444]">{counts.breached} SLA overdue</span>}
         </div>
       </section>
 
-      {/* Main Alert Table View */}
+      {/* Bulk bar */}
+      {selected.size > 0 && (
+        <section className="card p-2.5 flex flex-wrap items-center gap-2 text-xs sticky top-2 z-20" aria-label="Bulk actions">
+          <span className="font-semibold text-[var(--text-primary)] mr-1">{selected.size} selected</span>
+          {user && (
+            <button disabled={busy} onClick={() => void runBulk(() => bulkAction([...selected], "assign", { assigneeId: user.sub }))} className="button-secondary text-xs">
+              Assign to me
+            </button>
+          )}
+          {isManager && (
+            <select
+              disabled={busy}
+              value=""
+              onChange={(e) => {
+                const id = e.target.value;
+                if (id) void runBulk(() => bulkAction([...selected], "assign", { assigneeId: id === "__none" ? null : id }));
+              }}
+              className="field h-8 text-xs cursor-pointer"
+              aria-label="Assign selected to"
+            >
+              <option value="">Assign to…</option>
+              <option value="__none">Unassign</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>{u.email}</option>
+              ))}
+            </select>
+          )}
+          <button disabled={busy} onClick={() => setDialog("close")} className="button-primary text-xs">Close…</button>
+          <button disabled={busy} onClick={() => setDialog("escalate")} className="button-secondary text-xs">Escalate…</button>
+          <button disabled={busy} onClick={() => setDialog("suppress")} className="button-secondary text-xs">Suppress…</button>
+          <button onClick={() => setSelected(new Set())} className="ml-auto p-1 rounded hover:bg-[var(--surface-hover)]" aria-label="Clear selection">
+            <X className="w-4 h-4" />
+          </button>
+          {busy && <Loader2 className="w-4 h-4 animate-spin" />}
+        </section>
+      )}
+      {bulkMsg && <p className="text-xs text-[var(--text-secondary)]">{bulkMsg}</p>}
+
+      {/* Table */}
       <section className="card overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
+          <table className="w-full text-left border-collapse min-w-[900px]">
             <thead>
               <tr className="border-b border-[var(--border-color)] bg-[var(--surface-secondary)] text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">
-                <th className="py-2.5 px-4 w-28">Severity</th>
-                <th className="py-2.5 px-4">Title</th>
-                <th className="py-2.5 px-4 w-44">Target Host</th>
-                <th className="py-2.5 px-4 w-48">Detection Rule</th>
-                <th className="py-2.5 px-4 w-28">Time</th>
-                <th className="py-2.5 px-4 w-32">Status</th>
-                <th className="py-2.5 px-4 w-36 text-right">Actions</th>
+                <th className="py-2.5 pl-4 w-8">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={() => setSelected(allSelected ? new Set() : new Set(alerts.map((a) => a._id)))}
+                    aria-label="Select all shown alerts"
+                  />
+                </th>
+                <th className="py-2.5 px-3 w-24">Severity</th>
+                <th className="py-2.5 px-3">Alert</th>
+                <th className="py-2.5 px-3 w-36">Host</th>
+                <th className="py-2.5 px-3 w-40">Assignee</th>
+                <th className="py-2.5 px-3 w-32">SLA</th>
+                <th className="py-2.5 px-3 w-40">Status</th>
+                <th className="py-2.5 px-3 w-24">Detected</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border-color)] text-xs">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-[var(--text-muted)]">
-                    <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />
-                    <span>Loading alert queue...</span>
+                  <td colSpan={8} className="py-12 text-center text-[var(--text-muted)]">
+                    <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" /> Loading alert queue…
                   </td>
                 </tr>
               ) : alerts.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-[var(--text-muted)]">
-                    No alerts match the selected filters.
+                  <td colSpan={8} className="py-12 text-center text-[var(--text-muted)]">
+                    {view.key === "mine" ? "Nothing assigned to you. Pick from Unassigned." : "No alerts match this view."}
                   </td>
                 </tr>
               ) : (
-                alerts.map((a) => {
-                  const isSelected = selected?._id === a._id;
-                  const sevColor = 
-                    a.severity === 'critical' ? '#EF4444' :
-                    a.severity === 'high' ? '#F59E0B' :
-                    a.severity === 'medium' ? '#3B82F6' : '#94A3B8';
-                  
+                alerts.map((a, i) => {
+                  const detail = distinguishing(a);
+                  const href = `/alerts/${encodeURIComponent(a._id)}`;
                   return (
-                    <tr 
+                    <tr
                       key={a._id}
-                      onClick={() => setSelectedId(a._id)}
-                      className={`cursor-pointer transition-colors ${
-                        isSelected 
-                          ? "bg-[var(--sidebar-active-bg)]" 
-                          : "hover:bg-[var(--surface-hover)]"
+                      id={`alert-row-${i}`}
+                      onClick={() => {
+                        setCursor(i);
+                        router.push(href);
+                      }}
+                      className={`cursor-pointer ${i === cursor ? "outline outline-1 -outline-offset-1 outline-[var(--text-muted)]" : ""} ${
+                        selected.has(a._id) ? "bg-[var(--sidebar-active-bg)]" : "hover:bg-[var(--surface-hover)]"
                       }`}
                     >
-                      {/* Severity badge */}
-                      <td className="py-3 px-4">
-                        <span 
-                          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold font-mono uppercase border"
-                          style={{
-                            color: sevColor,
-                            borderColor: `${sevColor}40`,
-                            backgroundColor: `${sevColor}10`
-                          }}
-                        >
-                          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: sevColor }} />
-                          {a.severity}
+                      <td className="py-3 pl-4" onClick={(e) => e.stopPropagation()}>
+                        <input type="checkbox" checked={selected.has(a._id)} onChange={() => toggle(a._id)} aria-label={`Select ${cleanTitle(a.title)}`} />
+                      </td>
+                      <td className="py-3 px-3"><SeverityBadge severity={a.severity} /></td>
+                      <td className="py-3 px-3 max-w-0">
+                        <Link href={href} onClick={(e) => e.stopPropagation()} className="font-semibold text-[var(--text-primary)] block truncate hover:underline">
+                          {cleanTitle(a.title)}
+                        </Link>
+                        <span className="block truncate font-mono text-[10px] text-[var(--text-muted)]" title={detail}>
+                          {a.rule_name}{detail ? ` · ${detail}` : ""}
                         </span>
                       </td>
-
-                      {/* Title */}
-                      <td className="py-3 px-4">
-                        <span className="font-semibold text-[var(--text-primary)] block truncate max-w-lg">
-                          {formatAlertTitle(a.title)}
-                        </span>
+                      <td className="py-3 px-3 font-mono text-[var(--text-secondary)] truncate">{a.host || "—"}</td>
+                      <td className="py-3 px-3 truncate text-[var(--text-secondary)]">
+                        {a.assignee_email ? (a.assignee_id === user?.sub ? "You" : a.assignee_email) : <span className="text-[var(--text-muted)]">Unassigned</span>}
                       </td>
-
-                      {/* Target Host */}
-                      <td className="py-3 px-4 font-mono text-[var(--text-secondary)]">
-                        {a.host || "Unknown"}
-                      </td>
-
-                      {/* Rule Name */}
-                      <td className="py-3 px-4 font-mono text-[var(--text-muted)] truncate max-w-[180px]">
-                        {a.rule_name || "General Detection"}
-                      </td>
-
-                      {/* Time */}
-                      <td className="py-3 px-4 font-mono text-[var(--text-muted)] whitespace-nowrap">
-                        {ageLabel(a.created_at)}
-                      </td>
-
-                      {/* Status */}
-                      <td className="py-3 px-4">
-                        <span className="font-mono text-[10px] uppercase font-semibold text-[var(--text-secondary)] px-2 py-0.5 rounded bg-[var(--surface-elevated)] border border-[var(--border-color)]">
-                          {a.status}
-                        </span>
-                      </td>
-
-                      {/* Actions */}
-                      <td className="py-3 px-4 text-right">
-                        <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            onClick={() => setInvestigatingAlert(a)}
-                            className="button-primary text-[11px] py-1 px-2.5"
-                          >
-                            <Play className="w-3 h-3" />
-                            <span>Investigate</span>
-                          </button>
-                          <button
-                            onClick={() => {
-                              setSelectedId(a._id);
-                              setTimeout(() => {
-                                const detailElem = document.getElementById("selected-alert-details");
-                                if (detailElem) {
-                                  detailElem.scrollIntoView({ behavior: "smooth", block: "start" });
-                                }
-                              }, 50);
-                            }}
-                            className="button-secondary text-[11px] py-1 px-2.5 cursor-pointer"
-                            title="View Alert Dossier & Telemetry"
-                          >
-                            <Eye className="w-3 h-3 text-[var(--text-muted)]" />
-                            <span>View</span>
-                          </button>
-                        </div>
+                      <td className="py-3 px-3"><SlaBadge alert={a} /></td>
+                      <td className="py-3 px-3"><StatusBadge alert={a} /></td>
+                      <td className="py-3 px-3 font-mono text-[var(--text-muted)] whitespace-nowrap" title={a.detected_at ? new Date(a.detected_at).toLocaleString() : undefined}>
+                        {relativeTime(a.detected_at ?? a.created_at)}
                       </td>
                     </tr>
                   );
@@ -313,172 +415,21 @@ export default function AlertsPage() {
         </div>
       </section>
 
-      {/* Selected Alert Details View */}
-      {selected && (
-        <section id="selected-alert-details" className="card p-5 mt-2 scroll-mt-6 border-[var(--border-active)]">
-          <AlertDetailSection 
-            alert={selected} 
-            onInvestigate={() => setInvestigatingAlert(selected)}
-            onReload={load}
-          />
-        </section>
-      )}
-
-      {/* LangGraph Live Investigation Modal */}
-      {investigatingAlert && (
-        <InvestigationModal
-          alert={investigatingAlert}
-          isOpen={!!investigatingAlert}
-          onClose={() => setInvestigatingAlert(null)}
-          onComplete={async () => {
-            await load();
+      {dialog && (
+        <DispositionDialog
+          action={dialog}
+          count={selected.size}
+          // Role limits are shown per alert in the result; pass severity only when every selected alert shares it.
+          severity={new Set(selectedAlerts.map((a) => a.severity)).size === 1 ? selectedAlerts[0]?.severity : undefined}
+          role={user?.role}
+          onCancel={() => setDialog(null)}
+          onConfirm={async ({ note, verdict }) => {
+            const action = dialog;
+            setDialog(null);
+            await runBulk(() => bulkAction([...selected], action, { note, verdict }));
           }}
         />
       )}
-    </div>
-  );
-}
-
-function AlertDetailSection({ 
-  alert, 
-  onInvestigate, 
-  onReload 
-}: { 
-  alert: AlertRecord; 
-  onInvestigate: () => void; 
-  onReload: () => Promise<void>; 
-}) {
-  const [activeTab, setActiveTab] = useState<"overview" | "iocs" | "telemetry">("overview");
-  const [downloading, setDownloading] = useState<"full" | "executive" | null>(null);
-  const [reportError, setReportError] = useState<string | null>(null);
-
-  const downloadReport = async (type: "full" | "executive") => {
-    setDownloading(type);
-    setReportError(null);
-    try {
-      const endpoint = `/api/v1/alerts/${encodeURIComponent(alert._id)}/report/pdf?report_type=${type}`;
-      const response = await apiFetch(endpoint);
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(body.detail || "Report generation failed");
-      }
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `forensiq_${type === "full" ? "investigation_report" : "executive_summary"}_${alert._id.slice(0, 8)}.pdf`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch (error) {
-      setReportError(error instanceof Error ? error.message : "Report generation failed");
-    } finally {
-      setDownloading(null);
-    }
-  };
-
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between border-b border-[var(--border-color)] pb-3 gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-xs uppercase font-semibold text-[var(--text-muted)]">
-              {alert.severity} • {alert.status}
-            </span>
-          </div>
-          <h2 className="text-base font-bold text-[var(--text-primary)] mt-0.5">
-            {formatAlertTitle(alert.title)}
-          </h2>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <Link
-            href={`/investigations?alert=${encodeURIComponent(alert._id)}`}
-            className="button-secondary text-xs flex items-center gap-1.5"
-            title="Open interactive process tree and deep forensic timeline"
-          >
-            <Layers className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Process Tree & Workbench</span>
-          </Link>
-          <button onClick={() => void downloadReport("executive")} disabled={downloading !== null} className="button-secondary text-xs cursor-pointer">
-            {downloading === "executive" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
-            <span>{downloading === "executive" ? "Generating..." : "Exec Summary"}</span>
-          </button>
-          <button onClick={() => void downloadReport("full")} disabled={downloading !== null} className="button-secondary text-xs cursor-pointer">
-            {downloading === "full" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-            <span>{downloading === "full" ? "Generating..." : "Full Report"}</span>
-          </button>
-          <button onClick={onInvestigate} className="button-primary text-xs cursor-pointer">
-            <Play className="w-3.5 h-3.5" />
-            <span>Start AI Pipeline</span>
-          </button>
-        </div>
-      </div>
-      {reportError && <p className="text-xs text-[#EF4444]">{reportError}</p>}
-
-      {/* Tab Navigation */}
-      <div className="flex border-b border-[var(--border-color)]">
-        <button
-          onClick={() => setActiveTab("overview")}
-          className={`px-3 py-2 text-xs font-semibold border-b-2 transition-colors ${
-            activeTab === "overview"
-              ? "border-[var(--text-primary)] text-[var(--text-primary)]"
-              : "border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
-          }`}
-        >
-          Overview & Analysis
-        </button>
-        <button
-          onClick={() => setActiveTab("iocs")}
-          className={`px-3 py-2 text-xs font-semibold border-b-2 transition-colors ${
-            activeTab === "iocs"
-              ? "border-[var(--text-primary)] text-[var(--text-primary)]"
-              : "border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
-          }`}
-        >
-          IOC Intelligence ({alert.extracted_iocs?.length || 0})
-        </button>
-        <button
-          onClick={() => setActiveTab("telemetry")}
-          className={`px-3 py-2 text-xs font-semibold border-b-2 transition-colors ${
-            activeTab === "telemetry"
-              ? "border-[var(--text-primary)] text-[var(--text-primary)]"
-              : "border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
-          }`}
-        >
-          Extracted Context & Raw Payload
-        </button>
-      </div>
-
-      <div>
-        {activeTab === "overview" && (
-          <div className="space-y-4">
-            {alert.recommendation && (
-              <div className="p-3.5 rounded bg-[var(--surface-secondary)] border border-[var(--border-color)] text-xs text-[var(--text-primary)]">
-                <span className="font-semibold block mb-1">AI Response Playbook:</span>
-                {alert.recommendation}
-              </div>
-            )}
-            <div className="grid grid-cols-3 gap-3">
-              <div className="p-3 rounded bg-[var(--surface-secondary)] border border-[var(--border-color)]">
-                <span className="text-[11px] text-[var(--text-muted)] block">Target Host</span>
-                <span className="font-mono text-xs font-semibold text-[var(--text-primary)]">{alert.host || "N/A"}</span>
-              </div>
-              <div className="p-3 rounded bg-[var(--surface-secondary)] border border-[var(--border-color)]">
-                <span className="text-[11px] text-[var(--text-muted)] block">Target User</span>
-                <span className="font-mono text-xs font-semibold text-[var(--text-primary)]">{alert.user || "SYSTEM"}</span>
-              </div>
-              <div className="p-3 rounded bg-[var(--surface-secondary)] border border-[var(--border-color)]">
-                <span className="text-[11px] text-[var(--text-muted)] block">Risk Score</span>
-                <span className="font-mono text-xs font-bold text-[#EF4444]">{alert.risk_score ?? "—"}/100</span>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {activeTab === "iocs" && <EnrichmentPanel alert={alert} />}
-        {activeTab === "telemetry" && <ContextPanel alert={alert} />}
-      </div>
     </div>
   );
 }

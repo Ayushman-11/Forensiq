@@ -47,6 +47,7 @@ const QUICK_QUERIES = [
 const TIME_RANGES = [
   { label: 'Past 24 Hours', value: '-24h' },
   { label: 'Past 7 Days', value: '-7d' },
+  { label: 'Past 30 Days', value: '-30d' },
   { label: 'Past 1 Hour', value: '-1h' },
   { label: 'Past 15 Minutes', value: '-15m' },
 ];
@@ -294,7 +295,7 @@ export default function SearchPage() {
                           {ev.user && <span className="text-[var(--text-muted)] block font-normal text-[11px]">{ev.user}</span>}
                         </td>
                         <td className="py-2.5 px-3 text-[var(--text-secondary)]">
-                          {ev.provider || "Sysmon"}
+                          {ev.provider || "—"}
                         </td>
                         <td className="py-2.5 px-3 text-[var(--text-secondary)]">
                           {ev.event_id || "-"}
