@@ -163,8 +163,16 @@ A SOC tool that must be watched to be useful will be missed overnight. This is t
 
 ### 2.6 Multi-tenancy
 
-- Tenant scoping is applied through `scoped_query` and tested in places, but there is no tenant admin, no per-tenant configuration (Splunk connection, TI keys, noise policy), and one global poller.
-- Add: tenant management, per-tenant secrets and SIEM settings, per-tenant poller scheduling, a cross-tenant isolation test suite that runs against every endpoint automatically.
+**Status: implemented** (`services/tenants.py`, `endpoints/tenants.py`, per-tenant poller in `services/poller.py`, UI at `/tenants`; tests in `tests/test_tenant_management.py` and `tests/test_tenant_isolation.py`).
+
+- [x] Tenant management: platform administrators (admins of `FORENSIQ_PLATFORM_ORG_ID`, default `default`) create tenants with their first admin, list them (including legacy org ids found on users), rename, and suspend or reactivate them. Suspension blocks login and every API call at once and ends sessions.
+- [x] Per-tenant settings, editable by that tenant's admins (or a platform admin on their behalf, recorded in both audit trails): SIEM URL, credentials, TLS verification, detection and searchable indexes, poll interval, threat-intel keys, noise policy. `GET/PUT /tenants/current/settings`, connection test, `/tenants/{id}/settings` for the platform.
+- [x] Secrets (SIEM password, VirusTotal and AbuseIPDB keys) are encrypted at rest (Fernet; key from `FORENSIQ_TENANT_SECRETS_KEY` or derived from `SECRET_KEY`, and `PREVIOUS_SECRET_KEY` keeps old values readable through a rotation) and are write-only: no response contains one.
+- [x] A tenant with no SIEM settings has no SIEM: it is never polled, searched or ingested through the platform's. Search, manual ingest, health and the dashboard use the caller's own tenant. SIEM URLs must be https and cannot point at loopback, link-local or metadata addresses. Threat-intel keys fall back to the platform's unless `TENANT_USE_PLATFORM_THREAT_INTEL=false`.
+- [x] Per-tenant poller scheduling: every active tenant with a SIEM is polled on its own interval, under its own lease, cursor and credentials, concurrently (`POLLER_TENANT_CONCURRENCY`). A failing tenant backs off (up to 8x) without slowing the others; last run and last error are in `tenant_runtime` and the tenant list.
+- [x] Cross-tenant isolation suite that runs against every endpoint automatically (`tests/test_tenant_isolation.py`): every mounted route is requested as another tenant, with ids and body fields filled from the OpenAPI schema, for each role. It asserts no leaked data, no success against another tenant's resource, no change to tenant data and no crash. A positive control proves the requests reach real handlers. The suite fails on any new route with an unknown path parameter, any unreviewed unauthenticated route, WebSocket route, or MongoDB collection, so new work cannot skip the isolation decision. Mutation-tested: removing tenant scoping from alerts, incidents, notes or response requests fails it with the endpoint named.
+- Found and fixed along the way: `GET /admin/users` returned an empty list for every tenant; `/dashboard/config` showed the platform's SIEM settings to every org admin.
+- Not done: deleting a tenant and its data (suspend instead); per-tenant LLM key and budget; per-tenant IOC cache (the cache holds public reputation lookups and is shared); the `notifications` and `rules` endpoint modules exist but were never mounted on the API router, so they are outside the isolation suite until they are.
 - **Effort: L.**
 
 ### 2.7 Integrations

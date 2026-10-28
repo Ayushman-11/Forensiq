@@ -161,6 +161,11 @@ class Settings(BaseSettings):
     POLLER_LEASE_TTL_SECONDS: int = Field(default=90, description="Single-poller lease time to live")
     POLLER_INTERVAL_SECONDS: int = Field(default=30, description="Seconds between SIEM ingestion cycles")
     INCIDENT_WINDOW_HOURS: int = Field(default=6, description="Alerts sharing a link key within this gap join one incident")
+    # Multi-tenancy. Admins of the platform tenant manage all tenants; every other tenant only ever sees its own data.
+    PLATFORM_ORG_ID: str = Field(default="default", description="The operator's own tenant: its admins can create and suspend tenants")
+    TENANT_SECRETS_KEY: str = Field(default="", description="Fernet key that encrypts per-tenant secrets at rest; derived from SECRET_KEY when empty")
+    TENANT_USE_PLATFORM_THREAT_INTEL: bool = Field(default=True, description="A tenant without its own VirusTotal/AbuseIPDB key uses the platform's")
+    POLLER_TENANT_CONCURRENCY: int = Field(default=5, description="Tenants polled at the same time")
     SLA_SWEEP_INTERVAL_SECONDS: int = Field(default=60, description="Seconds between SLA breach / escalation sweeps")
 
     # External ticketing (case management). Each system is optional; unset means "not configured".

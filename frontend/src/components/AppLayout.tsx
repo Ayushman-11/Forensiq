@@ -21,6 +21,7 @@ import {
   Database,
   Layers,
   ShieldBan,
+  Building2,
   User,
   Activity
 } from "lucide-react";
@@ -65,8 +66,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     { href: "/ai-extraction", icon: Sparkles, label: "AI Extraction", badge: "AI" },
     { href: "/raw-logs", icon: Terminal, label: "Raw Logs", badge: "SPL" },
     { href: "/reports", icon: FileText, label: "Reports", badge: null },
+    { href: "/tenants", icon: Building2, label: "Tenants", badge: null },
     { href: "/admin", icon: Settings, label: "Administration", badge: null },
-  ].filter((item) => item.href !== "/admin" || user?.role === "admin");
+  ].filter((item) => (item.href !== "/admin" && item.href !== "/tenants") || user?.role === "admin");
 
   const userEmail = user?.email || "";
   const userRole = user ? roleLabel(user.role) : "";

@@ -27,14 +27,15 @@ from app.services.audit import record_audit
 from app.services import cases
 from app.services.incidents import SEVERITY_RANK, rebuild_incidents
 from app.services.sla import get_sla_targets
+from app.services.tenants import noise_filter, resolve_config
 from app.services.triage import OPEN_STATUSES, sla_state
 
 router = APIRouter()
 
 
-def _noise() -> Optional[NoiseFilter]:
+async def _noise(db, user: dict) -> Optional[NoiseFilter]:
     try:
-        return NoiseFilter.from_yaml(settings.NOISE_CONFIG_PATH)
+        return noise_filter(await resolve_config(db, tenant_id(user)))
     except Exception:  # regrouping falls back to un-filtered keys rather than failing the action
         return None
 
@@ -171,7 +172,7 @@ async def rebuild(
     user: dict = Depends(require_roles("soc_manager", "admin")),
 ):
     """Regroup every alert in the tenant. Use after changing INCIDENT_WINDOW_HOURS or the noise policy."""
-    result = await rebuild_incidents(db, tenant_id(user), NoiseFilter.from_yaml(settings.NOISE_CONFIG_PATH))
+    result = await rebuild_incidents(db, tenant_id(user), await _noise(db, user))
     await record_audit(db, user, "incidents.rebuilt", "incident", "*", result)
     return result
 
@@ -265,7 +266,7 @@ async def incident_timeline(incident_id: str, db: AsyncIOMotorDatabase = Depends
 async def merge(incident_id: str, payload: MergeRequest, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
     """Fold other incidents into this one. Their alerts, notes, timeline and tickets move here."""
     try:
-        return await cases.merge_incidents(db, user, incident_id, payload.source_ids, payload.note, _noise())
+        return await cases.merge_incidents(db, user, incident_id, payload.source_ids, payload.note, await _noise(db, user))
     except cases.CaseError as exc:
         raise _case_error(exc)
 
@@ -274,7 +275,7 @@ async def merge(incident_id: str, payload: MergeRequest, db: AsyncIOMotorDatabas
 async def split(incident_id: str, payload: SplitRequest, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
     """Move some of this incident's alerts into a new incident."""
     try:
-        return await cases.split_incident(db, user, incident_id, payload.alert_ids, payload.title, payload.note, _noise())
+        return await cases.split_incident(db, user, incident_id, payload.alert_ids, payload.title, payload.note, await _noise(db, user))
     except cases.CaseError as exc:
         raise _case_error(exc)
 
@@ -283,7 +284,7 @@ async def split(incident_id: str, payload: SplitRequest, db: AsyncIOMotorDatabas
 async def pin(incident_id: str, payload: PinRequest, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
     """Pin an alert to this incident (moving it from wherever it was); regrouping will not undo it."""
     try:
-        return await cases.pin_alert(db, user, incident_id, payload.alert_id, _noise())
+        return await cases.pin_alert(db, user, incident_id, payload.alert_id, await _noise(db, user))
     except cases.CaseError as exc:
         raise _case_error(exc)
 

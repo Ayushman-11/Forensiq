@@ -36,9 +36,9 @@ BRUTE_FORCE_RULE = "brute_force_login"
 EVENT_CODES = ("1", "3", "13", "22", "4104", "4625", "4648", "4688")
 
 
-def build_query() -> str:
+def build_query(index: Optional[str] = None) -> str:
     codes = " OR ".join(f"EventCode={c}" for c in EVENT_CODES)
-    return f"search index={settings.SPLUNK_DETECTION_INDEX} | spath | search ({codes}) | sort 0 _time"
+    return f"search index={index or settings.SPLUNK_DETECTION_INDEX} | spath | search ({codes}) | sort 0 _time"
 
 
 class IngestionService:
@@ -52,9 +52,11 @@ class IngestionService:
         org_id: str = "default",
         splunk_factory: Callable[[], SplunkClient] = SplunkClient,
         noise: Optional[NoiseFilter] = None,
+        detection_index: Optional[str] = None,
     ) -> None:
         self.db = db
         self.org_id = org_id
+        self.detection_index = detection_index or settings.SPLUNK_DETECTION_INDEX
         self._splunk_factory = splunk_factory
         self.noise = noise or NoiseFilter.from_yaml(settings.NOISE_CONFIG_PATH)
         self.rules = DetectionRuleEngine().get_all_rules()
@@ -116,7 +118,7 @@ class IngestionService:
         pages = 0
         last_page_len = 0
         async for page in splunk.search_raw_pages(
-            build_query(), earliest_time=earliest, latest_time="now",
+            build_query(self.detection_index), earliest_time=earliest, latest_time="now",
             page_size=settings.INGEST_PAGE_SIZE, max_pages=settings.INGEST_MAX_PAGES,
         ):
             pages += 1

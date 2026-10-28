@@ -53,6 +53,18 @@ def _noise_policy() -> NoiseFilter:
     return NoiseFilter.from_yaml(settings.NOISE_CONFIG_PATH)
 
 
+async def _tenant_noise_policy(org_id: str) -> NoiseFilter:
+    """The alert's own tenant policy; the platform policy when the tenant has none or the database is unreachable."""
+    try:
+        from app.database.session import get_db
+        from app.services.tenants import noise_filter, resolve_config
+
+        return noise_filter(await resolve_config(await get_db(), org_id))
+    except Exception as exc:
+        logger.warning("tenant_noise_policy_unavailable", org_id=org_id, error=str(exc))
+        return _noise_policy()
+
+
 def _build_evidence_catalog(
     alert: dict,
     enrichments: list,
@@ -138,9 +150,10 @@ def _deterministic_recommendation(
     correlations: list,
     mitre_mappings: list,
     risk_assessment: dict,
+    noise: Optional[NoiseFilter] = None,
 ) -> Dict[str, Any]:
     """Generates defensive checklists using rule-based heuristics."""
-    noise = _noise_policy()
+    noise = noise or _noise_policy()
     risk_score = risk_assessment.get("risk_score", 50)
     host = alert.get("host") or "target host"
     malicious = list(_malicious_by_ioc(enrichments).values())
@@ -293,7 +306,7 @@ async def generate_recommendations_node(state: AgentState) -> Dict[str, Any]:
         engine = f"llm:{settings.XAI_MODEL}"
     else:
         # Fallback to deterministic checklist
-        rec_data = _deterministic_recommendation(alert, enrichments, correlations, mitre_mappings, risk_assessment)
+        rec_data = _deterministic_recommendation(alert, enrichments, correlations, mitre_mappings, risk_assessment, noise=await _tenant_noise_policy(org_id))
         directive = rec_data["recommendation"]
         checklist = rec_data["checklist"]
         formatted_rec = (

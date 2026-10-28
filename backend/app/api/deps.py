@@ -10,6 +10,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.infrastructure.siem.splunk import SplunkClient
+from app.services import tenants as tenant_service
 from app.infrastructure.siem.base import SIEMProvider
 from app.core.security import decode_token, TokenError
 from app.database.session import get_db
@@ -17,8 +18,8 @@ from app.database.session import get_db
 _bearer_scheme = HTTPBearer(auto_error=False)
 
 
-async def get_siem_client() -> AsyncGenerator[SIEMProvider, None]:
-    """Dependency Provider for SIEM Client (SplunkClient). Ensures client is closed after request."""
+async def get_platform_siem_client() -> AsyncGenerator[SIEMProvider, None]:
+    """The operator's own SIEM, for the unauthenticated platform health probe only. Never for tenant data."""
     client = SplunkClient()
     try:
         yield client
@@ -62,7 +63,23 @@ async def get_current_user(
     user["id"] = str(user.pop("_id"))
     user.pop("password_hash", None)
     user["org_id"] = user.get("org_id", "default")
+    if await tenant_service.is_suspended(db, user["org_id"]):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This organisation is suspended")
     return user
+
+
+async def get_siem_client(
+    user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+) -> AsyncGenerator[SIEMProvider, None]:
+    """The caller's tenant SIEM. A tenant with none configured gets a client that fails like an unreachable one:
+    it never falls back to the platform's SIEM."""
+    cfg = await tenant_service.resolve_config(db, user["org_id"])
+    client = tenant_service.siem_for(cfg)
+    try:
+        yield client
+    finally:
+        await client.close()
 
 
 def require_roles(*roles: str) -> Callable:

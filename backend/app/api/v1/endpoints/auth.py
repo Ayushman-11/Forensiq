@@ -36,6 +36,7 @@ from app.core.security import (
     get_totp_provisioning_uri,
     TokenError,
 )
+from app.services import tenants as tenant_service
 from app.services.login_throttle import clear_failures, reserve_attempt, throttle_key
 
 router = APIRouter()
@@ -76,6 +77,8 @@ async def _issue_tokens_for_user(
     email = user["email"]
     role = user.get("role", "analyst")
     org_id = user.get("org_id", "default")
+    if await tenant_service.is_suspended(db, org_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This organisation is suspended")
 
     access_token = create_access_token(user_id=user_id, email=email, role=role, org_id=org_id)
     refresh_token, jti, expires_at = create_refresh_token(user_id=user_id)

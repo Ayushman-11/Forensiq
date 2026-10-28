@@ -4,7 +4,7 @@ Health check endpoints for platform status and SIEM connectivity.
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from app.api.deps import get_siem_client
+from app.api.deps import get_platform_siem_client
 from app.infrastructure.siem.base import SIEMProvider
 
 router = APIRouter()
@@ -17,7 +17,7 @@ class HealthResponse(BaseModel):
 
 
 @router.get("", response_model=HealthResponse)
-async def health_check(siem: SIEMProvider = Depends(get_siem_client)):
+async def health_check(siem: SIEMProvider = Depends(get_platform_siem_client)):
     """Health check endpoint verifying system health and SIEM connection."""
     siem_ok = False
     try:

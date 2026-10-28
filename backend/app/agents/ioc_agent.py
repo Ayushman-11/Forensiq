@@ -123,7 +123,7 @@ def _abuseipdb_verdict(score: int) -> str:
     return "benign"
 
 
-async def _query_vt(ioc: str, ioc_type: str, db=None) -> Enrichment:
+async def _query_vt(ioc: str, ioc_type: str, db=None, api_key: str | None = None) -> Enrichment:
     """Queries VirusTotal API with MongoDB cache lookup."""
     cached = await _get_cached_enrichment(db, ioc, "VirusTotal")
     if cached:
@@ -135,11 +135,12 @@ async def _query_vt(ioc: str, ioc_type: str, db=None) -> Enrichment:
         "hash": "files",
     }.get(ioc_type, "domains")
 
-    if not settings.VT_API_KEY:
+    api_key = settings.VT_API_KEY if api_key is None else api_key  # the tenant's key; global only when no tenant resolved
+    if not api_key:
         return _unavailable(ioc, ioc_type, "VirusTotal", "not_configured", "VT_API_KEY is not set")
 
     url = f"https://www.virustotal.com/api/v3/{endpoint}/{ioc}"
-    headers = {"x-apikey": settings.VT_API_KEY, "Accept": "application/json"}
+    headers = {"x-apikey": api_key, "Accept": "application/json"}
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -174,17 +175,18 @@ async def _query_vt(ioc: str, ioc_type: str, db=None) -> Enrichment:
         return _unavailable(ioc, ioc_type, "VirusTotal", "error", type(e).__name__)
 
 
-async def _query_abuseipdb(ioc: str, db=None) -> Enrichment:
+async def _query_abuseipdb(ioc: str, db=None, api_key: str | None = None) -> Enrichment:
     """Queries AbuseIPDB check API (v2) with MongoDB cache lookup."""
     cached = await _get_cached_enrichment(db, ioc, "AbuseIPDB")
     if cached:
         return cached
 
-    if not settings.ABUSEIPDB_API_KEY:
+    api_key = settings.ABUSEIPDB_API_KEY if api_key is None else api_key
+    if not api_key:
         return _unavailable(ioc, "ip", "AbuseIPDB", "not_configured", "ABUSEIPDB_API_KEY is not set")
 
     url = "https://api.abuseipdb.com/api/v2/check"
-    headers = {"Key": settings.ABUSEIPDB_API_KEY, "Accept": "application/json"}
+    headers = {"Key": api_key, "Accept": "application/json"}
     params = {"ipAddress": ioc, "maxAgeInDays": "90", "verbose": ""}
 
     try:
@@ -232,14 +234,26 @@ async def enrich_ioc_node(state: AgentState) -> Dict[str, Any]:
     except Exception as e:
         logger.warning("ioc_enrichment_db_unavailable", error=str(e))
 
+    # Each tenant enriches with its own feed keys (or the platform's, if the operator allows it), never another tenant's.
+    vt_key = abuse_key = None
+    if db is not None:
+        org_id = (state.get("alert_data") or {}).get("org_id", "default")
+        try:
+            from app.services.tenants import threat_intel_keys
+
+            vt_key, abuse_key = await threat_intel_keys(db, org_id)
+        except Exception as e:
+            logger.warning("tenant_threat_intel_keys_unavailable", org_id=org_id, error=str(e))
+            vt_key = abuse_key = ""  # fail closed: no verdict rather than someone else's key
+
     tasks = []
     for ioc in extracted_iocs:
         ioc_type = _get_ioc_type(ioc)
         # Query VirusTotal for all IOC types
-        tasks.append(_query_vt(ioc, ioc_type, db=db))
+        tasks.append(_query_vt(ioc, ioc_type, db=db, api_key=vt_key))
         # For IP addresses, query AbuseIPDB in parallel
         if ioc_type == "ip":
-            tasks.append(_query_abuseipdb(ioc, db=db))
+            tasks.append(_query_abuseipdb(ioc, db=db, api_key=abuse_key))
 
     results: List[Enrichment] = []
     if tasks:

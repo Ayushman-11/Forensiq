@@ -14,7 +14,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.database.session import get_db
 from app.api.deps import require_roles
 from app.core.security import hash_password
-from app.core.tenancy import scoped_query, tenant_id
+from app.core.tenancy import scoped_query, tenant_filter, tenant_id
 from app.schemas.auth import (
     UserOut,
     CreateUserRequest,
@@ -32,9 +32,7 @@ async def list_users(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Lists all users belonging to the admin's organization."""
-    org = tenant_id(admin_user)
-    query = scoped_query({}, org)
-    cursor = db["users"].find(query).sort("created_at", -1)
+    cursor = db["users"].find(tenant_filter(admin_user)).sort("created_at", -1)
     users = []
     async for doc in cursor:
         users.append(

@@ -9,6 +9,7 @@ from app.core.timeutil import iso_utc
 from app.core.tenancy import scoped_query, tenant_filter, tenant_id
 from app.infrastructure.siem.base import SIEMProvider
 from app.services.sla import get_sla_targets
+from app.services.tenants import resolve_config
 from app.services.triage import OPEN_STATUSES, detected_at, sla_state
 
 router = APIRouter()
@@ -52,7 +53,8 @@ async def _ingestion_component(db, user) -> dict:
 
 
 async def _threat_intel_component(db, user) -> dict:
-    feeds = {"VirusTotal": bool(settings.VT_API_KEY.strip()), "AbuseIPDB": bool(settings.ABUSEIPDB_API_KEY.strip())}
+    tenant = await resolve_config(db, tenant_id(user))
+    feeds = {"VirusTotal": bool(tenant.vt_api_key), "AbuseIPDB": bool(tenant.abuseipdb_api_key)}
     failing: dict[str, int] = {}
     cursor = db["alerts"].find(
         scoped_query(user, {"status": "Investigated"}), {"enrichments.source": 1, "enrichments.status": 1},
@@ -154,15 +156,16 @@ async def ingestion_health(db: AsyncIOMotorDatabase = Depends(get_db), user: dic
 
 
 @router.get("/config")
-async def effective_config(_user: dict = Depends(require_roles("admin"))):
-    """Read-only effective configuration (no secrets). Settings change in backend/.env plus a restart."""
+async def effective_config(db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(require_roles("admin"))):
+    """Read-only effective configuration of the caller's tenant (no secrets). Tenant settings: /tenants/current/settings."""
+    tenant = await resolve_config(db, tenant_id(user))
     return {
         "siem": {
-            "url": settings.SPLUNK_URL,
-            "verify_ssl": settings.SPLUNK_VERIFY_SSL,
-            "detection_index": settings.SPLUNK_DETECTION_INDEX,
-            "allowed_indexes": settings.SPLUNK_ALLOWED_INDEXES,
-            "poll_interval_seconds": settings.POLLER_INTERVAL_SECONDS,
+            "url": tenant.siem.url,
+            "verify_ssl": tenant.siem.verify_ssl,
+            "detection_index": tenant.siem.detection_index,
+            "allowed_indexes": tenant.siem.allowed_indexes,
+            "poll_interval_seconds": tenant.siem.poll_interval_seconds,
         },
         "llm": {
             "configured": bool(settings.XAI_API_KEY.strip()),
@@ -170,8 +173,8 @@ async def effective_config(_user: dict = Depends(require_roles("admin"))):
             "model": settings.XAI_MODEL,
         },
         "threat_intel": {
-            "virustotal_configured": bool(settings.VT_API_KEY.strip()),
-            "abuseipdb_configured": bool(settings.ABUSEIPDB_API_KEY.strip()),
+            "virustotal_configured": bool(tenant.vt_api_key),
+            "abuseipdb_configured": bool(tenant.abuseipdb_api_key),
             "vt_malicious_min_engines": settings.VT_MALICIOUS_MIN_ENGINES,
             "abuseipdb_malicious_min_score": settings.ABUSEIPDB_MALICIOUS_MIN_SCORE,
             "abuseipdb_suspicious_min_score": settings.ABUSEIPDB_SUSPICIOUS_MIN_SCORE,

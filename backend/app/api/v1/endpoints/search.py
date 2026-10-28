@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.api.deps import get_siem_client, get_db, require_roles
+from app.services.tenants import resolve_config
 from app.core.config import settings
 from app.core.tenancy import scoped_query
 from app.services.audit import record_audit
@@ -41,12 +42,14 @@ async def execute_search(
     Executes a guarded search against the configured SIEM and returns normalized events.
     If Splunk is unavailable, falls back to searching the caller's tenant data in MongoDB.
     """
+    tenant = await resolve_config(db, user["org_id"])
+    detection_index = tenant.siem.detection_index or settings.SPLUNK_DETECTION_INDEX
     try:
         validate_time_range(req.earliest_time, req.latest_time, settings.SEARCH_MAX_RANGE_DAYS)
         safe_query = validate_search(
             req.query,
-            allowed_indexes={*settings.SPLUNK_ALLOWED_INDEXES, settings.SPLUNK_DETECTION_INDEX},
-            default_index=settings.SPLUNK_DETECTION_INDEX,
+            allowed_indexes={*tenant.siem.allowed_indexes, detection_index},
+            default_index=detection_index,
         )
     except SPLRejected as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))

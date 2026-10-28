@@ -22,6 +22,7 @@ from app.core.errors import internal_error, new_request_id
 from app.api.deps import require_roles, get_current_user
 from app.core.tenancy import scoped_query, tenant_filter, tenant_id
 from app.services.sla import get_sla_targets
+from app.services.tenants import ingestion_kwargs, resolve_config
 from app.services.audit import record_audit
 from app.services.correlation import correlate_alert
 from app.services.job_queue import enqueue_investigation_job
@@ -286,7 +287,11 @@ async def ingest_from_splunk(
 ):
     """Triggers a manual ingestion of alerts from Splunk into MongoDB."""
     try:
-        service = IngestionService(db, tenant_id(_user))
+        org_id = tenant_id(_user)
+        cfg = await resolve_config(db, org_id)
+        if not cfg.siem.configured:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No SIEM is configured for this tenant")
+        service = IngestionService(db, org_id, **await ingestion_kwargs(db, org_id))
         inserted = await service.fetch_and_store_alerts()
         result = {"status": "degraded" if service.errors else "success", "inserted": len(inserted), "fetched": service.total_fetched, "rules_run": service.rules_run, "errors": service.errors}
         if service.errors and not inserted:
