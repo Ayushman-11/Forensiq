@@ -1,0 +1,49 @@
+name: CodeQL SAST
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    # Weekly scan every Sunday at 02:00 UTC, independent of pushes
+    - cron: "0 2 * * 0"
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write  # required to upload SARIF results to GitHub Security tab
+
+jobs:
+  analyze:
+    name: CodeQL analysis (${{ matrix.language }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ["python", "javascript-typescript"]
+        include:
+          - language: python
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # For Python: flag common security mistakes in FastAPI apps
+          # For JS/TS: flag XSS, injection, prototype pollution, etc.
+          queries: security-and-quality
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

@@ -9,7 +9,7 @@ explicit kwargs and disable .env file loading via `_env_file=None`.
 
 import pytest
 
-from app.core.config import Settings, DEFAULT_SECRET_KEY
+from app.core.config import DEFAULT_SECRET_KEY, Settings
 
 
 def test_production_with_default_secret_key_raises():

@@ -3,16 +3,16 @@ FastAPI Route Dependencies.
 Provides Dependency Injection for SIEM Clients, Database Sessions, and Auth.
 """
 
-from typing import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.infrastructure.siem.splunk import SplunkClient
-from app.infrastructure.siem.base import SIEMProvider
-from app.core.security import decode_token, TokenError
+from app.core.security import TokenError, decode_token
 from app.database.session import get_db
+from app.infrastructure.siem.base import SIEMProvider
+from app.infrastructure.siem.splunk import SplunkClient
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 

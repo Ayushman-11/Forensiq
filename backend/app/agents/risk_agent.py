@@ -1,4 +1,4 @@
-"""
+﻿"""
 Risk Assessment Agent Node for LangGraph.
 Evaluates threat severity, IOC maliciousness, correlation breadth, and MITRE tactics
 using the Grok AI LLM with prompt injection defense, structured evidence citation,

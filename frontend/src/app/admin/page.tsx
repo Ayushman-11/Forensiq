@@ -15,6 +15,9 @@ import {
   RotateCcw,
   AlertTriangle,
   Loader2,
+  Bell,
+  Send,
+  Trash2,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { roleLabel } from "@/lib/roles";
@@ -52,6 +55,114 @@ export default function AdministrationPage() {
   const [newPassword, setNewPassword] = useState("");
   const [newRole, setNewRole] = useState("analyst");
   const [creatingUser, setCreatingUser] = useState(false);
+
+  // Notification channels state
+  interface NotificationChannel {
+    id: string;
+    name: string;
+    channel_type: "slack" | "teams" | "pagerduty" | "opsgenie" | "email";
+    enabled: boolean;
+    webhook_url?: string;
+    routing_key?: string;
+    api_key?: string;
+    email_recipients?: string[];
+    min_severity: string;
+    quiet_hours_enabled: boolean;
+  }
+  const [channels, setChannels] = useState<NotificationChannel[]>([]);
+  const [, setLoadingChannels] = useState(false);
+  const [showAddChannelModal, setShowAddChannelModal] = useState(false);
+  const [newChannelName, setNewChannelName] = useState("");
+  const [newChannelType, setNewChannelType] = useState<"slack" | "teams" | "pagerduty" | "opsgenie" | "email">("slack");
+  const [newWebhookUrl, setNewWebhookUrl] = useState("");
+  const [newRoutingKey, setNewRoutingKey] = useState("");
+  const [newEmailRecipients, setNewEmailRecipients] = useState("");
+  const [newQuietHours, setNewQuietHours] = useState(false);
+  const [testStatus, setTestStatus] = useState<string | null>(null);
+
+  const loadChannels = useCallback(async () => {
+    if (!isAdmin) return;
+    setLoadingChannels(true);
+    try {
+      const res = await apiFetch("/api/v1/notifications/channels");
+      if (res.ok) {
+        const data = await res.json();
+        setChannels(data);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoadingChannels(false);
+    }
+  }, [isAdmin]);
+
+  const handleCreateChannel = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setUserError(null);
+    try {
+      const body: Record<string, unknown> = {
+        name: newChannelName,
+        channel_type: newChannelType,
+        min_severity: "medium",
+        quiet_hours_enabled: newQuietHours,
+      };
+      if (newChannelType === "slack" || newChannelType === "teams") {
+        body.webhook_url = newWebhookUrl;
+      } else if (newChannelType === "pagerduty") {
+        body.routing_key = newRoutingKey;
+      } else if (newChannelType === "email") {
+        body.email_recipients = newEmailRecipients.split(",").map(e => e.trim()).filter(Boolean);
+      }
+      const res = await apiFetch("/api/v1/notifications/channels", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Failed to create channel");
+      }
+      setUserSuccess(`Notification channel ${newChannelName} configured successfully.`);
+      setShowAddChannelModal(false);
+      setNewChannelName("");
+      setNewWebhookUrl("");
+      setNewRoutingKey("");
+      setNewEmailRecipients("");
+      void loadChannels();
+      setTimeout(() => setUserSuccess(null), 4000);
+    } catch (err: unknown) {
+      setUserError(err instanceof Error ? err.message : "Error creating channel");
+    }
+  };
+
+  const handleDeleteChannel = async (id: string) => {
+    if (!confirm("Delete this notification channel?")) return;
+    try {
+      await apiFetch(`/api/v1/notifications/channels/${id}`, { method: "DELETE" });
+      void loadChannels();
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleSendTestNotification = async (channelId?: string) => {
+    setTestStatus("Sending test alert...");
+    try {
+      const res = await apiFetch("/api/v1/notifications/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel_id: channelId }),
+      });
+      if (res.ok) {
+        setTestStatus("Test alert successfully dispatched!");
+        setTimeout(() => setTestStatus(null), 3000);
+      } else {
+        setTestStatus("Test dispatch failed.");
+      }
+    } catch {
+      setTestStatus("Failed to send test alert.");
+    }
+  };
 
   // Password reset modal / fields
   const [resetTargetUser, setResetTargetUser] = useState<UserRecord | null>(null);
@@ -91,6 +202,7 @@ export default function AdministrationPage() {
     if (isAdmin) {
       void (async () => {
         try {
+          void loadChannels();
           const res = await apiFetch("/api/v1/admin/users");
           if (res.ok && active) {
             const data = await res.json();
@@ -508,6 +620,105 @@ export default function AdministrationPage() {
         )}
       </section>
 
+      {/* SOC Notifications & Escalation Routing */}
+      <section className="card p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--border-color)] pb-3">
+          <div className="flex items-center gap-2">
+            <Bell className="w-4 h-4 text-[#F59E0B]" />
+            <h2 className="text-sm font-semibold text-[var(--text-primary)]">
+              Real-Time Notifications & On-Call Alerts (SLA, Criticals, Escalations)
+            </h2>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void handleSendTestNotification()}
+              className="text-xs px-2.5 py-1 rounded bg-[var(--surface-secondary)] border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-white flex items-center gap-1.5 cursor-pointer"
+            >
+              <Send className="w-3 h-3 text-[#3B82F6]" />
+              <span>Test Broadcast</span>
+            </button>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => setShowAddChannelModal(true)}
+                className="button-primary text-xs flex items-center gap-1"
+              >
+                <span>+ Add Channel</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {testStatus && (
+          <div className="p-2.5 rounded bg-[#3B82F6]/10 border border-[#3B82F6]/30 text-[#3B82F6] text-xs">
+            {testStatus}
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs mb-3">
+          <div className="p-3 rounded bg-[var(--surface-secondary)] border border-[var(--border-color)] space-y-1">
+            <span className="text-[10px] text-[var(--text-muted)] uppercase font-bold">New Critical Alert</span>
+            <p className="text-[11px] text-[var(--text-secondary)]">Immediate dispatch across active channels.</p>
+          </div>
+          <div className="p-3 rounded bg-[var(--surface-secondary)] border border-[var(--border-color)] space-y-1">
+            <span className="text-[10px] text-[var(--text-muted)] uppercase font-bold">Unassigned Critical (&gt;15m)</span>
+            <p className="text-[11px] text-[var(--text-secondary)]">Broadcasts escalation when criticals sit untouched.</p>
+          </div>
+          <div className="p-3 rounded bg-[var(--surface-secondary)] border border-[var(--border-color)] space-y-1">
+            <span className="text-[10px] text-[var(--text-muted)] uppercase font-bold">SLA Acknowledge / Resolve</span>
+            <p className="text-[11px] text-[var(--text-secondary)]">Alerts when timers (15m ack, 2h resolve) breach.</p>
+          </div>
+        </div>
+
+        {channels.length === 0 ? (
+          <div className="p-4 rounded border border-dashed border-[var(--border-color)] text-center text-xs text-[var(--text-muted)]">
+            No notification channels configured. Add a Slack, Teams, PagerDuty, or Email channel to prevent alerts being missed overnight.
+          </div>
+        ) : (
+          <div className="divide-y divide-[var(--border-color)]">
+            {channels.map((ch) => (
+              <div key={ch.id} className="py-2.5 flex items-center justify-between text-xs">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-[var(--text-primary)]">{ch.name}</span>
+                    <span className="font-mono text-[10px] uppercase px-1.5 py-0.5 rounded bg-[var(--surface-secondary)] text-[var(--text-secondary)] border border-[var(--border-color)]">
+                      {ch.channel_type}
+                    </span>
+                    {ch.quiet_hours_enabled && (
+                      <span className="text-[10px] text-[#F59E0B]">(Quiet Hours Enabled)</span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
+                    Subscribed: Critical Alerts, SLA Breaches, Escalations
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleSendTestNotification(ch.id)}
+                    className="p-1 rounded text-[var(--text-muted)] hover:text-white"
+                    title="Send Test Notification"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                  </button>
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteChannel(ch.id)}
+                      className="p-1 rounded text-[var(--text-muted)] hover:text-[#EF4444]"
+                      title="Delete Channel"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
       {/* Two-Factor Authentication (TOTP) Profile Setup */}
       <section className="card p-5 space-y-4">
         <div className="flex items-center justify-between border-b border-[var(--border-color)] pb-3">
@@ -591,6 +802,121 @@ export default function AdministrationPage() {
           </form>
         )}
       </section>
+
+      {/* Modal: Add Notification Channel */}
+      {showAddChannelModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div className="card w-full max-w-md p-6 space-y-4 border border-[var(--border-color)] shadow-2xl">
+            <div className="flex items-center justify-between border-b border-[var(--border-color)] pb-3">
+              <h3 className="text-sm font-bold text-[var(--text-primary)]">Add SOC Notification Channel</h3>
+              <button
+                type="button"
+                onClick={() => setShowAddChannelModal(false)}
+                className="text-xs text-[var(--text-muted)] hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateChannel} className="space-y-3 text-xs">
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-[var(--text-muted)]">Channel Name</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Primary SOC Slack #alerts"
+                  value={newChannelName}
+                  onChange={(e) => setNewChannelName(e.target.value)}
+                  className="field w-full"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-[var(--text-muted)]">Channel Service</label>
+                <select
+                  value={newChannelType}
+                  onChange={(e) => setNewChannelType(e.target.value as NotificationChannel["channel_type"])}
+                  className="field w-full cursor-pointer"
+                >
+                  <option value="slack">Slack Webhook</option>
+                  <option value="teams">Microsoft Teams Webhook</option>
+                  <option value="pagerduty">PagerDuty Events API v2</option>
+                  <option value="opsgenie">Opsgenie Alert API</option>
+                  <option value="email">Email Broadcast</option>
+                </select>
+              </div>
+
+              {(newChannelType === "slack" || newChannelType === "teams") && (
+                <div className="space-y-1">
+                  <label className="text-[11px] font-semibold text-[var(--text-muted)]">Webhook URL</label>
+                  <input
+                    type="url"
+                    required
+                    placeholder="https://hooks.slack.com/services/..."
+                    value={newWebhookUrl}
+                    onChange={(e) => setNewWebhookUrl(e.target.value)}
+                    className="field w-full font-mono text-[11px]"
+                  />
+                </div>
+              )}
+
+              {newChannelType === "pagerduty" && (
+                <div className="space-y-1">
+                  <label className="text-[11px] font-semibold text-[var(--text-muted)]">Routing / Integration Key</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="32-character PagerDuty service key"
+                    value={newRoutingKey}
+                    onChange={(e) => setNewRoutingKey(e.target.value)}
+                    className="field w-full font-mono text-[11px]"
+                  />
+                </div>
+              )}
+
+              {newChannelType === "email" && (
+                <div className="space-y-1">
+                  <label className="text-[11px] font-semibold text-[var(--text-muted)]">Recipients (comma-separated)</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="soc@company.com, oncall@company.com"
+                    value={newEmailRecipients}
+                    onChange={(e) => setNewEmailRecipients(e.target.value)}
+                    className="field w-full font-mono text-[11px]"
+                  />
+                </div>
+              )}
+
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="quietHours"
+                  checked={newQuietHours}
+                  onChange={(e) => setNewQuietHours(e.target.checked)}
+                  className="cursor-pointer"
+                />
+                <label htmlFor="quietHours" className="text-[11px] text-[var(--text-secondary)] cursor-pointer">
+                  Enable Quiet Hours (22:00 - 07:00 UTC, criticals will still bypass)
+                </label>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-[var(--border-color)]">
+                <button
+                  type="button"
+                  onClick={() => setShowAddChannelModal(false)}
+                  className="button-secondary text-xs"
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="button-primary text-xs">
+                  Save Channel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Modal: Invite / Create User */}
       {showCreateModal && (

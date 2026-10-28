@@ -1,0 +1,63 @@
+version: 2
+
+updates:
+  # Python backend – pyproject.toml
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+    open-pull-requests-limit: 10
+    groups:
+      # Group all minor/patch updates into a single PR per ecosystem
+      python-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+      - "python"
+    ignore:
+      # LangChain moves fast and breaks things; pin manually
+      - dependency-name: "langchain*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "langgraph*"
+        update-types: ["version-update:semver-major"]
+
+  # Node.js frontend – package.json
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+    open-pull-requests-limit: 10
+    groups:
+      npm-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+      - "javascript"
+    ignore:
+      # Next.js and React major bumps require manual migration
+      - dependency-name: "next"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-dom"
+        update-types: ["version-update:semver-major"]
+
+  # GitHub Actions – .github/workflows
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"

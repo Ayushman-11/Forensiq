@@ -5,7 +5,9 @@ Provides JSON formatted structured logging for production observability.
 
 import logging
 import sys
+
 import structlog
+
 from app.core.config import settings
 
 

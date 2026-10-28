@@ -1,0 +1,206 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "feat/**", "fix/**", "chore/**"]
+  pull_request:
+    branches: ["main"]
+
+# Cancel in-progress runs for the same branch/PR so stale jobs don't waste runners.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ============================================================
+  # Backend: lint, type-check, and tests
+  # ============================================================
+  backend:
+    name: Backend (Python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies (with dev extras)
+        run: uv pip install --system -e ".[dev]"
+
+      - name: Ruff lint
+        # Report-only for now: repository has existing Ruff debt (tracked in 1.6).
+        # TODO: remove `continue-on-error` once baseline is cleaned.
+        run: ruff check .
+        continue-on-error: true
+
+      - name: Ruff format check
+        # Report-only for now: repository has existing Ruff formatting debt (tracked in 1.6).
+        # TODO: remove `continue-on-error` once baseline is cleaned.
+        run: ruff format --check .
+        continue-on-error: true
+
+      - name: mypy type check
+        # We run mypy in non-strict mode for now until the existing type debt
+        # (tracked in 1.6) is fixed.  --ignore-missing-imports avoids failures
+        # on third-party stubs that are not yet installed.
+        run: |
+          mypy app \
+            --ignore-missing-imports \
+            --no-strict-optional \
+            --follow-imports=silent \
+            || true  # TODO: remove "|| true" once type debt is cleared (1.6)
+
+      - name: pytest (unit + integration)
+        env:
+          FORENSIQ_ENV: testing
+          FORENSIQ_SECRET_KEY: "ci-test-secret-key-min-32-chars-long"
+          FORENSIQ_SPLUNK_PASSWORD: "ci-test-splunk-password"
+          FORENSIQ_MONGO_URI: "mongodb://localhost:27017"
+        run: pytest --tb=short -q
+
+  # ============================================================
+  # Backend: security audit
+  # ============================================================
+  backend-audit:
+    name: Backend dependency audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pip-audit
+        run: pip install pip-audit uv
+
+      - name: Install project
+        run: uv pip install --system -e .
+
+      - name: pip-audit (known CVEs)
+        # Report only — do not fail the build until a baseline is established.
+        # TODO: remove "|| true" once the first clean audit run is recorded.
+        run: pip-audit --requirement <(uv pip freeze --system) || true
+
+  # ============================================================
+  # Frontend: lint, type-check, and build
+  # ============================================================
+  frontend:
+    name: Frontend (Next.js)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: ESLint
+        # eslint-config-next needs NEXT_TELEMETRY_DISABLED to be quiet in CI
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: npm run lint -- --max-warnings 0
+        # TODO: fix the 13 existing ESLint errors (tracked in 1.6) then remove
+        # the "|| true" here and make it a hard failure.
+        continue-on-error: true
+
+      - name: TypeScript type check
+        run: npx tsc --noEmit
+
+      - name: Next.js build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+          NEXT_PUBLIC_API_URL: "http://localhost:8000"
+        run: npm run build
+
+      - name: npm audit
+        # Advisory-level: moderate and above
+        run: npm audit --audit-level=moderate || true
+
+  # ============================================================
+  # Container: build and smoke test
+  # ============================================================
+  container:
+    name: Container build + smoke test
+    runs-on: ubuntu-latest
+    needs: [backend]  # only build if tests pass
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/docker/Dockerfile
+          push: false
+          load: true
+          tags: forensiq-backend:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test — container boots and /health/live returns 200
+        run: |
+          docker run -d \
+            --name forensiq-smoke \
+            -p 8000:8000 \
+            -e FORENSIQ_ENV=testing \
+            -e FORENSIQ_SECRET_KEY="ci-smoke-test-secret-key-32-chars" \
+            -e FORENSIQ_SPLUNK_PASSWORD="ci-smoke-splunk-pass" \
+            -e FORENSIQ_MONGO_URI="mongodb://host.docker.internal:27017" \
+            forensiq-backend:ci
+
+          # Wait up to 30 seconds for the liveness probe
+          for i in $(seq 1 15); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/v1/health/live 2>/dev/null || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "Container is live (attempt $i)"
+              break
+            fi
+            echo "Attempt $i: got HTTP $STATUS, retrying..."
+            sleep 2
+          done
+
+          # Final assertion
+          curl -sf http://localhost:8000/api/v1/health/live | jq .
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs forensiq-smoke || true
+
+      - name: Scan image for CVEs (Trivy)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "forensiq-backend:ci"
+          format: "table"
+          exit-code: "0"    # report only — TODO: set to "1" once baseline is clean
+          severity: "HIGH,CRITICAL"
+          ignore-unfixed: true

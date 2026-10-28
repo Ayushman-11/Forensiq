@@ -25,8 +25,8 @@ import {
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 
-import { API_BASE, getAccessToken, getWsTicket } from "@/lib/auth";
-import type { AlertRecord, PipelineStep, StepStatus } from "@/lib/types";
+import { API_BASE, getAccessToken } from "@/lib/auth";
+import { engineLabel, type AlertRecord, type PipelineStep, type StepStatus } from "@/lib/types";
 import ProcessTreeGraph from "@/components/investigation/ProcessTreeGraph";
 
 const INITIAL_STEPS: PipelineStep[] = [
@@ -123,6 +123,19 @@ export default function InvestigationModal({
   const startTimeRef = useRef<number>(Date.now());
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const completedRef = useRef<boolean>(false);
+
+  const buildWebSocketUrl = () => {
+    const wsBase = API_BASE.startsWith("https://")
+      ? API_BASE.replace(/^https:\/\//, "wss://")
+      : API_BASE.replace(/^http:\/\//, "ws://");
+    const url = new URL(`/api/v1/alerts/${encodeURIComponent(alert._id)}/ws`, wsBase);
+    const token = getAccessToken();
+    if (token) {
+      url.searchParams.set("token", token);
+    }
+    url.searchParams.set("auto_start", "true");
+    return url.toString();
+  };
 
   // Auto-scroll logs
   useEffect(() => {

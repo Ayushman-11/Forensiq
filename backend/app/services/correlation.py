@@ -1,4 +1,3 @@
-from datetime import datetime
 
 FIELDS = ("host", "user", "source_ip", "dest_ip", "process_name")
 

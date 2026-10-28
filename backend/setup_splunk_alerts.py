@@ -7,15 +7,13 @@ Connects directly to Splunk REST API to create:
 """
 
 import asyncio
-import sys
 import os
+import sys
 
 # Add the backend to path
 sys.path.insert(0, os.path.dirname(__file__))
 
 from app.infrastructure.siem.splunk import SplunkClient
-from app.core.config import settings
-
 
 # ─────────────────────────────────────────────────
 # 1. DASHBOARD XML
@@ -317,7 +315,7 @@ async def main():
     print("\n" + "=" * 60)
     print("  Setup Complete!")
     print("=" * 60)
-    print(f"""
+    print("""
 Next Steps:
   1. View Dashboard: http://localhost:8000/en-US/app/search/forensiq_soc_dashboard
   2. View Alerts:    http://localhost:8000/en-US/app/search/alerts

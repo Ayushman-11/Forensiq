@@ -1,4 +1,4 @@
-"""
+﻿"""
 Core Application Configuration Module.
 Enforces type safety and environment variable loading using Pydantic Settings v2.
 Integrates file-based secrets mounts (Vault/K8s/Docker secrets) and key rotation.
