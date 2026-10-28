@@ -47,7 +47,7 @@ STEP_DEFINITIONS = {
     },
     "assess_risk": {
         "step": 6,
-        "name": "AI Risk Assessment",
+        "name": "Risk Assessment",
         "description": "Evaluating threat severity, blast radius, and confidence score",
     },
     "generate_recommendations": {

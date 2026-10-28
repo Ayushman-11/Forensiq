@@ -161,7 +161,7 @@ export default function InvestigationModal({
     setStreamError(null);
     setFinalAlert(null);
     setTransport("connecting");
-    setLogs([`[${new Date().toLocaleTimeString()}] Initializing AI agent investigation pipeline for alert: ${alert.title}`]);
+    setLogs([`[${new Date().toLocaleTimeString()}] Initializing investigation pipeline for alert: ${alert.title}`]);
 
     let isCancelled = false;
     const controller = new AbortController();
