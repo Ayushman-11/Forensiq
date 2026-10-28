@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Sparkles, Terminal, Shield, RefreshCw, Cpu, Server, CheckCircle2, ArrowRight } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import type { AlertRecord } from "@/lib/types";
+import IocHoverCard from "@/components/enrichment/IocHoverCard";
 
 const DETECTED_BEHAVIORS_DATA = [
   { name: "PowerShell execution", type: "Execution", confidence: "High confidence", color: "#EF4444" },
@@ -118,18 +119,42 @@ export default function AIExtractionPage() {
                 </div>
               </div>
 
-              {/* Section 11: Extracted Entities with Subtle Semantic Colors */}
+              {/* Extracted IOCs with Hover Cards & Defanging */}
               <div className="space-y-3">
-                <h3 className="text-xs font-semibold text-[var(--text-primary)]">Extracted Entities</h3>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-semibold text-[var(--text-primary)]">
+                    Extracted IOCs (Hover to Defang & Pivot)
+                  </h3>
+                  <span className="text-[10px] font-mono text-slate-400">
+                    {iocs.length} detected
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {iocs.map((ioc, idx) => {
+                    const enrichment = selectedAlert.enrichments?.find((e) => e.ioc === ioc);
+                    return (
+                      <div
+                        key={idx}
+                        className="p-3 rounded-lg border border-[var(--border-color)] bg-[var(--surface-secondary)] flex items-center justify-between"
+                      >
+                        <IocHoverCard ioc={ioc} enrichment={enrichment} />
+                        <span className="text-[10px] font-mono text-slate-400">
+                          {enrichment ? `${enrichment.threat_score ?? 0}/100` : "Extracted"}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Extracted Host & User Entities */}
+              <div className="space-y-3">
+                <h3 className="text-xs font-semibold text-[var(--text-primary)]">Extracted Host & Identity Entities</h3>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                  <EntityChip label="IP Addresses" value="192.168.1.105" color="#3B82F6" />
-                  <EntityChip label="Domains" value="malicious-c2.ru" color="#F59E0B" />
-                  <EntityChip label="Users" value={selectedAlert.user || "Administrator"} color="#3B82F6" />
-                  <EntityChip label="Hosts" value={selectedAlert.host || "WIN-SOC-01"} color="#8B5CF6" />
-                  <EntityChip label="Processes" value="powershell.exe" color="#22C55E" />
-                  <EntityChip label="Hashes" value="b8a5c1e9f4..." color="#94A3B8" />
-                  <EntityChip label="URLs" value="https://evil.org/payload" color="#F59E0B" />
-                  <EntityChip label="Files" value="script.ps1" color="#94A3B8" />
+                  <EntityChip label="Target Host" value={selectedAlert.host || "WIN-SOC-01"} color="#8B5CF6" />
+                  <EntityChip label="Target User" value={selectedAlert.user || "Administrator"} color="#3B82F6" />
+                  <EntityChip label="Severity" value={selectedAlert.severity || "high"} color="#EF4444" />
+                  <EntityChip label="Status" value={selectedAlert.status || "New"} color="#22C55E" />
                 </div>
               </div>
 

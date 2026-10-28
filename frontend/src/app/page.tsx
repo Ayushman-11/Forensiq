@@ -17,6 +17,7 @@ import {
   Cpu
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import MitreMatrix from "@/components/mitre/MitreMatrix";
 
 type Metrics = {
   total_alerts: number;
@@ -293,52 +294,22 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      {/* Grid: MITRE ATT&CK & Pending Detections */}
-      <section className="grid gap-4 lg:grid-cols-2">
-        {/* Section 9: MITRE ATT&CK Activity */}
-        <div className="card p-4">
-          <div className="pb-3 border-b border-[var(--border-color)] flex items-center justify-between">
-            <div>
-              <h2 className="text-sm font-semibold text-[var(--text-primary)]">MITRE ATT&CK Activity</h2>
-              <p className="text-xs text-[var(--text-muted)]">Top observed tactics and techniques</p>
-            </div>
-            <span className="font-mono text-xs text-[var(--text-secondary)]">5 Active</span>
-          </div>
+      {/* Interactive MITRE ATT&CK Matrix */}
+      <section>
+        <MitreMatrix />
+      </section>
 
-          <div className="mt-3.5 space-y-3">
-            {MITRE_TECHNIQUES.map((tech) => (
-              <div key={tech.id} className="space-y-1">
-                <div className="flex items-center justify-between text-xs font-mono">
-                  <span className="text-[var(--text-primary)] font-medium">
-                    <strong className="text-[var(--text-secondary)] mr-1.5">{tech.id}</strong>
-                    {tech.name}
-                  </span>
-                  <span className="text-[var(--text-muted)]">{tech.count}</span>
-                </div>
-                <div className="w-full h-1.5 bg-[var(--surface-elevated)] rounded-full overflow-hidden">
-                  <div 
-                    className="h-full"
-                    style={{ 
-                      width: `${(tech.count / 50) * 100}%`,
-                      backgroundColor: tech.severity === 'critical' ? '#EF4444' : tech.severity === 'high' ? '#F59E0B' : tech.severity === 'medium' ? '#3B82F6' : '#94A3B8'
-                    }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Real-time Detections Pending Triage */}
+      {/* New Detections Pending Triage */}
+      <section>
         <div className="card p-4 flex flex-col justify-between">
           <div>
             <div className="pb-3 border-b border-[var(--border-color)] flex items-center justify-between">
               <div>
-                <h2 className="text-sm font-semibold text-[var(--text-primary)]">New Detections</h2>
-                <p className="text-xs text-[var(--text-muted)]">Pending analyst triage</p>
+                <h2 className="text-sm font-semibold text-[var(--text-primary)]">New Detections Pending Triage</h2>
+                <p className="text-xs text-[var(--text-muted)]">Real-time incoming alerts from SIEM poller and multi-agent pipeline</p>
               </div>
-              <Link href="/alerts" className="text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] flex items-center gap-1">
-                View Queue <ArrowRight className="w-3 h-3" />
+              <Link href="/alerts" className="button-secondary text-xs flex items-center gap-1.5 cursor-pointer">
+                <span>View Full Alerts Queue</span> <ArrowRight className="w-3 h-3" />
               </Link>
             </div>
 

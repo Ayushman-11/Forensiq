@@ -4,6 +4,7 @@ import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Radar, AlertTriangle, Eye, CheckCircle, Clock, ShieldAlert } from 'lucide-react';
 import type { AlertRecord, Enrichment } from '@/lib/types';
+import IocHoverCard from '@/components/enrichment/IocHoverCard';
 
 export default function EnrichmentPanel({ alert }: { alert: AlertRecord }) {
   if (!alert) {
@@ -95,7 +96,7 @@ export default function EnrichmentPanel({ alert }: { alert: AlertRecord }) {
                 >
                   <div className="flex justify-between items-start gap-2 mb-2">
                     <div className="min-w-0 flex-1">
-                      <div className="font-mono text-xs text-white font-bold break-all">{e.ioc}</div>
+                      <IocHoverCard ioc={e.ioc} type={e.ioc_type} enrichment={e} showBadge={false} />
                       <div className="text-[10px] text-slate-400 uppercase tracking-wider mt-1 font-semibold">{e.ioc_type}</div>
                     </div>
                     <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase tracking-wider border shrink-0 ${
@@ -140,7 +141,7 @@ export default function EnrichmentPanel({ alert }: { alert: AlertRecord }) {
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-1">Extracted Indicators</p>
             {extracted_iocs.map((ioc: string, idx: number) => (
               <div key={idx} className="bg-[#10192A] border border-[#1C2C44] p-3 rounded-lg flex justify-between items-center">
-                <span className="font-mono text-xs truncate text-cyan-300 font-semibold">{ioc}</span>
+                <IocHoverCard ioc={ioc} showBadge={true} />
                 <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0 ml-2" />
               </div>
             ))}
