@@ -4,9 +4,12 @@ Synthesizes full investigation findings, risk assessments, and ATT&CK mappings
 into an actionable incident response checklist using Grok AI (with deterministic fallback).
 """
 
+from functools import lru_cache
 from typing import Dict, Any, List, Optional
 import json
+from app.core.config import settings
 from app.core.logging import logger
+from app.normalization.noise import NoiseFilter
 from app.agents.state import AgentState
 from app.agents.llm_client import query_grok_llm, extract_json_from_text
 
@@ -28,6 +31,33 @@ Do not include any conversational text or markdown code blocks outside of valid 
 """
 
 
+@lru_cache(maxsize=1)
+def _noise_policy() -> NoiseFilter:
+    return NoiseFilter.from_yaml(settings.NOISE_CONFIG_PATH)
+
+
+def _malicious_by_ioc(enrichments: list) -> Dict[str, Dict[str, Any]]:
+    """Group malicious verdicts per IOC, keeping the distinct feeds that agree."""
+    grouped: Dict[str, Dict[str, Any]] = {}
+    for e in enrichments:
+        if e.get("reputation") != "malicious" or e.get("status", "ok") != "ok":
+            continue
+        entry = grouped.setdefault(e.get("ioc"), {"ioc": e.get("ioc"), "ioc_type": e.get("ioc_type", "indicator"), "sources": set()})
+        entry["sources"].add(e.get("source"))
+    return grouped
+
+
+def _block_step(entry: Dict[str, Any], noise: NoiseFilter) -> str:
+    ioc, ioc_type = entry["ioc"], entry["ioc_type"]
+    sources = ", ".join(sorted(s for s in entry["sources"] if s))
+    if ioc_type == "domain" and noise.is_shared_hosting(ioc):
+        return (f"'{ioc}' is shared hosting flagged by {sources}: do not block the domain. "
+                f"Pull proxy/DNS logs for the exact URLs fetched and block those URLs only.")
+    if len(entry["sources"]) >= 2:
+        return f"Block confirmed malicious {ioc_type} '{ioc}' (corroborated by {sources}) on perimeter firewalls and EDR."
+    return f"Validate {ioc_type} '{ioc}' (flagged only by {sources}) against a second source before blocking it."
+
+
 def _deterministic_recommendation(
     alert: dict,
     enrichments: list,
@@ -36,30 +66,44 @@ def _deterministic_recommendation(
     risk_assessment: dict,
 ) -> Dict[str, Any]:
     """Generates defensive checklists using rule-based heuristics."""
+    noise = _noise_policy()
     risk_score = risk_assessment.get("risk_score", 50)
     host = alert.get("host") or "target host"
-    malicious = [e for e in enrichments if e.get("reputation") == "malicious"]
-    correlated_hosts = {c.get("host") for c in correlations if c.get("host")}
-    techniques = [m.get("technique") for m in mitre_mappings]
+    malicious = list(_malicious_by_ioc(enrichments).values())
+    corroborated = [m for m in malicious if len(m["sources"]) >= 2]
+    peer_hosts = sorted({c.get("host") for c in correlations if c.get("host") and c.get("host") != alert.get("host")})
+    techniques = [str(m.get("technique") or "") for m in mitre_mappings]
 
     checklist: List[str] = []
     containment_required = False
 
-    if malicious and len(correlated_hosts) > 1:
+    if any(t.startswith("T1003") for t in techniques):
         containment_required = True
-        checklist.append(f"Immediately isolate host '{host}' and peer systems ({', '.join(list(correlated_hosts)[:3])}) from the local network.")
-        for m in malicious:
-            checklist.append(f"Block confirmed malicious {m.get('ioc_type', 'indicator')} '{m.get('ioc')}' on perimeter firewalls and EDR.")
-        checklist.append("Inspect Active Directory authentication logs for unusual Kerberos tickets or lateral movement.")
-        directive = f"Active multi-host threat detected! Immediately isolate host '{host}' and peer endpoints, and block malicious indicators."
+        checklist.append(f"Isolate '{host}' from the network: credential dumping exposes every account that logged on to it.")
+        checklist.append(f"Reset passwords and revoke sessions for '{alert.get('user') or 'the executing account'}' and any privileged accounts cached on '{host}'.")
+        checklist.append("Capture memory and the dumping process before remediation, then hunt for reuse of the dumped credentials (4624 logon type 3/10, 4648).")
+        checklist.extend(_block_step(m, noise) for m in malicious)
+        directive = f"Credential dumping on '{host}'. Contain the host and rotate exposed credentials."
 
-    elif malicious:
+    elif corroborated and peer_hosts:
+        containment_required = True
+        checklist.append(f"Isolate host '{host}' and review peers sharing indicators ({', '.join(peer_hosts[:3])}) for the same activity.")
+        checklist.extend(_block_step(m, noise) for m in malicious)
+        checklist.append("Inspect Active Directory authentication logs for unusual Kerberos tickets or lateral movement.")
+        directive = f"Indicators corroborated by multiple threat-intel feeds appear on '{host}' and {len(peer_hosts)} other host(s). Contain and scope."
+
+    elif corroborated:
         containment_required = True
         checklist.append(f"Isolate endpoint '{host}' and terminate associated parent/child processes.")
-        for m in malicious:
-            checklist.append(f"Submit IOC '{m.get('ioc')}' to blocklists and revoke active sessions.")
+        checklist.extend(_block_step(m, noise) for m in malicious)
         checklist.append("Perform full forensic triage and memory dump on the endpoint before remediation.")
-        directive = f"Confirmed malicious indicators detected. Contain host '{host}', terminate suspicious processes, and validate IOCs."
+        directive = f"Indicators corroborated by multiple threat-intel feeds on '{host}'. Contain the host and validate scope."
+
+    elif malicious:
+        checklist.extend(_block_step(m, noise) for m in malicious)
+        checklist.append(f"Inspect host '{host}' process tree and network connections around the alert time.")
+        checklist.append("Contain only if the second source or host telemetry confirms the activity.")
+        directive = f"Indicators on '{host}' were flagged by a single threat-intel feed. Validate before containment."
 
     elif "T1547.001" in techniques or "T1053.005" in techniques:
         checklist.append(f"Inspect Windows Registry under CurrentVersion\\Run and scheduled tasks on '{host}'.")
@@ -71,7 +115,7 @@ def _deterministic_recommendation(
         checklist.append(f"Review target account '{alert.get('user', 'affected account')}' for signs of successful compromise (EventCode 4624).")
         checklist.append("Force password reset and terminate all active sessions if brute force was successful.")
         checklist.append(f"Block the offending source IP address ({alert.get('source_ip', 'external')}) on the authentication gateway.")
-        directive = f"High-volume authentication failure detected. Verify account status and enforce password rotation if needed."
+        directive = "High-volume authentication failure detected. Verify account status and enforce password rotation if needed."
 
     elif risk_score >= 60:
         checklist.append(f"Inspect host '{host}' process telemetry and open network sockets.")
@@ -119,7 +163,11 @@ async def generate_recommendations_node(state: AgentState) -> Dict[str, Any]:
         },
         "risk_assessment": risk_assessment,
         "mitre_techniques": [m.get("technique") for m in mitre_mappings],
-        "malicious_iocs": [e.get("ioc") for e in enrichments if e.get("reputation") in ("malicious", "suspicious")],
+        "flagged_iocs": [
+            {"ioc": e.get("ioc"), "reputation": e.get("reputation"), "source": e.get("source")}
+            for e in enrichments if e.get("reputation") in ("malicious", "suspicious")
+        ],
+        "unavailable_feeds": sorted({e.get("source") for e in enrichments if e.get("status", "ok") != "ok"}),
         "correlated_alerts_count": len(correlations),
         "timeline_events_count": len(timeline),
     }
@@ -138,6 +186,7 @@ async def generate_recommendations_node(state: AgentState) -> Dict[str, Any]:
         else:
             formatted_rec = directive
         log_msg = f"Grok AI Recommendation Agent: generated response checklist with {len(checklist)} step(s) via Grok"
+        engine = f"llm:{settings.XAI_MODEL}"
     else:
         # Fallback to deterministic checklist
         rec_data = _deterministic_recommendation(alert, enrichments, correlations, mitre_mappings, risk_assessment)
@@ -145,11 +194,13 @@ async def generate_recommendations_node(state: AgentState) -> Dict[str, Any]:
         checklist = rec_data["checklist"]
         formatted_rec = f"{directive}\n\nActionable Steps:\n" + "\n".join(f"• {item}" for item in checklist)
         log_msg = f"Recommendation Agent: generated response checklist with {len(checklist)} step(s) [Deterministic Engine]"
+        engine = rec_data["engine"]
 
     logger.info("recommendation_agent_complete", alert_id=alert_id)
     new_log = current_log + [log_msg]
 
     return {
         "recommendation": formatted_rec,
+        "recommendation_engine": engine,
         "investigation_log": new_log,
     }

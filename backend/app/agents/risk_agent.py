@@ -38,6 +38,7 @@ def _deterministic_risk_assessment(
     
     malicious = sum(1 for item in enrichments if item.get("reputation") == "malicious")
     suspicious = sum(1 for item in enrichments if item.get("reputation") == "suspicious")
+    answered = sum(1 for item in enrichments if item.get("status", "ok") == "ok")
     correlation_bump = min(20, len(correlations) * 5)
     mitre_bump = min(10, len(mitre_mappings) * 3)
 
@@ -55,7 +56,8 @@ def _deterministic_risk_assessment(
 
     return {
         "risk_score": risk_score,
-        "confidence_score": min(99, max(30, 55 + len(enrichments) * 5 + min(15, len(mitre_mappings) * 5))),
+        # Only feeds that actually answered are evidence; unconfigured or failing feeds add nothing.
+        "confidence_score": min(99, max(30, 55 + answered * 5 + min(15, len(mitre_mappings) * 5))),
         "priority": priority,
         "reasoning": reasoning,
         "threat_summary": threat_summary,

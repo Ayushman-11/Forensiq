@@ -1,15 +1,20 @@
 import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
+import httpx
+import respx
 from app.agents.ioc_agent import (
     _get_ioc_type,
-    _mock_abuseipdb_enrichment,
-    _mock_vt_enrichment,
+    _abuseipdb_verdict,
     _get_cached_enrichment,
+    _query_abuseipdb,
+    _query_vt,
     _save_cached_enrichment,
+    _vt_verdict,
     enrich_ioc_node,
     Enrichment,
 )
+from app.core.config import settings
 from app.agents.state import AgentState
 
 
@@ -22,30 +27,66 @@ def test_get_ioc_type():
     assert _get_ioc_type("raw.githubusercontent.com") == "domain"
 
 
-def test_mock_abuseipdb_enrichment():
-    # Malicious IP range
-    res_mal = _mock_abuseipdb_enrichment("45.33.32.1", "AbuseIPDB")
-    assert res_mal.ioc == "45.33.32.1"
-    assert res_mal.ioc_type == "ip"
-    assert res_mal.reputation == "malicious"
-    assert res_mal.threat_score >= 80
-    assert res_mal.raw_response["countryCode"] == "RU"
-
-    # Benign IP
-    res_benign = _mock_abuseipdb_enrichment("8.8.8.8", "AbuseIPDB")
-    assert res_benign.reputation == "benign"
-    assert res_benign.threat_score == 0
-    assert res_benign.raw_response["countryCode"] == "US"
+def test_one_vt_engine_is_suspicious_not_malicious():
+    # raw.githubusercontent.com in the 2026-10-28 audit: 1 of 92 engines.
+    assert _vt_verdict({"malicious": 1, "suspicious": 0, "harmless": 58, "undetected": 33}) == "suspicious"
+    assert _vt_verdict({"malicious": settings.VT_MALICIOUS_MIN_ENGINES, "harmless": 50}) == "malicious"
+    assert _vt_verdict({"malicious": 0, "suspicious": 0, "harmless": 60}) == "benign"
+    assert _vt_verdict({"malicious": 0, "suspicious": 0, "harmless": 0, "undetected": 70}) == "unknown"
 
 
-def test_mock_vt_enrichment():
-    res_mal_domain = _mock_vt_enrichment("evil-payload.ngrok.io", "domain", "VirusTotal")
-    assert res_mal_domain.reputation == "malicious"
-    assert res_mal_domain.threat_score >= 90
+def test_abuseipdb_thresholds():
+    assert _abuseipdb_verdict(100) == "malicious"
+    assert _abuseipdb_verdict(50) == "suspicious"
+    assert _abuseipdb_verdict(0) == "benign"
 
-    res_benign_domain = _mock_vt_enrichment("company-internal.local", "domain", "VirusTotal")
-    assert res_benign_domain.reputation == "benign"
-    assert res_benign_domain.threat_score == 0
+
+@pytest.mark.asyncio
+async def test_missing_keys_give_no_verdict_and_are_not_cached(monkeypatch):
+    monkeypatch.setattr(settings, "VT_API_KEY", "")
+    monkeypatch.setattr(settings, "ABUSEIPDB_API_KEY", "")
+    db = MagicMock()
+    db.__getitem__.return_value.find_one = AsyncMock(return_value=None)
+    db.__getitem__.return_value.update_one = AsyncMock()
+
+    # 185.199.108.133 is GitHub; the old mock rated every 185.* IP malicious.
+    vt = await _query_vt("185.199.108.133", "ip", db=db)
+    abuse = await _query_abuseipdb("185.199.108.133", db=db)
+
+    for res in (vt, abuse):
+        assert res.status == "not_configured"
+        assert res.reputation == "unknown" and res.threat_score == 0
+        assert "Mock" not in res.source
+    db.__getitem__.return_value.update_one.assert_not_called()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_feed_errors_give_no_verdict(monkeypatch):
+    monkeypatch.setattr(settings, "VT_API_KEY", "k")
+    monkeypatch.setattr(settings, "ABUSEIPDB_API_KEY", "k")
+    respx.get(url__startswith="https://www.virustotal.com/").mock(return_value=httpx.Response(429))
+    respx.get(url__startswith="https://api.abuseipdb.com/").mock(side_effect=httpx.ConnectTimeout("slow"))
+
+    vt = await _query_vt("evil.example.com", "domain", db=None)
+    abuse = await _query_abuseipdb("45.33.32.1", db=None)
+
+    assert (vt.status, vt.reputation) == ("error", "unknown")
+    assert (abuse.status, abuse.reputation) == ("error", "unknown")
+
+
+@pytest.mark.asyncio
+async def test_cached_verdict_is_rederived_with_current_thresholds():
+    db = MagicMock()
+    stale = Enrichment(
+        ioc="raw.githubusercontent.com", ioc_type="domain", reputation="malicious", threat_score=1,
+        source="VirusTotal", raw_response={"malicious": 1, "suspicious": 0, "harmless": 58, "undetected": 33},
+    )
+    db.__getitem__.return_value.find_one = AsyncMock(return_value={
+        "cached_at": datetime.now(timezone.utc), "data": stale.model_dump(),
+    })
+    cached = await _get_cached_enrichment(db, "raw.githubusercontent.com", "VirusTotal")
+    assert cached.reputation == "suspicious"
 
 
 @pytest.mark.asyncio
@@ -97,7 +138,10 @@ async def test_ioc_cache_save_and_retrieve():
 
 
 @pytest.mark.asyncio
-async def test_enrich_ioc_node_execution():
+async def test_enrich_ioc_node_reports_unavailable_feeds(monkeypatch):
+    monkeypatch.setattr(settings, "VT_API_KEY", "")
+    monkeypatch.setattr(settings, "ABUSEIPDB_API_KEY", "")
+    monkeypatch.setattr("app.agents.ioc_agent.get_db", AsyncMock(side_effect=RuntimeError("no db")))
     state: AgentState = {
         "alert_data": {"_id": "test-alert"},
         "extracted_iocs": ["45.33.32.1", "safe.internal.lan"],
@@ -106,15 +150,9 @@ async def test_enrich_ioc_node_execution():
 
     result = await enrich_ioc_node(state)
 
-    assert "enrichment_results" in result
     enrichments = result["enrichment_results"]
-    assert len(enrichments) >= 2  # 45.33.32.1 gets VT + AbuseIPDB; safe.internal.lan gets VT
-
-    sources = {e["source"] for e in enrichments}
-    assert any("AbuseIPDB" in s for s in sources)
-    assert any("VirusTotal" in s for s in sources)
-
-    assert any(e["ioc"] == "45.33.32.1" and e["reputation"] == "malicious" for e in enrichments)
-
+    assert len(enrichments) == 3  # VT for both IOCs, AbuseIPDB for the IP
+    assert all(e["status"] == "not_configured" and e["reputation"] == "unknown" for e in enrichments)
     log_entry = result["investigation_log"][-1]
-    assert "IOC Enrichment Agent" in log_entry
+    assert "0 malicious" in log_entry
+    assert "No verdict from: AbuseIPDB (not_configured), VirusTotal (not_configured)" in log_entry

@@ -5,7 +5,7 @@ Enforces type safety and environment variable loading using Pydantic Settings v2
 
 from pathlib import Path
 from typing import List
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Named constant so the "insecure default" comparison isn't a fragile string
@@ -24,6 +24,7 @@ class Settings(BaseSettings):
         env_file=(".env", str(_ENV_FILE)),
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,
     )
 
 
@@ -81,31 +82,45 @@ class Settings(BaseSettings):
     # Threat Intel Configuration
     VT_API_KEY: str = Field(
         default="",
+        validation_alias=AliasChoices("FORENSIQ_VT_API_KEY", "VT_API_KEY"),
         description="VirusTotal API Key (v3)"
     )
     ABUSEIPDB_API_KEY: str = Field(
         default="",
+        validation_alias=AliasChoices("FORENSIQ_ABUSEIPDB_API_KEY", "ABUSEIPDB_API_KEY"),
         description="AbuseIPDB API Key (v2)"
     )
     IOC_CACHE_TTL_HOURS: int = Field(
         default=24,
         description="Time to live in hours for cached IOC enrichments in MongoDB"
     )
+    VT_MALICIOUS_MIN_ENGINES: int = Field(
+        default=3,
+        description="VirusTotal engines that must flag an IOC before it is rated malicious; fewer flags rate it suspicious"
+    )
+    ABUSEIPDB_MALICIOUS_MIN_SCORE: int = Field(
+        default=75, description="AbuseIPDB confidence score at or above which an IP is rated malicious"
+    )
+    ABUSEIPDB_SUSPICIOUS_MIN_SCORE: int = Field(
+        default=25, description="AbuseIPDB confidence score at or above which an IP is rated suspicious"
+    )
 
     # Ingestion pipeline
     INGEST_OVERLAP_SECONDS: int = Field(default=120, description="Re-query overlap to catch late-indexed events")
     INGEST_MAX_PAGES: int = Field(default=20, description="Max result pages fetched per ingestion cycle")
     INGEST_PAGE_SIZE: int = Field(default=500, description="Rows per Splunk result page")
-    INGEST_INITIAL_LOOKBACK_HOURS: int = Field(default=168, description="First-run lookback window in hours")
+    INGEST_INITIAL_LOOKBACK_HOURS: int = Field(default=720, description="First-run lookback window in hours")
     INGEST_DEDUP_BUCKET_SECONDS: int = Field(default=300, description="Time bucket for collapsing repeated detections")
     BRUTE_FORCE_THRESHOLD: int = Field(default=5, description="Failed logons per bucket and source that raise an alert")
     NOISE_CONFIG_PATH: str = Field(default="config/noise.yaml", description="Noise suppression policy file")
     INVESTIGATION_CONCURRENCY: int = Field(default=3, description="Max concurrent auto-investigations")
     POLLER_LEASE_TTL_SECONDS: int = Field(default=90, description="Single-poller lease time to live")
+    POLLER_INTERVAL_SECONDS: int = Field(default=30, description="Seconds between SIEM ingestion cycles")
 
     # Grok / xAI LLM Configuration
     XAI_API_KEY: str = Field(
         default="",
+        validation_alias=AliasChoices("FORENSIQ_XAI_API_KEY", "XAI_API_KEY"),
         description="xAI Grok API Key",
     )
     XAI_BASE_URL: str = Field(
