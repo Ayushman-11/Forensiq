@@ -22,6 +22,8 @@ from app.core.errors import internal_error, new_request_id
 from app.api.deps import require_roles, get_current_user
 from app.core.tenancy import scoped_query, tenant_filter, tenant_id
 from app.services.audit import record_audit
+from app.services.notifications import NotificationEventType, NotificationPayload
+from app.services.sla_monitor import notify_all_channels
 from app.services.correlation import correlate_alert
 from app.services.job_queue import enqueue_investigation_job
 from app.services.triage import (
@@ -468,6 +470,30 @@ async def bulk_action(payload: BulkRequest, db: AsyncIOMotorDatabase = Depends(g
 
 @router.patch("/{alert_id:path}/disposition")
 async def set_disposition(alert_id: str, payload: DispositionRequest, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
+    statuses = {"close": "Closed", "escalate": "Escalated", "suppress": "Suppressed"}
+    now_utc = datetime.now(timezone.utc)
+    update = {"status": statuses[payload.action], "disposition": payload.action, "updated_at": now_utc}
+    if payload.action == "close":
+        update["resolved_at"] = now_utc
+    if payload.note: update["disposition_note"] = payload.note
+    result = await db["alerts"].update_one(scoped_query(user, {"_id": alert_id}), {"$set": update})
+    if not result.matched_count: raise HTTPException(status_code=404, detail="Alert not found")
+    await record_audit(db, user, f"alert.{payload.action}", "alert", alert_id, {"note": payload.note} if payload.note else {})
+    if payload.action == "escalate":
+        alert_doc = await db["alerts"].find_one({"_id": alert_id}) or {}
+        notif = NotificationPayload(
+            event_type=NotificationEventType.ALERT_ESCALATED,
+            alert_id=alert_id,
+            title=f"Alert Escalated: {alert_doc.get('title', alert_id)}",
+            severity=alert_doc.get("severity", "high"),
+            host=alert_doc.get("host"),
+            user=alert_doc.get("user"),
+            rule_name=alert_doc.get("rule_name"),
+            assigned_to=alert_doc.get("assigned_to"),
+            description=payload.note or "Alert manually escalated by analyst.",
+        )
+        asyncio.create_task(notify_all_channels(db, notif, tenant_id(user)))
+    return {"status": update["status"], "alert_id": alert_id}
     try:
         return await apply_disposition(db, user, alert_id, payload.action, payload.verdict, payload.note)
     except TriageError as exc:

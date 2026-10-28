@@ -1,0 +1,116 @@
+- name: mimikatz_credential_dumping
+  description: Detects Mimikatz invocation, LSASS memory dumping, or sekurlsa module execution.
+  severity: critical
+  alert_type: Credential Access
+  mitre_technique: T1003.001
+  mitre_tactic: Credential Access
+  event_codes: ["1", "4104", "4688"]
+  owner: Detection Engineering
+  tags: ["atomic-red-team", "credential-dumping", "mimikatz"]
+  patterns:
+    - field: CommandLine
+      any_of:
+        - "sekurlsa"
+        - "logonpasswords"
+        - "invoke-mimikatz"
+        - "mimikatz"
+        - "minidump"
+        - "procdump.*lsass"
+        - "comsvcs.*minidump"
+
+- name: suspicious_powershell_execution
+  description: Detects suspicious PowerShell process creation with encoded, bypass, or download cradle indicators.
+  severity: critical
+  alert_type: Malicious PowerShell
+  mitre_technique: T1059.001
+  mitre_tactic: Execution
+  event_codes: ["1"]
+  owner: Detection Engineering
+  tags: ["powershell", "execution"]
+  patterns:
+    - field: Image
+      any_of: ["powershell", "pwsh"]
+    - field: CommandLine
+      any_of:
+        - "-enc"
+        - "-encodedcommand"
+        - "-noni"
+        - "bypass"
+        - "hidden"
+        - "downloadstring"
+        - "iex"
+        - "webclient"
+        - "invoke-expression"
+        - "invoke-webrequest"
+
+- name: registry_run_key_persistence
+  description: Detects persistence via Windows Registry Run keys.
+  severity: high
+  alert_type: Registry Persistence
+  mitre_technique: T1547.001
+  mitre_tactic: Persistence
+  event_codes: ["13"]
+  owner: Detection Engineering
+  tags: ["persistence", "registry"]
+  patterns:
+    - field: TargetObject
+      any_of:
+        - "currentversion\\run"
+        - "currentversion/run"
+
+- name: dns_suspicious_domain_lookup
+  description: Detects queries to dynamic DNS providers, tunnels, or high-risk fast-flux staging hosts. Excludes benign developer hubs.
+  severity: medium
+  alert_type: Suspicious Domain Lookup
+  mitre_technique: T1071.004
+  mitre_tactic: Command and Control
+  event_codes: ["22"]
+  owner: Detection Engineering
+  tags: ["c2", "dns"]
+  patterns:
+    - field: QueryName
+      any_of:
+        - "dyndns"
+        - "ngrok.io"
+        - "duckdns.org"
+        - "no-ip.com"
+        - "pastebin.com"
+
+- name: powershell_script_block_logging
+  description: Detects PowerShell Script Block Logging events containing malicious cradles or bypasses.
+  severity: critical
+  alert_type: Malicious PowerShell
+  mitre_technique: T1059.001
+  mitre_tactic: Execution
+  event_codes: ["4104"]
+  owner: Detection Engineering
+  tags: ["powershell", "script-block"]
+  patterns:
+    - field: ScriptBlockText
+      any_of:
+        - "invoke-expression"
+        - "iex"
+        - "net.webclient"
+        - "downloadstring"
+        - "bypass"
+
+- name: lateral_movement_explicit_credentials
+  description: Detects explicit credential logon from one account authenticating as another (EC4648).
+  severity: high
+  alert_type: Lateral Movement
+  mitre_technique: T1550.002
+  mitre_tactic: Lateral Movement
+  event_codes: ["4648"]
+  owner: Detection Engineering
+  tags: ["lateral-movement", "logon"]
+
+- name: process_creation_anomaly
+  description: Detects office or browser processes spawning script shells or consoles.
+  severity: high
+  alert_type: Process Anomaly
+  mitre_technique: T1059.003
+  mitre_tactic: Execution
+  event_codes: ["4688"]
+  owner: Detection Engineering
+  tags: ["execution", "anomaly"]
+

@@ -1,6 +1,6 @@
 """
 Forensiq FastAPI Main Application Entrypoint.
-Configures app lifespan, middleware (security headers, body limits, CORS, trusted hosts), routers.
+Configures app lifespan, background alert poller, SLA escalation monitor, middleware, and routers.
 """
 
 from contextlib import asynccontextmanager
@@ -18,6 +18,8 @@ from app.normalization.noise import NoiseFilter
 
 from app.database.session import connect_to_mongo, close_mongo_connection
 from app.services.poller import AlertPoller
+from app.services.sla_monitor import SLAEscalationMonitor
+from app.services.notifications import notification_dispatcher
 from app.services.investigation_worker import InvestigationWorker
 from app.services.job_queue import reap_stuck_jobs
 from app.database.session import db_config
@@ -25,6 +27,7 @@ from app.database.session import db_config
 _NON_PROD_ENVS = frozenset({"development", "dev", "test", "testing", "local"})
 
 poller = None
+sla_monitor = None
 investigation_worker = None
 
 @asynccontextmanager
@@ -67,6 +70,10 @@ async def lifespan(app: FastAPI):
         except Exception as exc:  # e.g. a conflicting pre-existing index must not take the API down
             logger.error("ensure_indexes_failed", error=str(exc))
 
+    global poller, sla_monitor
+    if db_config.client:
+        db = db_config.client[settings.MONGO_DB_NAME]
+        poller = AlertPoller(db, interval_seconds=30)
         try:
             await reap_stuck_jobs(db)
         except Exception as exc:
@@ -84,8 +91,15 @@ async def lifespan(app: FastAPI):
         poller = AlertPoller(db, interval_seconds=settings.POLLER_INTERVAL_SECONDS)
         poller.start()
 
+        # Start background SLA & Escalation Monitor (sweeps every 60 seconds)
+        sla_monitor = SLAEscalationMonitor(db, sweep_interval_seconds=60)
+        sla_monitor.start()
+
     yield
     
+    if sla_monitor:
+        await sla_monitor.stop()
+
     if investigation_worker:
         try:
             await investigation_worker.stop()
@@ -93,7 +107,8 @@ async def lifespan(app: FastAPI):
             logger.error("investigation_worker_stop_failed", error=str(exc))
     if poller:
         await poller.stop()
-        
+
+    await notification_dispatcher.close()
     await close_mongo_connection()
     logger.info("forensiq_backend_shutdown")
 

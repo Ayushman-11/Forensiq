@@ -1,7 +1,7 @@
 """
 Risk Assessment Agent Node for LangGraph.
-Evaluates threat severity, IOC maliciousness, correlation breadth, and MITRE tactics
-using the Grok AI LLM (with deterministic heuristic fallback).
+Evaluates threat severity, asset criticality, indicator confidence, and rarity
+with an explainable 'why this score' breakdown.
 """
 
 from typing import Dict, Any, List, Optional
@@ -11,68 +11,93 @@ from app.agents.state import AgentState
 from app.agents.llm_client import query_grok_llm, extract_json_from_text
 
 
-RISK_SYSTEM_PROMPT = """You are a Senior Principal SOC Analyst and Incident Response Lead.
-Your objective is to evaluate security incidents, telemetry, threat intelligence, and correlation breadth.
-Assess the threat severity and output a strictly valid JSON response with the following schema:
-{
-  "risk_score": <int between 0 and 100>,
-  "confidence_score": <int between 0 and 100>,
-  "priority": "<critical|high|medium|low>",
-  "reasoning": "<concise 2-3 sentence technical justification>",
-  "threat_summary": "<concise 1-2 sentence executive summary of the attack>",
-  "blast_radius": "<isolated_host|multi_host|domain_wide>"
-}
-Do not include any conversational filler or markdown code blocks outside of valid JSON.
-"""
-
-
-def _deterministic_risk_assessment(
+def calculate_calibrated_risk_score(
     alert: dict,
     enrichments: list,
     correlations: list,
     mitre_mappings: list,
 ) -> Dict[str, Any]:
-    """Calibrated rule engine for when LLM is unavailable or uncredited."""
-    severity = str(alert.get("severity", "medium")).lower()
-    severity_score = {"critical": 75, "high": 58, "medium": 38, "low": 18}.get(severity, 25)
+    """
+    Computes an unsaturated, explainable risk score (0-100) based on:
+    1. Base Severity (Critical=45, High=30, Medium=15, Low=5)
+    2. Asset Criticality (Domain Controllers, Servers vs Workstations)
+    3. IOC Confidence & Maliciousness
+    4. MITRE Technique Impact & Correlation Breadth
+    """
+    breakdown = {}
     
+    # 1. Base Severity Contribution (Max 45)
+    severity = str(alert.get("severity", "medium")).lower()
+    base_points = {"critical": 45, "high": 30, "medium": 15, "low": 5}.get(severity, 15)
+    breakdown["base_severity"] = {"points": base_points, "factor": severity.upper()}
+
+    # 2. Asset Criticality Contribution (Max 20)
+    host = str(alert.get("host") or "").lower()
+    user = str(alert.get("user") or "").lower()
+    asset_points = 5
+    asset_desc = "Standard Workstation / User"
+    if any(dc_kw in host for dc_kw in ("dc", "domain", "srv", "server", "prod", "vault", "corp")):
+        asset_points = 20
+        asset_desc = "Critical Server / Domain Controller"
+    elif any(adm in user for adm in ("admin", "root", "system")):
+        asset_points = 15
+        asset_desc = "Privileged User Account"
+    breakdown["asset_criticality"] = {"points": asset_points, "factor": asset_desc}
+
+    # 3. IOC Maliciousness & Confidence (Max 20)
     malicious = sum(1 for item in enrichments if item.get("reputation") == "malicious")
     suspicious = sum(1 for item in enrichments if item.get("reputation") == "suspicious")
+    ioc_points = min(20, (malicious * 10) + (suspicious * 5))
+    breakdown["indicator_reputation"] = {
+        "points": ioc_points,
+        "factor": f"{malicious} malicious, {suspicious} suspicious IOCs",
+    }
+
+    # 4. MITRE Technique & Attack Phase Rarity (Max 15)
+    # Credential Dumping, Lateral Movement, or Persistence get higher weight
+    critical_tactics = {"Credential Access", "Lateral Movement", "Defense Evasion"}
+    tactic_hits = sum(1 for m in mitre_mappings if m.get("tactic") in critical_tactics)
+    mitre_points = min(15, (tactic_hits * 5) + min(5, len(mitre_mappings) * 2))
+    breakdown["tactics_breadth"] = {
+        "points": mitre_points,
+        "factor": f"{len(mitre_mappings)} ATT&CK mappings ({tactic_hits} high-impact tactics)",
+    }
     answered = sum(1 for item in enrichments if item.get("status", "ok") == "ok")
     correlation_bump = min(20, len(correlations) * 5)
     mitre_bump = min(10, len(mitre_mappings) * 3)
 
-    risk_score = min(100, severity_score + malicious * 15 + suspicious * 8 + correlation_bump + mitre_bump)
-    priority = "critical" if risk_score >= 80 else "high" if risk_score >= 60 else "medium" if risk_score >= 35 else "low"
+    # Total Sum
+    raw_score = base_points + asset_points + ioc_points + mitre_points
+    # Add correlation bump (Max 10)
+    corr_points = min(10, len(correlations) * 2)
+    if corr_points:
+        breakdown["historical_correlations"] = {
+            "points": corr_points,
+            "factor": f"{len(correlations)} correlated alerts in time window",
+        }
     
-    correlated_hosts = {c.get("host") for c in correlations if c.get("host")}
-    blast_radius = "multi_host" if len(correlated_hosts) > 1 else "isolated_host"
+    final_score = min(99, max(5, raw_score + corr_points))
+    priority = "critical" if final_score >= 80 else "high" if final_score >= 60 else "medium" if final_score >= 35 else "low"
 
-    reasoning = (
-        f"Evaluated alert severity ({severity.upper()}), {malicious} malicious and {suspicious} suspicious IOCs, "
-        f"{len(correlations)} correlated historical detections, and {len(mitre_mappings)} MITRE technique mappings."
-    )
-    threat_summary = f"{alert.get('title', 'Detection')} observed on host {alert.get('host', 'unknown')} with risk score {risk_score}/100."
+    blast_radius = "domain_wide" if asset_points >= 20 and len(correlations) > 3 else "multi_host" if len(correlations) > 1 else "isolated_host"
 
     return {
-        "risk_score": risk_score,
-        # Only feeds that actually answered are evidence; unconfigured or failing feeds add nothing.
-        "confidence_score": min(99, max(30, 55 + answered * 5 + min(15, len(mitre_mappings) * 5))),
+        "risk_score": final_score,
+        "confidence_score": min(98, max(40, 50 + (len(enrichments) * 8) + (len(mitre_mappings) * 5))),
         "priority": priority,
-        "reasoning": reasoning,
-        "threat_summary": threat_summary,
+        "score_breakdown": breakdown,
         "blast_radius": blast_radius,
-        "engine": "deterministic_fallback",
+        "threat_summary": f"Incident on {host or 'unknown'} scored at {final_score}/100 ({priority.upper()}).",
+        "reasoning": f"Score composed of base severity ({base_points}pts), asset impact ({asset_points}pts), IOC findings ({ioc_points}pts), and ATT&CK scope ({mitre_points}pts).",
     }
 
 
 async def assess_risk_node(state: AgentState) -> Dict[str, Any]:
     """
     LangGraph node: Analyzes full alert context, IOC reputations, MITRE mappings,
-    and correlations using Grok AI (or deterministic engine if uncredited).
+    and correlations to produce calibrated, unsaturated risk scores.
     """
     alert = state.get("alert_data", {})
-    context = state.get("context", {})
     enrichments = state.get("enrichment_results", [])
     correlations = state.get("correlations", [])
     mitre_mappings = state.get("mitre_mappings", [])
@@ -81,64 +106,15 @@ async def assess_risk_node(state: AgentState) -> Dict[str, Any]:
     alert_id = str(alert.get("_id", "unknown"))
     logger.info("risk_agent_start", alert_id=alert_id)
 
-    # Prepare structured summary for Grok
-    llm_input = {
-        "alert": {
-            "title": alert.get("title"),
-            "severity": alert.get("severity"),
-            "host": alert.get("host"),
-            "user": alert.get("user"),
-            "rule_name": alert.get("rule_name"),
-        },
-        "telemetry_context": context,
-        "threat_intelligence": [
-            {"ioc": e.get("ioc"), "reputation": e.get("reputation"), "threat_score": e.get("threat_score")}
-            for e in enrichments
-        ],
-        "correlated_alerts_count": len(correlations),
-        "correlated_hosts": list({c.get("host") for c in correlations if c.get("host")}),
-        "mitre_techniques": [
-            {"technique": m.get("technique"), "name": m.get("name"), "tactic": m.get("tactic")}
-            for m in mitre_mappings
-        ],
-    }
+    assessment = calculate_calibrated_risk_score(alert, enrichments, correlations, mitre_mappings)
 
-    user_prompt = f"Analyze the following security event telemetry and determine risk:\n{json.dumps(llm_input, indent=2)}"
-
-    # Attempt query to Grok AI
-    grok_response = await query_grok_llm(user_prompt, RISK_SYSTEM_PROMPT, response_json=True)
-    parsed = extract_json_from_text(grok_response) if grok_response else None
-
-    if parsed and isinstance(parsed.get("risk_score"), (int, float)):
-        risk_score = max(0, min(100, int(parsed["risk_score"])))
-        priority = parsed.get("priority", "medium").lower()
-        if priority not in ("critical", "high", "medium", "low"):
-            priority = "critical" if risk_score >= 80 else "high" if risk_score >= 60 else "medium"
-        confidence = max(0, min(100, int(parsed.get("confidence_score", 85))))
-
-        risk_assessment = {
-            "risk_score": risk_score,
-            "confidence_score": confidence,
-            "priority": priority,
-            "reasoning": parsed.get("reasoning", "Assessed by Grok AI."),
-            "threat_summary": parsed.get("threat_summary", ""),
-            "blast_radius": parsed.get("blast_radius", "isolated_host"),
-            "engine": "grok_llm",
-        }
-        log_msg = f"Grok AI Risk Agent: evaluated risk score {risk_score}/100 ({priority} priority) with {confidence}% confidence via Grok"
-    else:
-        # Graceful deterministic fallback
-        risk_assessment = _deterministic_risk_assessment(alert, enrichments, correlations, mitre_mappings)
-        log_msg = (
-            f"Risk Assessment Agent: calculated calibrated risk {risk_assessment['risk_score']}/100 "
-            f"({risk_assessment['priority']} priority) [Deterministic Heuristic Engine]"
-        )
-
-    logger.info("risk_agent_complete", alert_id=alert_id, risk_score=risk_assessment["risk_score"])
-    new_log = current_log + [log_msg]
+    log_msg = (
+        f"Risk Agent: calibrated risk score {assessment['risk_score']}/100 ({assessment['priority'].upper()}) "
+        f"- {assessment['reasoning']}"
+    )
+    logger.info("risk_agent_complete", alert_id=alert_id, risk_score=assessment["risk_score"])
 
     return {
-        "risk_assessment": risk_assessment,
-        "ai_analysis": risk_assessment.get("threat_summary"),
-        "investigation_log": new_log,
+        "risk_assessment": assessment,
+        "investigation_log": current_log + [log_msg],
     }
