@@ -14,7 +14,7 @@ async def test_list_omits_raw_events_but_detail_keeps_them():
         "raw_event": {"x": 1}, "raw_events": [{"x": 1}, {"x": 2}],
     })
     user = {"org_id": "default"}
-    result = await list_alerts(limit=50, severity=None, status=None, search=None, assignee=None, sort="newest", db=db, user=user)
+    result = await list_alerts(limit=50, severity=None, status=None, search=None, assignee=None, incident=None, sort="newest", db=db, user=user)
     assert len(result) == 1
     assert "raw_events" not in result[0]
     assert result[0]["raw_event"] == {"x": 1}

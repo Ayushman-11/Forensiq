@@ -12,6 +12,7 @@ import {
   MessageSquare,
   Play,
   History,
+  Layers,
   UserCheck,
 } from "lucide-react";
 import ContextPanel from "@/components/investigation/ContextPanel";
@@ -41,6 +42,7 @@ import {
   type Note,
   type Verdict,
 } from "@/lib/triage";
+import { fetchIncident, type IncidentDetail } from "@/lib/incidents";
 import { engineLabel, type AlertRecord } from "@/lib/types";
 
 type Tab = "overview" | "iocs" | "tree" | "context";
@@ -57,6 +59,7 @@ export default function AlertDetailPage() {
   const [users, setUsers] = useState<DirectoryUser[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [incident, setIncident] = useState<IncidentDetail | null>(null);
   const [tab, setTab] = useState<Tab>("overview");
   const [dialog, setDialog] = useState<DispositionAction | null>(null);
   const [investigating, setInvestigating] = useState(false);
@@ -76,7 +79,9 @@ export default function AlertDetailPage() {
         return;
       }
       if (!res.ok) throw new Error("Unable to load alert");
-      setAlert((await res.json()) as AlertRecord);
+      const loaded = (await res.json()) as AlertRecord;
+      setAlert(loaded);
+      setIncident(loaded.incident_id ? await fetchIncident(loaded.incident_id).catch(() => null) : null);
       const [n, a] = await Promise.all([fetchNotes(alertId), fetchAudit(alertId)]);
       setNotes(n);
       setAudit(a);
@@ -193,6 +198,12 @@ export default function AlertDetailPage() {
           <SlaBadge alert={alert} />
           <span className="font-mono text-[10px] text-[var(--text-muted)]">{alert._id.slice(0, 12)}</span>
         </div>
+        {incident && incident.alert_count > 1 && (
+          <Link href={`/incidents/${encodeURIComponent(incident.id)}`} className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded border border-[var(--border-color)] hover:bg-[var(--surface-hover)] w-fit">
+            <Layers className="w-3.5 h-3.5" />
+            Part of an incident: {incident.alert_count} alerts, {incident.open_count} open · {incident.hosts.length} host{incident.hosts.length === 1 ? "" : "s"}
+          </Link>
+        )}
         <h1 className="text-lg font-bold text-[var(--text-primary)] break-words">
           {alert.title.replace(/^\[(CRITICAL|HIGH|MEDIUM|LOW)\]\s*/i, "")}
         </h1>
