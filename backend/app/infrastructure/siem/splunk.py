@@ -30,14 +30,17 @@ class SplunkClient:
         self.username = username or settings.SPLUNK_USERNAME
         self.password = password or settings.SPLUNK_PASSWORD
         self.verify_ssl = verify_ssl if verify_ssl is not None else settings.SPLUNK_VERIFY_SSL
+        self.ca_bundle = getattr(settings, "SPLUNK_CA_BUNDLE", None)
         self.session_key: Optional[str] = None
         self._client: Optional[httpx.AsyncClient] = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Lazy creation of HTTP client with connection pooling and timeouts."""
         if self._client is None or self._client.is_closed:
+            # Use custom CA bundle if provided and TLS verification is on
+            verify = self.ca_bundle if (self.verify_ssl and self.ca_bundle) else self.verify_ssl
             self._client = httpx.AsyncClient(
-                verify=self.verify_ssl,
+                verify=verify,
                 timeout=httpx.Timeout(30.0, connect=10.0),
                 headers={"Accept": "application/json"},
             )
