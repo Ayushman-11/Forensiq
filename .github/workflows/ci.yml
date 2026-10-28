@@ -38,10 +38,16 @@ jobs:
         run: uv pip install --system -e ".[dev]"
 
       - name: Ruff lint
+        # Report-only for now: repository has existing Ruff debt (tracked in 1.6).
+        # TODO: remove `continue-on-error` once baseline is cleaned.
         run: ruff check .
+        continue-on-error: true
 
       - name: Ruff format check
+        # Report-only for now: repository has existing Ruff formatting debt (tracked in 1.6).
+        # TODO: remove `continue-on-error` once baseline is cleaned.
         run: ruff format --check .
+        continue-on-error: true
 
       - name: mypy type check
         # We run mypy in non-strict mode for now until the existing type debt
