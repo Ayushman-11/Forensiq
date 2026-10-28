@@ -115,6 +115,7 @@ class Settings(BaseSettings):
     NOISE_CONFIG_PATH: str = Field(default="config/noise.yaml", description="Noise suppression policy file")
     INVESTIGATION_CONCURRENCY: int = Field(default=3, description="Max concurrent auto-investigations")
     POLLER_LEASE_TTL_SECONDS: int = Field(default=90, description="Single-poller lease time to live")
+    POLLER_INTERVAL_SECONDS: int = Field(default=30, description="Seconds between SIEM ingestion cycles")
 
     # Grok / xAI LLM Configuration
     XAI_API_KEY: str = Field(

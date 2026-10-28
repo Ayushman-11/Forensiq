@@ -25,6 +25,23 @@ import {
 import { useAuth } from "@/context/AuthContext";
 import { useTheme } from "@/context/ThemeContext";
 import { roleLabel } from "@/lib/roles";
+import { STATE_COLOR, STATE_LABEL, useSystemHealth } from "@/lib/health";
+
+function SiemStatusBadge() {
+  const { health, unreachable } = useSystemHealth();
+  const state = health?.siem.state;
+  const color = state ? STATE_COLOR[state] : "#94A3B8";
+  const label = unreachable ? "API unreachable" : state ? `Splunk ${STATE_LABEL[state]}` : "Splunk checking…";
+  return (
+    <div
+      className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[var(--surface-secondary)] border border-[var(--border-color)] text-[11px] font-mono font-medium"
+      title={health?.siem.detail}
+    >
+      <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: unreachable ? STATE_COLOR.down : color }} />
+      <span className="text-[var(--text-secondary)]">{label}</span>
+    </div>
+  );
+}
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [isSidebarMinimized, setIsSidebarMinimized] = useState(false);
@@ -39,7 +56,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   const navItems = [
     { href: "/", icon: LayoutDashboard, label: "Dashboard", badge: null },
-    { href: "/alerts", icon: Bell, label: "Alerts", badge: "3" },
+    { href: "/alerts", icon: Bell, label: "Alerts", badge: null },
     { href: "/investigations", icon: ShieldAlert, label: "Investigations", badge: null },
     { href: "/ai-extraction", icon: Sparkles, label: "AI Extraction", badge: "AI" },
     { href: "/raw-logs", icon: Terminal, label: "Raw Logs", badge: "SPL" },
@@ -47,8 +64,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     { href: "/admin", icon: Settings, label: "Administration", badge: null },
   ];
 
-  const userEmail = user?.email || "admin@forensiq.ai";
-  const userRole = user ? roleLabel(user.role) : "SPLUNK ADMIN";
+  const userEmail = user?.email || "";
+  const userRole = user ? roleLabel(user.role) : "";
 
   return (
     <div className="min-h-screen flex w-full bg-[var(--bg-app)] text-[var(--text-primary)]">
@@ -178,11 +195,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
           {/* Header Right Status & Actions */}
           <div className="flex items-center gap-4">
-            {/* Splunk Status */}
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[var(--surface-secondary)] border border-[var(--border-color)] text-[11px] font-mono font-medium">
-              <span className="dot-live" />
-              <span className="text-[var(--text-secondary)]">Splunk Connected</span>
-            </div>
+            <SiemStatusBadge />
 
             {/* Notifications Icon */}
             <Link 
@@ -191,7 +204,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               title="Notifications"
             >
               <Bell className="w-4 h-4" />
-              <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-[#EF4444]" />
             </Link>
 
             {/* Theme Switcher Toggle */}

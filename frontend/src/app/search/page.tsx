@@ -295,7 +295,7 @@ export default function SearchPage() {
                           {ev.user && <span className="text-[var(--text-muted)] block font-normal text-[11px]">{ev.user}</span>}
                         </td>
                         <td className="py-2.5 px-3 text-[var(--text-secondary)]">
-                          {ev.provider || "Sysmon"}
+                          {ev.provider || "—"}
                         </td>
                         <td className="py-2.5 px-3 text-[var(--text-secondary)]">
                           {ev.event_id || "-"}

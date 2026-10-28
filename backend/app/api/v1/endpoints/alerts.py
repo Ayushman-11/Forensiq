@@ -102,17 +102,23 @@ async def alerts_by_rule(db: AsyncIOMotorDatabase = Depends(get_db), user: dict 
 
 @router.get("/stats/timeline")
 async def alerts_timeline(db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
-    """Returns alert counts grouped by hour for the last 24 hours."""
+    """Returns alert counts grouped by detection hour (UTC) for the last 24 hours.
+
+    created_at is the event time, which can be weeks old for backfilled data; detected_at is when
+    Forensiq raised the alert. Older alerts without detected_at fall back to created_at.
+    """
     try:
-        twenty_four_hours_ago = datetime.utcnow() - timedelta(hours=24)
+        twenty_four_hours_ago = datetime.now(timezone.utc) - timedelta(hours=24)
         pipeline = [
-            {"$match": {"$and": [tenant_filter(user), {"created_at": {"$gte": twenty_four_hours_ago}}]}},
+            {"$match": tenant_filter(user)},
+            {"$addFields": {"_detected": {"$ifNull": ["$detected_at", "$created_at"]}}},
+            {"$match": {"_detected": {"$gte": twenty_four_hours_ago}}},
             {"$group": {
                 "_id": {
-                    "year": {"$year": "$created_at"},
-                    "month": {"$month": "$created_at"},
-                    "day": {"$dayOfMonth": "$created_at"},
-                    "hour": {"$hour": "$created_at"}
+                    "year": {"$year": "$_detected"},
+                    "month": {"$month": "$_detected"},
+                    "day": {"$dayOfMonth": "$_detected"},
+                    "hour": {"$hour": "$_detected"}
                 },
                 "count": {"$sum": 1}
             }},

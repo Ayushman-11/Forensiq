@@ -33,7 +33,7 @@ async def lifespan(app: FastAPI):
         logger.warning(
             "threat_intel_not_configured",
             missing=missing["threat_intel"],
-            message="IOC enrichment will use the mock layer until these keys are set",
+            message="IOC enrichment returns no verdict from these feeds until their keys are set",
         )
     if "llm" in missing:
         logger.warning(
@@ -65,7 +65,7 @@ async def lifespan(app: FastAPI):
 
     global poller
     if db_config.client:
-        poller = AlertPoller(db_config.client[settings.MONGO_DB_NAME], interval_seconds=30)
+        poller = AlertPoller(db_config.client[settings.MONGO_DB_NAME], interval_seconds=settings.POLLER_INTERVAL_SECONDS)
         poller.start()
 
     yield

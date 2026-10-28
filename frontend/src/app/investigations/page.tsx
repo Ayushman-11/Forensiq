@@ -119,14 +119,15 @@ export default function InvestigationsPage() {
           <span className="text-xs font-semibold text-[var(--text-primary)]">
             LangGraph Agent Execution Pipeline
           </span>
-          <span className="font-mono text-[11px] text-[var(--text-muted)]">7 Autonomous Nodes</span>
+          <span className="font-mono text-[11px] text-[var(--text-muted)]">{PIPELINE_STAGES.length} stages{selectedAlert?.status === "Investigating" ? " · running (open the alert for live progress)" : ""}</span>
         </div>
 
         <div className="flex items-center justify-between py-2 overflow-x-auto px-4">
           {PIPELINE_STAGES.map((stage, idx) => {
             const isCompleted = selectedAlert?.status === "Investigated";
             const isRunning = selectedAlert?.status === "Investigating";
-            const isCurrent = idx === (isRunning ? 2 : isCompleted ? 6 : 0);
+            // This page has no live step data; only the finished state is known for sure.
+            const isCurrent = false;
 
             return (
               <div key={stage.key} className="flex items-center gap-3 shrink-0">
@@ -144,7 +145,7 @@ export default function InvestigationsPage() {
                 </div>
                 {idx < PIPELINE_STAGES.length - 1 && (
                   <div className={`h-0.5 w-12 sm:w-16 ${
-                    idx < (isCompleted ? 6 : isRunning ? 2 : 0) ? "bg-[#22C55E]" : "bg-[var(--border-color)]"
+                    idx < (isCompleted ? 6 : 0) ? "bg-[#22C55E]" : "bg-[var(--border-color)]"
                   }`} />
                 )}
               </div>
@@ -200,7 +201,7 @@ export default function InvestigationsPage() {
               <div className="flex items-center justify-between border-b border-[var(--border-color)] pb-3">
                 <div>
                   <span className="text-[11px] font-mono text-[var(--text-muted)] uppercase">
-                    Host: {selectedAlert.host || "Unknown"} · User: {selectedAlert.user || "SYSTEM"}
+                    Host: {selectedAlert.host || "Unknown"} · User: {selectedAlert.user || "Unknown"}
                   </span>
                   <h2 className="text-base font-bold text-[var(--text-primary)] mt-0.5">
                     {selectedAlert.title}

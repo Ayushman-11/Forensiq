@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import FastAPI
@@ -112,3 +112,14 @@ async def test_background_investigation_reuses_the_job_row_created_by_post(db, m
 
 async def _empty():
     return []
+
+
+@pytest.mark.asyncio
+async def test_timeline_buckets_by_detection_time_not_event_time(db):
+    month_ago = NOW - timedelta(days=30)
+    await db["alerts"].insert_many([
+        alert(1, "acme", created_at=month_ago, detected_at=NOW),  # backfilled event, detected now
+        alert(2, "acme", created_at=month_ago, detected_at=month_ago),
+    ])
+    timeline = (await get(make_app(db, "acme"), "/alerts/stats/timeline")).json()
+    assert sum(t["count"] for t in timeline) == 1

@@ -2,12 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { 
-  Activity, 
-  ArrowRight, 
-  CircleAlert, 
-  Clock3, 
-  RefreshCw, 
+import {
+  Activity,
+  ArrowRight,
+  CircleAlert,
+  Clock3,
+  RefreshCw,
   ShieldCheck,
   CheckCircle2,
   Terminal,
@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import MitreMatrix from "@/components/mitre/MitreMatrix";
+import { STATE_COLOR, STATE_LABEL, useSystemHealth, type ComponentState } from "@/lib/health";
 
 type Metrics = {
   total_alerts: number;
@@ -30,16 +31,16 @@ type Metrics = {
   last_ingested_at?: string | null;
 };
 
-type Alert = { 
-  _id: string; 
-  title: string; 
-  severity: string; 
-  status: string; 
-  host?: string; 
-  rule_name?: string; 
-  created_at: string; 
-  risk_score?: number; 
-  priority?: string 
+type Alert = {
+  _id: string;
+  title: string;
+  severity: string;
+  status: string;
+  host?: string;
+  rule_name?: string;
+  created_at: string;
+  risk_score?: number;
+  priority?: string
 };
 
 type TimelinePoint = { hour: string; count: number };
@@ -59,14 +60,6 @@ function ageLabel(value: string) {
   return `${days}d ago`;
 }
 
-const MITRE_TECHNIQUES = [
-  { id: "T1059", name: "Command and Scripting Interpreter", count: 42, severity: "critical" },
-  { id: "T1003", name: "OS Credential Dumping", count: 28, severity: "high" },
-  { id: "T1047", name: "Windows Management Instrumentation", count: 19, severity: "high" },
-  { id: "T1112", name: "Modify Registry", count: 14, severity: "medium" },
-  { id: "T1021", name: "Remote Services", count: 9, severity: "low" },
-];
-
 export default function DashboardPage() {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
@@ -76,6 +69,7 @@ export default function DashboardPage() {
   const [ingesting, setIngesting] = useState(false);
   const [ingestMsg, setIngestMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { health, unreachable: healthUnreachable, refresh: refreshHealth } = useSystemHealth();
 
   const load = useCallback(async (isSilent = false) => {
     try {
@@ -94,13 +88,14 @@ export default function DashboardPage() {
       setMetrics((await metricsRes.json()) as Metrics);
       setAlerts((await alertsRes.json()) as Alert[]);
       setTimeline((await timelineRes.json()) as TimelinePoint[]);
+      void refreshHealth();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load SOC telemetry data");
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [refreshHealth]);
 
   const triggerIngest = async () => {
     try {
@@ -154,8 +149,8 @@ export default function DashboardPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          <button 
-            onClick={triggerIngest} 
+          <button
+            onClick={triggerIngest}
             disabled={ingesting}
             className="button-primary text-xs"
           >
@@ -163,12 +158,12 @@ export default function DashboardPage() {
             <span>{ingesting ? "Ingesting..." : "Sync Splunk"}</span>
           </button>
 
-          <button 
-            onClick={() => void load()} 
+          <button
+            onClick={() => void load()}
             disabled={refreshing}
             className="button-secondary text-xs"
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} /> 
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
             <span>Refresh</span>
           </button>
         </div>
@@ -190,29 +185,29 @@ export default function DashboardPage() {
 
       {/* Section 7: Top KPI Cards (Vercel Monochrome with Semantic Color Numbers) */}
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <KPICard 
-          title="Critical Alerts" 
-          value={metrics?.critical_alerts ?? 3} 
-          semanticColor="#EF4444" 
+        <KPICard
+          title="Critical Alerts"
+          value={metrics?.critical_alerts} 
+          semanticColor="#EF4444"
           subtext="Requires immediate triage"
         />
-        <KPICard 
-          title="High Alerts" 
-          value={metrics?.high_priority_alerts ?? 8} 
-          semanticColor="#F59E0B" 
-          subtext="High priority detections"
+        <KPICard
+          title="Open Critical + High"
+          value={metrics?.high_priority_alerts}
+          semanticColor="#F59E0B"
+          subtext="New or investigating"
         />
-        <KPICard 
-          title="Active Investigations" 
-          value={metrics?.open_investigations ?? 12} 
-          semanticColor="#3B82F6" 
-          subtext="AI agents processing"
+        <KPICard
+          title="Active Investigations"
+          value={metrics?.open_investigations}
+          semanticColor="#3B82F6"
+          subtext="Pipeline runs in progress"
         />
-        <KPICard 
-          title="Investigated" 
-          value={metrics?.investigated_alerts ?? 96} 
-          semanticColor="#22C55E" 
-          subtext={`Out of ${metrics?.total_alerts ?? 119} ingested`}
+        <KPICard
+          title="Investigated"
+          value={metrics?.investigated_alerts}
+          semanticColor="#22C55E"
+          subtext={metrics ? `Out of ${metrics.total_alerts} ingested` : "Unavailable"}
         />
       </section>
 
@@ -223,26 +218,25 @@ export default function DashboardPage() {
           <div className="flex items-center justify-between pb-3 border-b border-[var(--border-color)]">
             <div>
               <h2 className="text-sm font-semibold text-[var(--text-primary)]">Alert Activity</h2>
-              <p className="text-xs text-[var(--text-muted)]">24-hour detection volume by severity</p>
+              <p className="text-xs text-[var(--text-muted)]">Alerts detected per hour, last 24h (UTC)</p>
             </div>
             <span className="font-mono text-xs text-[var(--text-secondary)] font-medium">
-              Total: {totalVolume || 119} events
+              Total: {totalVolume} alerts
             </span>
           </div>
 
           <div className="mt-4 flex h-40 items-end gap-2 px-2">
             {timeline.length === 0 ? (
               <div className="w-full flex items-center justify-center text-xs text-[var(--text-muted)]">
-                No telemetry recorded in past 24h
+                No alerts detected in the past 24h
               </div>
             ) : (
-              timeline.map((point, i) => {
+              timeline.map((point) => {
                 const heightPct = Math.max((point.count / maxCount) * 100, 6);
-                // Assign semantic color by index/pattern for crisp representation
-                const color = i % 4 === 0 ? "#EF4444" : i % 4 === 1 ? "#F59E0B" : i % 4 === 2 ? "#3B82F6" : "#94A3B8";
+                const color = "#3B82F6";
                 return (
                   <div key={point.hour} className="flex-1 flex flex-col items-center gap-1.5 h-full justify-end group">
-                    <div 
+                    <div
                       className="w-full rounded-t-sm transition-opacity group-hover:opacity-80"
                       style={{ height: `${heightPct}%`, backgroundColor: color }}
                       title={`${point.hour}: ${point.count} alerts`}
@@ -255,12 +249,6 @@ export default function DashboardPage() {
               })
             )}
           </div>
-          <div className="mt-3 flex items-center justify-center gap-4 text-[11px] text-[var(--text-secondary)] pt-2 border-t border-[var(--border-color)]">
-            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#EF4444]" /> Critical</span>
-            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#F59E0B]" /> High</span>
-            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#3B82F6]" /> Medium</span>
-            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#94A3B8]" /> Low</span>
-          </div>
         </div>
 
         {/* Section 10: System Health */}
@@ -268,26 +256,36 @@ export default function DashboardPage() {
           <div>
             <div className="pb-3 border-b border-[var(--border-color)]">
               <h2 className="text-sm font-semibold text-[var(--text-primary)]">System Health</h2>
-              <p className="text-xs text-[var(--text-muted)]">SIEM and agent pipeline status</p>
+              <p className="text-xs text-[var(--text-muted)]">
+                {health ? `Checked ${ageLabel(health.checked_at)}` : healthUnreachable ? "Health endpoint unreachable" : "Checking…"}
+              </p>
             </div>
 
             <div className="mt-4 space-y-3">
-              <HealthStatusItem label="Splunk" status="Connected" />
-              <HealthStatusItem label="Ingestion" status="Healthy" />
-              <HealthStatusItem label="AI Agents" status="Operational" />
-              <HealthStatusItem label="Threat Intel" status="Connected" />
+              <HealthStatusItem label="Splunk" state={health?.siem.state} detail={health?.siem.detail} />
+              <HealthStatusItem label="Ingestion" state={health?.ingestion.state} detail={health?.ingestion.detail} />
+              <HealthStatusItem label="AI Engine" state={health?.ai.state} detail={health?.ai.detail} />
+              <HealthStatusItem
+                label="Threat Intel"
+                state={health?.threat_intel.state}
+                detail={health?.threat_intel.feeds.map((f) => `${f.feed}: ${STATE_LABEL[f.state]}`).join(" · ")}
+              />
             </div>
           </div>
 
           <div className="mt-6 pt-3 border-t border-[var(--border-color)]">
             <div className="flex items-center justify-between text-xs">
-              <span className="text-[var(--text-secondary)]">AI Confidence Avg</span>
-              <span className="font-mono font-semibold text-[var(--text-primary)]">{metrics?.ai_confidence_avg ?? 94}%</span>
+              <span className="text-[var(--text-secondary)]">
+                Avg assessment confidence{health?.ai.mode === "rules" ? " (rules engine)" : ""}
+              </span>
+              <span className="font-mono font-semibold text-[var(--text-primary)]">
+                {metrics ? `${metrics.ai_confidence_avg}%` : "—"}
+              </span>
             </div>
             <div className="w-full h-1.5 bg-[var(--surface-elevated)] rounded-full overflow-hidden mt-1.5">
-              <div 
-                className="h-full bg-[#8B5CF6]" 
-                style={{ width: `${metrics?.ai_confidence_avg ?? 94}%` }} 
+              <div
+                className="h-full bg-[#8B5CF6]"
+                style={{ width: `${metrics?.ai_confidence_avg ?? 0}%` }}
               />
             </div>
           </div>
@@ -318,7 +316,7 @@ export default function DashboardPage() {
                 <p className="text-xs text-[var(--text-muted)] py-6 text-center">No pending alerts in queue</p>
               ) : (
                 alerts.slice(0, 4).map((a) => (
-                  <Link 
+                  <Link
                     key={a._id}
                     href={`/alerts?alert=${encodeURIComponent(a._id)}`}
                     className="py-2.5 flex items-center justify-between text-xs hover:bg-[var(--surface-hover)] px-1 rounded transition-colors group"
@@ -352,26 +350,26 @@ export default function DashboardPage() {
   );
 }
 
-function KPICard({ 
-  title, 
-  value, 
-  semanticColor, 
-  subtext 
-}: { 
-  title: string; 
-  value: number; 
-  semanticColor: string; 
+function KPICard({
+  title,
+  value,
+  semanticColor,
+  subtext
+}: {
+  title: string;
+  value: number | undefined;
+  semanticColor: string;
   subtext: string;
 }) {
   return (
     <div className="card p-4 flex flex-col justify-between">
       <span className="text-xs font-medium text-[var(--text-secondary)]">{title}</span>
       <div className="mt-2 flex items-baseline justify-between">
-        <span 
+        <span
           className="font-mono text-3xl font-bold tracking-tight"
           style={{ color: semanticColor }}
         >
-          {value.toLocaleString()}
+          {value === undefined ? "—" : value.toLocaleString()}
         </span>
       </div>
       <span className="text-[11px] text-[var(--text-muted)] mt-2 pt-2 border-t border-[var(--border-color)]">
@@ -381,13 +379,16 @@ function KPICard({
   );
 }
 
-function HealthStatusItem({ label, status }: { label: string; status: string }) {
+function HealthStatusItem({ label, state, detail }: { label: string; state?: ComponentState; detail?: string }) {
   return (
-    <div className="flex items-center justify-between text-xs">
+    <div className="flex items-start justify-between gap-3 text-xs">
       <span className="text-[var(--text-primary)] font-medium">{label}</span>
-      <div className="flex items-center gap-1.5">
-        <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E]" />
-        <span className="font-mono text-[11px] text-[var(--text-secondary)]">{status}</span>
+      <div className="flex flex-col items-end min-w-0">
+        <div className="flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: state ? STATE_COLOR[state] : "#94A3B8" }} />
+          <span className="font-mono text-[11px] text-[var(--text-secondary)]">{state ? STATE_LABEL[state] : "Unknown"}</span>
+        </div>
+        {detail && <span className="text-[10px] text-[var(--text-muted)] text-right truncate max-w-[220px]" title={detail}>{detail}</span>}
       </div>
     </div>
   );
