@@ -1,4 +1,4 @@
-﻿"""
+"""
 API v1 Router Aggregator.
 Wires endpoint routers with authentication, role gates, and rate limiting.
 """

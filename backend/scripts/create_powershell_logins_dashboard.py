@@ -9,8 +9,8 @@ from pathlib import Path
 # Add backend directory to sys.path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from app.core.logging import setup_logging
 from app.infrastructure.siem.splunk import SplunkClient
+from app.core.logging import setup_logging
 
 DASHBOARD_NAME = "forensiq_powershell_and_logins"
 DASHBOARD_LABEL = "Forensiq — PowerShell & Admin Activity Monitor"

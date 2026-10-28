@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from typing import Iterable
 
 ALLOWED_COMMANDS = frozenset(
     {"search", "where", "table", "stats", "eval", "fields", "sort", "head", "tail", "top", "rare", "dedup", "spath", "rex"}

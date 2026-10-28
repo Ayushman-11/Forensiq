@@ -1,13 +1,12 @@
-"""Collapse repeated detections into one alert and derive deterministic fingerprint IDs."""
+"""Collapse repeated detections into one alert and derive stable IDs."""
 
 from __future__ import annotations
 
 import hashlib
 from collections import defaultdict
-from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Iterable
 
 from app.normalization.canonical import CanonicalEvent
 
@@ -33,14 +32,13 @@ class AlertGroup:
 
 
 def stable_id(*parts: object) -> str:
-    """Calculates deterministic SHA-256 fingerprint for deduplication."""
-    material = "\x1f".join("" if p is None else str(p).strip().lower() for p in parts)
-    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:32]
+    material = "\x1f".join("" if p is None else str(p) for p in parts)
+    return hashlib.sha256(material.encode()).hexdigest()[:32]
 
 
 def _utc(ts: datetime) -> datetime:
     """Treat naive datetimes as UTC so IDs do not depend on the local zone."""
-    return ts.replace(tzinfo=UTC) if ts.tzinfo is None else ts
+    return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts
 
 
 def _bucket(ts: datetime, bucket_seconds: int) -> int:
@@ -48,59 +46,38 @@ def _bucket(ts: datetime, bucket_seconds: int) -> int:
 
 
 def _entity_key(ev: CanonicalEvent) -> tuple:
-    """Normalized fields that define 'the same detection' for each event type across ingestion cycles."""
+    """Fields that define 'the same detection' for each event type."""
     code = ev.event_code
     if code in ("1", "4688"):
-        cmd_clean = " ".join((ev.command_line or "").lower().split())
-        return (ev.process or "", cmd_clean)
+        return (ev.process, ev.command_line)
     if code == "3":
-        return (ev.process or "", ev.dst_ip or "", str(ev.dst_port or 0))
+        return (ev.process, ev.dst_ip, ev.dst_port)
     if code == "13":
-        return ((ev.registry_key or "").lower(),)
+        return (ev.registry_key,)
     if code == "22":
-        return (ev.process or "", (ev.query_name or "").lower())
+        return (ev.process, ev.query_name)
     if code == "4104":
-        return (hashlib.sha256((ev.script_block or "").strip().encode("utf-8")).hexdigest()[:16],)
+        return (hashlib.sha256((ev.script_block or "").encode()).hexdigest(),)
     if code == "4648":
-        return (ev.subject_user or "", ev.target_user or "")
+        return (ev.subject_user, ev.target_user)
     if code == "4625":
         return (ev.src_ip or ev.workstation or "unknown",)
-    return (ev.event_id or "",)
+    return (ev.event_id,)
 
 
 def group_hits(hits: Iterable[RuleHit], org_id: str, bucket_seconds: int) -> list[AlertGroup]:
-    """
-    Groups hits using deterministic fingerprinting.
-    Includes rule name, host_key, target user, time bucket, and core entity keys.
-    Prevents duplicates even when polling cycles overlap.
-    """
     groups: dict[str, AlertGroup] = {}
     for hit in hits:
         ev = hit.event
         ts = _utc(ev.ts)
         bucket = _bucket(ts, bucket_seconds)
         user = None if ev.event_code == "4625" else ev.user
-        
-        # Build deterministic fingerprint
-        alert_id = stable_id(
-            org_id,
-            hit.rule.name,
-            ev.host_key,
-            user,
-            bucket,
-            *_entity_key(ev),
-        )
-        
+        alert_id = stable_id(org_id, hit.rule.name, ev.host_key, user, bucket, *_entity_key(ev))
         group = groups.get(alert_id)
         if group is None:
             groups[alert_id] = AlertGroup(
-                alert_id=alert_id,
-                rule=hit.rule,
-                first=ev,
-                count=hit.count,
-                first_seen=ts,
-                last_seen=ts,
-                events=[ev],
+                alert_id=alert_id, rule=hit.rule, first=ev, count=hit.count,
+                first_seen=ts, last_seen=ts, events=[ev],
             )
             continue
         group.count += hit.count

@@ -1,4 +1,4 @@
-﻿"""
+"""
 WebSocket endpoint for real-time investigation pipeline streaming.
 Supports secure ticket authentication, subprotocol authentication, and Bearer headers.
 Prevents leaking long-lived JWTs into web proxy and access logs.

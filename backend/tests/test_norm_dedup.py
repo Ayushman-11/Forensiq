@@ -1,11 +1,11 @@
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from app.normalization.canonical import CanonicalEvent
 from app.normalization.dedup import RuleHit, aggregate_failed_logons, group_hits, stable_id
 
 RULE = SimpleNamespace(name="r1")
-T0 = datetime(2026, 8, 11, 6, 0, 0, tzinfo=UTC)
+T0 = datetime(2026, 8, 11, 6, 0, 0, tzinfo=timezone.utc)
 
 
 def ev(i: int, **kw) -> CanonicalEvent:

@@ -4,15 +4,13 @@ Implements SIEMProvider interface using httpx async client.
 """
 
 import asyncio
-from collections.abc import AsyncIterator
-from datetime import UTC, datetime
-from typing import Any
-
+from datetime import datetime, timezone
+from typing import List, Dict, Any, Optional, AsyncIterator
 import httpx
-
 from app.core.config import settings
 from app.core.logging import logger
-from app.schemas.normalized_event import NormalizedAlert, NormalizedEvent
+from app.schemas.normalized_event import NormalizedEvent, NormalizedAlert
+from app.infrastructure.siem.base import SIEMProvider
 
 
 class SplunkClient:
@@ -23,23 +21,26 @@ class SplunkClient:
 
     def __init__(
         self,
-        url: str | None = None,
-        username: str | None = None,
-        password: str | None = None,
-        verify_ssl: bool | None = None,
+        url: Optional[str] = None,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        verify_ssl: Optional[bool] = None,
     ):
         self.base_url = (url or settings.SPLUNK_URL).rstrip("/")
         self.username = username or settings.SPLUNK_USERNAME
         self.password = password or settings.SPLUNK_PASSWORD
         self.verify_ssl = verify_ssl if verify_ssl is not None else settings.SPLUNK_VERIFY_SSL
-        self.session_key: str | None = None
-        self._client: httpx.AsyncClient | None = None
+        self.ca_bundle = getattr(settings, "SPLUNK_CA_BUNDLE", None)
+        self.session_key: Optional[str] = None
+        self._client: Optional[httpx.AsyncClient] = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Lazy creation of HTTP client with connection pooling and timeouts."""
         if self._client is None or self._client.is_closed:
+            # Use custom CA bundle if provided and TLS verification is on
+            verify = self.ca_bundle if (self.verify_ssl and self.ca_bundle) else self.verify_ssl
             self._client = httpx.AsyncClient(
-                verify=self.verify_ssl,
+                verify=verify,
                 timeout=httpx.Timeout(30.0, connect=10.0),
                 headers={"Accept": "application/json"},
             )
@@ -68,7 +69,7 @@ class SplunkClient:
             logger.error("splunk_auth_failed", error=str(e))
             raise RuntimeError(f"Splunk Authentication Failed: {e}")
 
-    async def _headers(self) -> dict[str, str]:
+    async def _headers(self) -> Dict[str, str]:
         """Returns request headers including Splunk session authorization."""
         if not self.session_key:
             await self.authenticate()
@@ -83,7 +84,7 @@ class SplunkClient:
         earliest_time: str = "-24h",
         latest_time: str = "now",
         limit: int = 100,
-    ) -> list[NormalizedEvent]:
+    ) -> List[NormalizedEvent]:
         """
         Executes a search query by creating a Splunk Search Job, polling for completion,
         and retrieving results transformed into NormalizedEvent objects.
@@ -152,7 +153,7 @@ class SplunkClient:
 
         raise TimeoutError(f"Splunk Search Job {sid} timed out after {max_wait_seconds} seconds")
 
-    async def get_results(self, sid: str, offset: int = 0, limit: int = 100) -> list[dict[str, Any]]:
+    async def get_results(self, sid: str, offset: int = 0, limit: int = 100) -> List[Dict[str, Any]]:
         """Fetches parsed JSON result events from completed Splunk Search Job."""
         client = await self._get_client()
         headers = await self._headers()
@@ -173,7 +174,7 @@ class SplunkClient:
         latest_time: str = "now",
         page_size: int = 500,
         max_pages: int = 20,
-    ) -> AsyncIterator[list[dict[str, Any]]]:
+    ) -> AsyncIterator[List[Dict[str, Any]]]:
         """Runs one search job and yields raw result rows page by page (no normalization)."""
         clean_query = query.strip()
         if not (clean_query.startswith("search") or clean_query.startswith("|")):
@@ -190,11 +191,11 @@ class SplunkClient:
             if len(rows) < page_size:
                 return
 
-    async def list_alerts(self, limit: int = 50) -> list[NormalizedAlert]:
+    async def list_alerts(self, limit: int = 50) -> List[NormalizedAlert]:
         """Lists active threat alert rules and fired alerts from Splunk REST API."""
         client = await self._get_client()
         headers = await self._headers()
-        alerts: list[NormalizedAlert] = []
+        alerts: List[NormalizedAlert] = []
 
         # 1. Query fired_alerts endpoint
         fired_url = f"{self.base_url}/services/alerts/fired_alerts?output_mode=json&count={limit}"
@@ -211,7 +212,7 @@ class SplunkClient:
                                 title=title,
                                 description=entry.get("content", {}).get("description"),
                                 severity=entry.get("content", {}).get("severity", "medium"),
-                                created_at=datetime.now(UTC),
+                                created_at=datetime.now(timezone.utc),
                                 source_siem="splunk",
                                 raw_alert_data=entry,
                             )
@@ -228,7 +229,7 @@ class SplunkClient:
                 for entry in data.get("entry", []):
                     name = entry.get("name", "")
                     content = entry.get("content", {})
-
+                    
                     # Human Readable Metadata Mapping
                     if "PowerShell" in name:
                         title = "[CRITICAL] Suspicious PowerShell Execution & Cradles"
@@ -267,7 +268,7 @@ class SplunkClient:
                             title=title,
                             description=desc,
                             severity=severity,
-                            created_at=datetime.now(UTC),
+                            created_at=datetime.now(timezone.utc),
                             source_siem="splunk",
                             mitre_techniques=mitre,
                             raw_alert_data=entry,
@@ -278,7 +279,7 @@ class SplunkClient:
 
         return alerts
 
-    async def list_indexes(self) -> list[str]:
+    async def list_indexes(self) -> List[str]:
         """Lists available indexes in Splunk."""
         client = await self._get_client()
         headers = await self._headers()
@@ -407,7 +408,7 @@ class SplunkClient:
             logger.error("splunk_trigger_saved_search_failed", name=name, error=str(e))
             raise RuntimeError(f"Failed to trigger saved search '{name}': {e}")
 
-    def _parse_message_kv(self, message: str) -> dict[str, str]:
+    def _parse_message_kv(self, message: str) -> Dict[str, str]:
         """Extracts key-value pairs from Sysmon Message text block."""
         kv = {}
         if not message:
@@ -418,13 +419,13 @@ class SplunkClient:
                 kv[key.strip()] = value.strip()
         return kv
 
-    def _normalize_splunk_event(self, raw: dict[str, Any]) -> NormalizedEvent:
+    def _normalize_splunk_event(self, raw: Dict[str, Any]) -> NormalizedEvent:
         """Transforms raw Splunk JSON result into NormalizedEvent model."""
         # Extract parsed key-values from Message string if present
         msg_kv = self._parse_message_kv(raw.get("Message", ""))
 
         # Helper getter prioritising top-level Splunk fields, then Message KV block
-        def get_field(key: str) -> str | None:
+        def get_field(key: str) -> Optional[str]:
             val = raw.get(key)
             if val is not None and str(val) != "":
                 return str(val)
@@ -432,7 +433,7 @@ class SplunkClient:
 
         # Parse timestamp
         raw_time = raw.get("_time")
-        event_time = datetime.now(UTC)
+        event_time = datetime.now(timezone.utc)
         if raw_time:
             try:
                 event_time = datetime.fromisoformat(raw_time.replace("Z", "+00:00"))

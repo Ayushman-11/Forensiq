@@ -2,10 +2,8 @@
 Unit tests for Correlation Agent Node in LangGraph.
 """
 
-from unittest.mock import AsyncMock, patch
-
 import pytest
-
+from unittest.mock import AsyncMock, patch
 from app.agents.correlation_agent import correlate_events_node
 
 
@@ -25,7 +23,7 @@ async def test_correlate_events_node_success():
         "extracted_iocs": ["185.220.101.5"],
         "investigation_log": ["Initial log entry"],
     }
-
+    
     mock_correlations = [
         {
             "alert_id": "alert-hist-1",
@@ -37,20 +35,20 @@ async def test_correlate_events_node_success():
             "matches": [{"type": "host", "value": "WKSTN-01"}],
         }
     ]
-
+    
     with patch("app.agents.correlation_agent.get_db", new_callable=AsyncMock) as mock_get_db, \
          patch("app.agents.correlation_agent.correlate_alert", new_callable=AsyncMock) as mock_correlate:
         mock_get_db.return_value = AsyncMock()
         mock_correlate.return_value = mock_correlations
-
+        
         result = await correlate_events_node(state)
-
+        
         assert "correlations" in result
         assert len(result["correlations"]) == 1
         assert result["correlations"][0]["alert_id"] == "alert-hist-1"
         assert len(result["investigation_log"]) == 2
         assert "Correlation Agent" in result["investigation_log"][-1]
-
+        
         # Verify merged alert passed to correlate_alert
         call_args = mock_correlate.call_args[0]
         passed_alert = call_args[1]
@@ -66,13 +64,13 @@ async def test_correlate_events_node_no_matches():
         "extracted_iocs": [],
         "investigation_log": [],
     }
-
+    
     with patch("app.agents.correlation_agent.get_db", new_callable=AsyncMock), \
          patch("app.agents.correlation_agent.correlate_alert", new_callable=AsyncMock) as mock_correlate:
         mock_correlate.return_value = []
-
+        
         result = await correlate_events_node(state)
-
+        
         assert result["correlations"] == []
         assert any("no historical alert correlations found" in log for log in result["investigation_log"])
 
@@ -85,10 +83,10 @@ async def test_correlate_events_node_error_handling():
         "extracted_iocs": [],
         "investigation_log": [],
     }
-
+    
     with patch("app.agents.correlation_agent.get_db", side_effect=Exception("DB Connection Refused")):
         result = await correlate_events_node(state)
-
+        
         # Should not raise; graceful fallback
         assert result["correlations"] == []
         assert any("could not complete" in log for log in result["investigation_log"])

@@ -1,4 +1,4 @@
-﻿"""
+"""
 LLM Client Wrapper for Grok (xAI) and OpenAI-compatible Providers.
 Provides robust async prompt execution with structured JSON parsing,
 timeout controls, circuit breaker protection, and token cost tracking.

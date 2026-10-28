@@ -1,9 +1,9 @@
 import pytest
 
 from app.services.spl_guard import (
-    _INDEX_RE,
     ALLOWED_COMMANDS,
     SPLRejected,
+    _INDEX_RE,
     _split_pipeline,
     validate_search,
     validate_time_range,

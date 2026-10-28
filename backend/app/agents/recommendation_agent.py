@@ -1,4 +1,4 @@
-﻿"""
+"""
 Investigation Recommendation Agent Node for LangGraph.
 Synthesizes full investigation findings, risk assessments, and ATT&CK mappings
 into an actionable incident response checklist using Grok AI (with deterministic fallback).
@@ -287,7 +287,7 @@ async def generate_recommendations_node(state: AgentState) -> Dict[str, Any]:
         formatted_rec = (
             f"{directive}\n\n"
             f"Actionable Steps (Containment advice is suggested; all automated actions require human approval):\n"
-            + "\n".join(f"ΓÇó {item}" for item in checklist)
+            + "\n".join(f"• {item}" for item in checklist)
         )
         log_msg = f"Grok AI Recommendation Agent: generated response checklist with {len(checklist)} step(s) via Grok"
         engine = f"llm:{settings.XAI_MODEL}"
@@ -299,7 +299,7 @@ async def generate_recommendations_node(state: AgentState) -> Dict[str, Any]:
         formatted_rec = (
             f"{directive}\n\n"
             f"Actionable Steps (Containment advice is suggested; all automated actions require human approval):\n"
-            + "\n".join(f"ΓÇó {item}" for item in checklist)
+            + "\n".join(f"• {item}" for item in checklist)
         )
         log_msg = f"Recommendation Agent: generated response checklist with {len(checklist)} step(s) [Deterministic Engine]"
         engine = rec_data["engine"]

@@ -9,8 +9,8 @@ from pathlib import Path
 # Add backend directory to sys.path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from app.core.logging import setup_logging
 from app.infrastructure.siem.splunk import SplunkClient
+from app.core.logging import setup_logging, logger
 
 # Splunk Dashboard XML Definition
 SOC_DASHBOARD_XML = """<dashboard version="1.1">
@@ -72,7 +72,7 @@ async def main():
         print("   [OK] Dashboard 'forensiq_soc_overview' deployed successfully!\n")
 
         print("3. Creating Saved Searches & Detection Rules in Splunk...")
-
+        
         # Saved Search 1: PowerShell Execution Alert
         await client.create_saved_search(
             name="Forensiq_Alert_PowerShell_Execution",
