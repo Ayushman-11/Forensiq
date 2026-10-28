@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { 
   ShieldAlert, 
   Activity, 
@@ -37,6 +38,7 @@ const PIPELINE_STAGES = [
 ];
 
 export default function InvestigationsPage() {
+  const searchParams = useSearchParams();
   const [alerts, setAlerts] = useState<AlertRecord[]>([]);
   const [selectedAlert, setSelectedAlert] = useState<AlertRecord | null>(null);
   const [loading, setLoading] = useState(true);
@@ -80,6 +82,14 @@ export default function InvestigationsPage() {
       if (res.ok) {
         const data = (await res.json()) as AlertRecord[];
         setAlerts(data);
+        const requestedId = searchParams.get("alert");
+        if (requestedId) {
+          const matched = data.find((a) => a._id === requestedId);
+          if (matched) {
+            setSelectedAlert(matched);
+            return;
+          }
+        }
         if (data.length > 0 && !selectedAlert) {
           setSelectedAlert(data[0]);
         }
@@ -89,7 +99,7 @@ export default function InvestigationsPage() {
     } finally {
       setLoading(false);
     }
-  }, [selectedAlert]);
+  }, [searchParams, selectedAlert]);
 
   useEffect(() => {
     void load();
