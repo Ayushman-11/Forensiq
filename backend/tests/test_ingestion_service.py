@@ -275,3 +275,27 @@ async def test_sustained_load_does_not_flip_flop_truncation(db, monkeypatch):
     assert cursors == sorted(cursors)
     assert cursors[-1] == datetime.fromisoformat(rows[-1]["_time"])
     assert flags[-6:] == [False] * 6
+
+
+@pytest.mark.asyncio
+async def test_ingested_alerts_are_grouped_into_incidents(db, splunk_rows):
+    svc = _service(db, FakeSplunk([_rows(splunk_rows, "22", "13", "3")]))
+    new = await svc.fetch_and_store_alerts()
+
+    assert new
+    linked = [a async for a in db["alerts"].find({"incident_id": {"$exists": True}})]
+    assert linked, "alerts with a host should be linked"
+    for alert in linked:
+        incident = await db["incidents"].find_one({"_id": alert["incident_id"]})
+        assert incident["org_id"] == "default" and alert["host"].lower() in {h.lower() for h in incident["hosts"]}
+
+
+@pytest.mark.asyncio
+async def test_a_linking_failure_never_fails_ingestion(db, splunk_rows, monkeypatch):
+    async def boom(*a, **k):
+        raise RuntimeError("grouping broke")
+
+    monkeypatch.setattr(ingestion_mod, "link_alerts", boom)
+    svc = _service(db, FakeSplunk([_rows(splunk_rows, "22")]))
+    new = await svc.fetch_and_store_alerts()
+    assert new and (await db["ingestion_runs"].find_one({}))["status"] == "ok"

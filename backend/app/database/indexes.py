@@ -12,6 +12,10 @@ async def ensure_indexes(db) -> None:
     await alerts.create_index("user")
     await alerts.create_index("extracted_iocs")
     await alerts.create_index("status")
+    await alerts.create_index([("org_id", 1), ("incident_id", 1)])
+    incidents = db["incidents"]
+    await incidents.create_index([("org_id", 1), ("keys", 1), ("last_seen", -1)])
+    await incidents.create_index([("org_id", 1), ("last_seen", -1)])
 
     runs = db["ingestion_runs"]
     await runs.create_index([("org_id", 1), ("started_at", -1)])

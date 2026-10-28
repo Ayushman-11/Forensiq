@@ -89,12 +89,15 @@ async def list_alerts(
     status: str = Query(None, description="Filter by status"),
     search: str = Query(None, max_length=100, description="Search title, host, user, rule, DNS query or ATT&CK technique"),
     assignee: str = Query(None, max_length=100, description="'me', 'unassigned' or a user id"),
+    incident: str = Query(None, max_length=100, description="Only alerts in this incident"),
     sort: Literal["newest", "oldest", "severity", "risk"] = Query("newest"),
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
     """Fetches alerts with optional filtering. status=open means every not-yet-resolved status."""
     conditions = []
+    if incident:
+        conditions.append({"incident_id": incident})
     if assignee == "me":
         conditions.append({"assignee_id": user.get("id")})
     elif assignee == "unassigned":

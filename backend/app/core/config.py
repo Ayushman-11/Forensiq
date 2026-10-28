@@ -116,6 +116,7 @@ class Settings(BaseSettings):
     INVESTIGATION_CONCURRENCY: int = Field(default=3, description="Max concurrent auto-investigations")
     POLLER_LEASE_TTL_SECONDS: int = Field(default=90, description="Single-poller lease time to live")
     POLLER_INTERVAL_SECONDS: int = Field(default=30, description="Seconds between SIEM ingestion cycles")
+    INCIDENT_WINDOW_HOURS: int = Field(default=6, description="Alerts sharing a link key within this gap join one incident")
 
     # Grok / xAI LLM Configuration
     XAI_API_KEY: str = Field(
