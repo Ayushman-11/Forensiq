@@ -117,6 +117,18 @@ class Settings(BaseSettings):
     POLLER_LEASE_TTL_SECONDS: int = Field(default=90, description="Single-poller lease time to live")
     POLLER_INTERVAL_SECONDS: int = Field(default=30, description="Seconds between SIEM ingestion cycles")
 
+    # Data Durability & Governance (Retention in days)
+    AUDIT_RETENTION_DAYS: int = Field(default=365, description="Retention in days for audit logs")
+    INVESTIGATION_JOB_RETENTION_DAYS: int = Field(default=90, description="Retention in days for completed investigation jobs")
+    ALERT_NOTE_RETENTION_DAYS: int = Field(default=365, description="Retention in days for alert notes")
+    RAW_EVENTS_RETENTION_DAYS: int = Field(default=90, description="Retention in days for raw events")
+    RAW_EVENTS_REDACT_PII: bool = Field(default=False, description="Redact personal data in raw events on ingestion")
+
+    # Investigation Queue & Worker Configuration
+    INVESTIGATION_JOB_LEASE_SECONDS: int = Field(default=300, description="Worker lease duration before a running job is considered stuck")
+    INVESTIGATION_MAX_RETRIES: int = Field(default=3, description="Maximum retry attempts for failed investigation jobs")
+    INVESTIGATION_WORKER_POLL_INTERVAL_SECONDS: float = Field(default=2.0, description="Polling interval for background investigation worker")
+
     # Grok / xAI LLM Configuration
     XAI_API_KEY: str = Field(
         default="",

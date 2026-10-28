@@ -71,10 +71,11 @@ async def handle_websocket_investigation(
     websocket: WebSocket,
     alert_id: str,
     token: Optional[str] = Query(None),
-    auto_start: bool = Query(True),
+    auto_start: bool = Query(False),
 ):
     """
     Unified WebSocket handler for streaming investigation events.
+    Defaults to observe-only (auto_start=False) to prevent accidental compute & LLM cost.
     """
     await websocket.accept()
 
@@ -145,16 +146,17 @@ async def handle_websocket_investigation(
             }, default=json_serial))
 
         elif current_status == "Investigating":
-            # Replay any in-flight steps currently buffered
+            # Replay any in-flight steps currently buffered or persisted in DB
             await websocket.send_text(json.dumps({
                 "event": "status",
                 "data": {"status": "in_progress", "message": "Investigation is currently running."}
             }))
-            for historical_event in investigation_stream_manager.get_history(alert_id):
+            history = await investigation_stream_manager.get_persisted_history(alert_id, db)
+            for historical_event in history:
                 await websocket.send_text(json.dumps(historical_event, default=json_serial))
 
-        else:
-            # Run the streaming investigation directly
+        elif auto_start:
+            # Run the streaming investigation directly if auto_start was explicitly requested
             async for _ in investigation_stream_manager.run_pipeline_stream(
                 alert_id=alert_id,
                 alert=alert,
@@ -162,6 +164,13 @@ async def handle_websocket_investigation(
                 org_id=tenant_id(user),
             ):
                 pass  # run_pipeline_stream broadcasts each event to all subscribers including this websocket
+
+        else:
+            # Observe-only mode: WebSocket does not spend compute automatically
+            await websocket.send_text(json.dumps({
+                "event": "status",
+                "data": {"status": "ready", "message": "Alert ready. Start investigation via POST /investigate or start command."}
+            }))
 
         # Message receiver loop for client interaction (heartbeat ping, reinvestigate command, etc.)
         while True:
@@ -201,7 +210,7 @@ async def websocket_investigate_endpoint(
     websocket: WebSocket,
     alert_id: str,
     token: Optional[str] = Query(None),
-    auto_start: bool = Query(True),
+    auto_start: bool = Query(False),
 ):
     """WebSocket connection route: /api/v1/alerts/{alert_id}/ws"""
     await handle_websocket_investigation(websocket, alert_id, token, auto_start)
@@ -212,7 +221,7 @@ async def websocket_investigate_path_endpoint(
     websocket: WebSocket,
     alert_id: str,
     token: Optional[str] = Query(None),
-    auto_start: bool = Query(True),
+    auto_start: bool = Query(False),
 ):
     """Alternate WebSocket connection route: /api/v1/alerts/ws/{alert_id:path}"""
     await handle_websocket_investigation(websocket, alert_id, token, auto_start)
