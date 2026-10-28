@@ -21,6 +21,7 @@ from app.core.timeutil import iso_utc
 from app.core.errors import internal_error, new_request_id
 from app.api.deps import require_roles, get_current_user
 from app.core.tenancy import scoped_query, tenant_filter, tenant_id
+from app.services.sla import get_sla_targets
 from app.services.audit import record_audit
 from app.services.correlation import correlate_alert
 from app.services.job_queue import enqueue_investigation_job
@@ -123,6 +124,7 @@ async def list_alerts(
             for field in ("title", "host", "user", "rule_name", "dns_query", "mitre_technique", "mitre_mappings.technique")
         ]})
     try:
+        sla_targets = await get_sla_targets(db, tenant_id(user))
         alerts = []
         pipeline = [
             {"$match": scoped_query(user, *conditions)},
@@ -133,7 +135,7 @@ async def list_alerts(
         ]
         async for document in db["alerts"].aggregate(pipeline):
             document["_id"] = str(document["_id"])
-            document["sla"] = sla_state(document)
+            document["sla"] = sla_state(document, targets_by_severity=sla_targets)
             for key in ("created_at", "detected_at", "acknowledged_at", "resolved_at", "assigned_at", "updated_at"):
                 if isinstance(document.get(key), datetime):
                     document[key] = iso_utc(document[key])
@@ -266,7 +268,7 @@ async def get_alert(alert_id: str, db: AsyncIOMotorDatabase = Depends(get_db), u
         
         # Ensure proper serialization
         alert["_id"] = str(alert["_id"])
-        alert["sla"] = sla_state(alert)
+        alert["sla"] = sla_state(alert, targets_by_severity=await get_sla_targets(db, tenant_id(user)))
         for key in ("created_at", "detected_at", "acknowledged_at", "resolved_at", "assigned_at", "updated_at", "escalated_at"):
             if isinstance(alert.get(key), datetime):
                 alert[key] = iso_utc(alert[key])

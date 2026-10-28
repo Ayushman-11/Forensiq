@@ -161,6 +161,18 @@ class Settings(BaseSettings):
     POLLER_LEASE_TTL_SECONDS: int = Field(default=90, description="Single-poller lease time to live")
     POLLER_INTERVAL_SECONDS: int = Field(default=30, description="Seconds between SIEM ingestion cycles")
     INCIDENT_WINDOW_HOURS: int = Field(default=6, description="Alerts sharing a link key within this gap join one incident")
+    SLA_SWEEP_INTERVAL_SECONDS: int = Field(default=60, description="Seconds between SLA breach / escalation sweeps")
+
+    # External ticketing (case management). Each system is optional; unset means "not configured".
+    JIRA_BASE_URL: str = Field(default="", description="e.g. https://acme.atlassian.net")
+    JIRA_EMAIL: str = Field(default="", description="Jira account email used with the API token")
+    JIRA_API_TOKEN: str = Field(default="", description="Jira API token")
+    JIRA_PROJECT_KEY: str = Field(default="", description="Project new tickets are created in")
+    JIRA_ISSUE_TYPE: str = Field(default="Task", description="Issue type for created tickets")
+    SERVICENOW_INSTANCE_URL: str = Field(default="", description="e.g. https://acme.service-now.com")
+    SERVICENOW_USER: str = Field(default="", description="ServiceNow integration user")
+    SERVICENOW_PASSWORD: str = Field(default="", description="ServiceNow integration password")
+    TICKET_SYNC_INTERVAL_SECONDS: int = Field(default=300, description="How often linked tickets are polled for status")
 
     # Data Durability & Governance (Retention in days)
     AUDIT_RETENTION_DAYS: int = Field(default=365, description="Retention in days for audit logs")

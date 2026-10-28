@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.core.timeutil import iso_utc
 from app.core.tenancy import scoped_query, tenant_filter, tenant_id
 from app.infrastructure.siem.base import SIEMProvider
+from app.services.sla import get_sla_targets
 from app.services.triage import OPEN_STATUSES, detected_at, sla_state
 
 router = APIRouter()
@@ -210,6 +211,7 @@ async def soc_metrics(
     rules: dict[str, dict] = {}
     unassigned_open = ack_breached = resolve_breached = 0
 
+    sla_targets = await get_sla_targets(db, tenant_id(user))
     cursor = db["alerts"].find(scoped_query(user), fields)
     async for a in cursor:
         start = detected_at(a)
@@ -219,7 +221,7 @@ async def soc_metrics(
             open_by_severity[sev] = open_by_severity.get(sev, 0) + 1
             if not a.get("assignee_id"):
                 unassigned_open += 1
-            sla = sla_state(a, now)
+            sla = sla_state(a, now, sla_targets)
             if sla:
                 ack_breached += sla["ack_breached"]
                 resolve_breached += sla["resolve_breached"]

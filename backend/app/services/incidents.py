@@ -14,7 +14,9 @@ IP addresses are deliberately not keys: CDN and cloud addresses are shared by un
 
 One code path (`link_alert`) serves live ingestion and `rebuild_incidents`, so a rebuild reproduces
 what ingestion would have produced. Incident state is derived from member alerts at read time
-(there is no separate incident status to drift out of sync).
+(there is no separate incident status to drift out of sync). Case state an analyst sets (status, owner,
+notes, tickets) lives on the incident itself: see services/cases.py. Incidents an analyst merged, split
+or pinned into are `manual`: regrouping keeps them, and keeps pinned alerts where they were put.
 """
 
 from __future__ import annotations
@@ -112,7 +114,9 @@ async def link_alert(db, alert: dict, noise: Optional[NoiseFilter] = None) -> Op
             **fields,
         })
     else:
-        survivor, absorbed = candidates[0], candidates[1:]
+        # An analyst-curated (manual) incident is never absorbed: it survives, others fold into it.
+        survivor = next((c for c in candidates if c.get("manual")), candidates[0])
+        absorbed = [c for c in candidates if c is not survivor and not c.get("manual")]
         incident_id = survivor["_id"]
         merged_keys = set(keys) | set(survivor.get("keys", []))
         merged = {name: set(survivor.get(name, [])) | set(values) for name, values in fields.items()}
@@ -153,12 +157,15 @@ async def link_alerts(db, alerts: Iterable[dict], noise: Optional[NoiseFilter] =
 async def rebuild_incidents(db, org_id: str, noise: Optional[NoiseFilter] = None) -> dict:
     """Throw away this tenant's incidents and regroup every alert. Safe to run repeatedly."""
     tenant = {"$or": [{"org_id": org_id}, {"org_id": {"$exists": False}}]} if org_id == "default" else {"org_id": org_id}
-    await db["incidents"].delete_many(tenant)
-    await db["alerts"].update_many(tenant, {"$unset": {"incident_id": ""}})
+    manual_ids = [i["_id"] async for i in db["incidents"].find({"$and": [tenant, {"manual": True}]}, {"_id": 1})]
+    await db["incidents"].delete_many({"$and": [tenant, {"manual": {"$ne": True}}]})
+    # Curated incidents and pinned alerts keep their place; everything else is regrouped.
+    regroup = {"$and": [tenant, {"incident_pinned": {"$ne": True}}, {"incident_id": {"$nin": manual_ids}}]}
+    await db["alerts"].update_many(regroup, {"$unset": {"incident_id": ""}})
     alerts = []
     projection = {"org_id": 1, "host": 1, "user": 1, "severity": 1, "rule_name": 1, "extracted_iocs": 1,
                   "first_seen": 1, "created_at": 1, "detected_at": 1}
-    async for alert in db["alerts"].find(tenant, projection):
+    async for alert in db["alerts"].find(regroup, projection):
         alert.setdefault("org_id", org_id)
         alerts.append(alert)
     linked = await link_alerts(db, alerts, noise)

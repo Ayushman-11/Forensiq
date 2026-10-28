@@ -1,14 +1,20 @@
 """
 Incidents: alerts grouped into cases (see services/incidents.py).
 
-An incident has no status of its own. It is open while any member alert is open, so closing,
-assigning or escalating alerts (single or bulk) can never leave the incident out of sync.
+`state` (open/resolved) is derived: an incident is open while any member alert is open, so closing,
+assigning or escalating alerts (single or bulk) can never leave it out of sync.
+
+The case itself (services/cases.py) has its own `status`, owner, notes, timeline and external tickets,
+and analysts can merge, split and pin alerts manually.
 """
 
 from datetime import datetime
 from typing import Literal
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import get_current_user, require_roles
@@ -18,13 +24,36 @@ from app.database.session import get_db
 from app.normalization.noise import NoiseFilter
 from app.core.config import settings
 from app.services.audit import record_audit
+from app.services import cases
 from app.services.incidents import SEVERITY_RANK, rebuild_incidents
+from app.services.sla import get_sla_targets
 from app.services.triage import OPEN_STATUSES, sla_state
 
 router = APIRouter()
 
 
+def _noise() -> Optional[NoiseFilter]:
+    try:
+        return NoiseFilter.from_yaml(settings.NOISE_CONFIG_PATH)
+    except Exception:  # regrouping falls back to un-filtered keys rather than failing the action
+        return None
+
+
+def _case_error(exc: cases.CaseError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail=exc.detail)
+
+
+def _public_ticket(ticket: dict) -> dict:
+    out = {k: v for k, v in ticket.items() if k != "sys_id"}
+    for key in ("linked_at", "last_synced_at"):
+        if isinstance(out.get(key), datetime):
+            out[key] = iso_utc(out[key])
+    return out
+
+
 def _title(incident: dict) -> str:
+    if incident.get("title"):
+        return incident["title"]
     rules = incident.get("rules") or []
     hosts = incident.get("hosts") or []
     what = ", ".join(r.replace("_", " ") for r in rules[:2]) or "Related alerts"
@@ -45,6 +74,11 @@ def _summarise(incident: dict, by_status: dict[str, int], assignees: dict) -> di
         "title": _title(incident),
         "severity": incident.get("severity", "low"),
         "state": "open" if open_count else "resolved",
+        "status": incident.get("status", "open"),
+        "case_owner": incident.get("owner_email"),
+        "case_owner_id": incident.get("owner_id"),
+        "manual": bool(incident.get("manual")),
+        "tickets": [_public_ticket(t) for t in incident.get("tickets", [])],
         "alert_count": sum(by_status.values()),
         "open_count": open_count,
         "unassigned_open": unassigned,
@@ -112,16 +146,21 @@ async def get_incident(incident_id: str, db: AsyncIOMotorDatabase = Depends(get_
         scoped_query(user, {"incident_id": incident_id}),
         {"title": 1, "severity": 1, "status": 1, "host": 1, "user": 1, "rule_name": 1, "assignee_id": 1, "assignee_email": 1,
          "verdict": 1, "risk_score": 1, "dns_query": 1, "command_line": 1, "detected_at": 1, "created_at": 1,
-         "first_seen": 1, "acknowledged_at": 1, "resolved_at": 1},
+         "first_seen": 1, "acknowledged_at": 1, "resolved_at": 1, "incident_pinned": 1},
     ).sort("first_seen", 1)
+    sla_targets = await get_sla_targets(db, tenant_id(user))
     async for alert in cursor:
-        alert["sla"] = sla_state(alert)
+        alert["sla"] = sla_state(alert, targets_by_severity=sla_targets)
         for key in ("created_at", "detected_at", "first_seen", "acknowledged_at", "resolved_at"):
             if isinstance(alert.get(key), datetime):
                 alert[key] = iso_utc(alert[key])
         members.append(alert)
     # Link keys explain why these alerts were grouped; the host/user/domain/hash behind each one.
     summary["link_keys"] = incident.get("keys", [])
+    summary["resolution_note"] = incident.get("resolution_note")
+    summary["merged_from"] = incident.get("merged_from", [])
+    summary["split_from"] = incident.get("split_from")
+    summary["pinned_alert_ids"] = [str(a["_id"]) for a in members if a.get("incident_pinned")]
     summary["alerts"] = members
     return summary
 
@@ -135,3 +174,151 @@ async def rebuild(
     result = await rebuild_incidents(db, tenant_id(user), NoiseFilter.from_yaml(settings.NOISE_CONFIG_PATH))
     await record_audit(db, user, "incidents.rebuilt", "incident", "*", result)
     return result
+
+
+# ---------- case management ----------
+
+class StatusRequest(BaseModel):
+    status: str
+    note: Optional[str] = Field(default=None, max_length=cases.MAX_NOTE_CHARS)
+    force: bool = False
+
+
+class OwnerRequest(BaseModel):
+    owner_id: Optional[str] = None
+
+
+class NoteRequest(BaseModel):
+    content: str = Field(max_length=cases.MAX_NOTE_CHARS)
+
+
+class MergeRequest(BaseModel):
+    source_ids: list[str] = Field(min_length=1, max_length=cases.MAX_MERGE_SOURCES)
+    note: str = Field(max_length=cases.MAX_NOTE_CHARS)
+
+
+class SplitRequest(BaseModel):
+    alert_ids: list[str] = Field(min_length=1, max_length=200)
+    title: Optional[str] = Field(default=None, max_length=200)
+    note: str = Field(max_length=cases.MAX_NOTE_CHARS)
+
+
+class PinRequest(BaseModel):
+    alert_id: str
+
+
+class TicketRequest(BaseModel):
+    system: Literal["jira", "servicenow"]
+    key: Optional[str] = Field(default=None, max_length=40)
+    create: bool = False
+
+
+def _serialise(doc: dict, *datetime_keys: str) -> dict:
+    out = dict(doc)
+    for key in datetime_keys:
+        if isinstance(out.get(key), datetime):
+            out[key] = iso_utc(out[key])
+    return out
+
+
+@router.post("/{incident_id}/status")
+async def change_status(incident_id: str, payload: StatusRequest, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
+    try:
+        return await cases.set_status(db, user, incident_id, payload.status, payload.note, payload.force)
+    except cases.CaseError as exc:
+        raise _case_error(exc)
+
+
+@router.post("/{incident_id}/owner")
+async def change_owner(incident_id: str, payload: OwnerRequest, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
+    try:
+        return await cases.set_owner(db, user, incident_id, payload.owner_id)
+    except cases.CaseError as exc:
+        raise _case_error(exc)
+
+
+@router.post("/{incident_id}/notes", status_code=201)
+async def add_incident_note(incident_id: str, payload: NoteRequest, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
+    try:
+        return _serialise(await cases.add_note(db, user, incident_id, payload.content), "created_at")
+    except cases.CaseError as exc:
+        raise _case_error(exc)
+
+
+@router.get("/{incident_id}/notes")
+async def list_incident_notes(incident_id: str, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
+    try:
+        return [_serialise(n, "created_at") for n in await cases.list_notes(db, user, incident_id)]
+    except cases.CaseError as exc:
+        raise _case_error(exc)
+
+
+@router.get("/{incident_id}/timeline")
+async def incident_timeline(incident_id: str, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
+    try:
+        return [_serialise(e, "at") for e in await cases.timeline(db, user, incident_id)]
+    except cases.CaseError as exc:
+        raise _case_error(exc)
+
+
+@router.post("/{incident_id}/merge")
+async def merge(incident_id: str, payload: MergeRequest, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
+    """Fold other incidents into this one. Their alerts, notes, timeline and tickets move here."""
+    try:
+        return await cases.merge_incidents(db, user, incident_id, payload.source_ids, payload.note, _noise())
+    except cases.CaseError as exc:
+        raise _case_error(exc)
+
+
+@router.post("/{incident_id}/split")
+async def split(incident_id: str, payload: SplitRequest, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
+    """Move some of this incident's alerts into a new incident."""
+    try:
+        return await cases.split_incident(db, user, incident_id, payload.alert_ids, payload.title, payload.note, _noise())
+    except cases.CaseError as exc:
+        raise _case_error(exc)
+
+
+@router.post("/{incident_id}/pin")
+async def pin(incident_id: str, payload: PinRequest, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
+    """Pin an alert to this incident (moving it from wherever it was); regrouping will not undo it."""
+    try:
+        return await cases.pin_alert(db, user, incident_id, payload.alert_id, _noise())
+    except cases.CaseError as exc:
+        raise _case_error(exc)
+
+
+@router.delete("/{incident_id}/pin/{alert_id}")
+async def unpin(incident_id: str, alert_id: str, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
+    try:
+        return await cases.unpin_alert(db, user, incident_id, alert_id)
+    except cases.CaseError as exc:
+        raise _case_error(exc)
+
+
+@router.post("/{incident_id}/tickets", status_code=201)
+async def link_ticket(incident_id: str, payload: TicketRequest, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
+    """Link an existing ticket by key, or create one in Jira / ServiceNow (`create: true`)."""
+    try:
+        incident = await cases.get_incident_doc(db, user, incident_id)
+        ticket = await cases.link_ticket(db, user, incident_id, payload.system, payload.key, payload.create, _title(incident))
+        return _public_ticket(ticket)
+    except cases.CaseError as exc:
+        raise _case_error(exc)
+
+
+@router.post("/{incident_id}/tickets/{ticket_id}/sync")
+async def sync_ticket(incident_id: str, ticket_id: str, apply: bool = Query(True), db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
+    """Pull the ticket's current status; with apply=true the incident's status follows it."""
+    try:
+        return await cases.sync_ticket(db, user, incident_id, ticket_id, apply)
+    except cases.CaseError as exc:
+        raise _case_error(exc)
+
+
+@router.delete("/{incident_id}/tickets/{ticket_id}")
+async def unlink_ticket(incident_id: str, ticket_id: str, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
+    try:
+        return await cases.unlink_ticket(db, user, incident_id, ticket_id)
+    except cases.CaseError as exc:
+        raise _case_error(exc)

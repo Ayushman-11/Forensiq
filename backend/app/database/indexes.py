@@ -19,6 +19,8 @@ async def ensure_indexes(db) -> None:
     incidents = db["incidents"]
     await incidents.create_index([("org_id", 1), ("keys", 1), ("last_seen", -1)])
     await incidents.create_index([("org_id", 1), ("last_seen", -1)])
+    await db["incident_notes"].create_index([("org_id", 1), ("incident_id", 1), ("created_at", -1)])
+    await db["incident_events"].create_index([("org_id", 1), ("incident_id", 1), ("at", -1)])
 
     runs = db["ingestion_runs"]
     await runs.create_index([("org_id", 1), ("started_at", -1)])

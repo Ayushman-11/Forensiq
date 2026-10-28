@@ -20,6 +20,7 @@ This list covers what must change before Forensiq can hold real security telemet
 | Close with verdict and note, assignment, bulk actions, SLA clocks, role gates, audit trail | Done | PR #17 |
 | MTTA/MTTR, rule precision, backlog aging | Done | PR #17 |
 | Incident grouping | Done | branch `feat/phase1b-incidents` |
+| Case management (2.4) | Done | branch `ai_inv` |
 | UTC timestamps serialised with offset | Done | PR #17 |
 
 Everything below is still open.
@@ -136,11 +137,14 @@ A SOC tool that must be watched to be useful will be missed overnight. This is t
 
 ### 2.4 Case management
 
-- Incident-level notes, timeline, owner and status (today notes are per alert and the incident has no state of its own).
-- Merge and split incidents manually; pin an alert to an incident.
-- Link to external tickets (Jira, ServiceNow) and sync status.
-- Configurable SLA targets per tenant (today fixed in `services/triage.py`).
-- Escalation policy: reassign or notify when an SLA is breached.
+**Status: implemented.** `services/cases.py`, `services/ticketing.py`, `services/sla.py`, `services/sla_monitor.py`, `endpoints/incidents.py`, `endpoints/policies.py`; tests in `tests/test_case_management.py`.
+
+- [x] Incident-level notes, timeline, owner and status. The incident keeps a case `status` (open, in_progress, resolved, closed) separate from the derived `state`. Resolving needs a note and no open member alerts (a SOC manager can force). `GET /incidents/{id}/notes|timeline`, `POST .../notes|status|owner`.
+- [x] Merge and split incidents manually; pin an alert to an incident (`POST .../merge|split|pin`, `DELETE .../pin/{alert}`). Each needs a reason. Curated incidents and pinned alerts survive `rebuild`; automatic grouping may add alerts to a curated incident but never absorbs it.
+- [x] Link to external tickets and sync status. Jira Cloud and ServiceNow, configured by server settings only (`FORENSIQ_JIRA_*`, `FORENSIQ_SERVICENOW_*`). Link by key or create; pull status on demand or every `TICKET_SYNC_INTERVAL_SECONDS`, mapping it to the case status; our status changes are posted back as a comment. Unconfigured systems report `not_configured`; nothing is simulated.
+- [x] Configurable SLA targets per tenant: `GET/PUT /policies/sla`, versioned and audited (manager/admin). Alert lists, alert detail, dashboard and incident detail all use them.
+- [x] Escalation policy: `GET/PUT /policies/escalation`. Per severity and per breach (`ack_breach`, `resolve_breach`): notify, reassign to a named active user, mark Escalated. The SLA monitor, now started with the app, applies each once per alert and audits it.
+- Not done: pushing incident status to Jira/ServiceNow *workflow transitions* (they differ per project, so only comments are written); an admin UI for the two policies (API only).
 - **Effort: L.**
 
 ### 2.5 Response actions

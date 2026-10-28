@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { ArrowLeft, CircleAlert, Loader2 } from "lucide-react";
+import { useParams, useRouter } from "next/navigation";
+import { ArrowLeft, CircleAlert, Loader2, Pin } from "lucide-react";
+import CasePanel from "@/components/incidents/CasePanel";
 import DispositionDialog from "@/components/triage/DispositionDialog";
 import { SeverityBadge, SlaBadge, StatusBadge } from "@/components/triage/Badges";
 import { useAuth } from "@/context/AuthContext";
-import { describeKey, fetchIncident, type IncidentDetail } from "@/lib/incidents";
+import { CASE_STATUS_LABELS, describeKey, fetchIncident, unpinAlert, type IncidentDetail } from "@/lib/incidents";
 import { OPEN_STATUSES, bulkAction, relativeTime, type BulkResult, type DispositionAction } from "@/lib/triage";
 import type { AlertRecord } from "@/lib/types";
 
@@ -15,6 +16,7 @@ export default function IncidentDetailPage() {
   const params = useParams<{ id: string }>();
   const incidentId = decodeURIComponent(params.id);
   const { user } = useAuth();
+  const router = useRouter();
   const [incident, setIncident] = useState<IncidentDetail | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -93,7 +95,11 @@ export default function IncidentDetailPage() {
       <header className="card p-4 space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <SeverityBadge severity={incident.severity} />
-          <span className="font-mono text-[10px] uppercase font-semibold px-2 py-0.5 rounded border border-[var(--border-color)] text-[var(--text-secondary)]">{incident.state}</span>
+          <span className="font-mono text-[10px] uppercase font-semibold px-2 py-0.5 rounded border border-[var(--border-color)] text-[var(--text-secondary)]" title="Derived from member alerts">{incident.state}</span>
+          <span className="font-mono text-[10px] uppercase font-semibold px-2 py-0.5 rounded border border-[var(--border-color)] text-[var(--text-primary)]" title="Case status">
+            Case: {CASE_STATUS_LABELS[incident.status] ?? incident.status}
+          </span>
+          {incident.manual && <span className="font-mono text-[10px] text-[var(--text-muted)]" title="Edited by an analyst; regrouping keeps it">curated</span>}
           <span className="font-mono text-[10px] text-[var(--text-muted)]">
             {incident.open_count} open / {incident.alert_count} alerts · active {relativeTime(incident.last_seen)}
           </span>
@@ -120,6 +126,14 @@ export default function IncidentDetailPage() {
           <span>{error}</span>
         </div>
       )}
+
+      <CasePanel
+        incident={incident}
+        user={user}
+        selectedAlertIds={[...selected]}
+        onChanged={load}
+        onSplit={(newId) => router.push(`/incidents/${encodeURIComponent(newId)}`)}
+      />
 
       <section className="card p-2.5 flex flex-wrap items-center gap-2 text-xs" aria-label="Incident actions">
         <button
@@ -173,6 +187,20 @@ export default function IncidentDetailPage() {
                     <td className="py-3 px-3"><SeverityBadge severity={a.severity} /></td>
                     <td className="py-3 px-3 max-w-0">
                       <Link href={`/alerts/${encodeURIComponent(a._id)}`} className="font-semibold text-[var(--text-primary)] block truncate hover:underline">
+                        {incident.pinned_alert_ids.includes(a._id) && (
+                          <button
+                            type="button"
+                            title="Pinned here: regrouping will not move it. Click to unpin."
+                            aria-label={`Unpin ${a.title}`}
+                            className="mr-1.5 inline-flex align-middle text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              void unpinAlert(incident.id, a._id).then(load).catch((err) => setError(err instanceof Error ? err.message : "Unpin failed"));
+                            }}
+                          >
+                            <Pin className="h-3 w-3" />
+                          </button>
+                        )}
                         {a.title.replace(/^\[(CRITICAL|HIGH|MEDIUM|LOW)\]\s*/i, "")}
                       </Link>
                       <span className="block truncate font-mono text-[10px] text-[var(--text-muted)]" title={detail}>

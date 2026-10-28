@@ -63,10 +63,18 @@ def detected_at(alert: dict) -> Optional[datetime]:
     return _aware(alert.get("detected_at")) or _aware(alert.get("created_at"))
 
 
-def sla_state(alert: dict, now: Optional[datetime] = None) -> Optional[dict]:
-    """Acknowledge/resolve deadlines and whether either is breached. None when there is no clock."""
+def sla_state(
+    alert: dict,
+    now: Optional[datetime] = None,
+    targets_by_severity: Optional[dict[str, tuple[int, int]]] = None,
+) -> Optional[dict]:
+    """Acknowledge/resolve deadlines and whether either is breached. None when there is no clock.
+
+    `targets_by_severity` is the tenant's configured SLA (see services/sla.py); the built-in
+    SLA_MINUTES apply when it is omitted.
+    """
     start = detected_at(alert)
-    targets = SLA_MINUTES.get(str(alert.get("severity", "")).lower())
+    targets = (targets_by_severity or SLA_MINUTES).get(str(alert.get("severity", "")).lower())
     if not start or not targets:
         return None
     now = now or datetime.now(timezone.utc)
