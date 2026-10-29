@@ -117,8 +117,11 @@ class IngestionService:
         newest: Optional[datetime] = None
         pages = 0
         last_page_len = 0
+        # Each SIEM provider states "the events ingestion needs" in its own query language.
+        make_query = getattr(splunk, "ingest_query", None)
+        query = make_query(self.detection_index, EVENT_CODES) if make_query else build_query(self.detection_index)
         async for page in splunk.search_raw_pages(
-            build_query(self.detection_index), earliest_time=earliest, latest_time="now",
+            query, earliest_time=earliest, latest_time="now",
             page_size=settings.INGEST_PAGE_SIZE, max_pages=settings.INGEST_MAX_PAGES,
         ):
             pages += 1
@@ -183,6 +186,9 @@ class IngestionService:
             else:
                 run["alerts_seen"] += 1
         if new_alerts:
+            from app.services.events import emit_alerts_created
+
+            await emit_alerts_created(self.db, self.org_id, new_alerts)
             try:
                 await link_alerts(self.db, new_alerts, self.noise)
             except Exception as exc:  # grouping is derived data; it must never fail ingestion

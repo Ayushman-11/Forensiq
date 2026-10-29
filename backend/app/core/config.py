@@ -149,6 +149,15 @@ class Settings(BaseSettings):
         default=25, description="AbuseIPDB confidence score at or above which an IP is rated suspicious"
     )
 
+    # Additional threat-intel feeds. Each is optional and only queried when configured.
+    OTX_API_KEY: str = Field(default="", description="AlienVault OTX API key")
+    OTX_MALICIOUS_MIN_PULSES: int = Field(default=5, description="OTX community pulses that must list an indicator before it is rated malicious")
+    OTX_SUSPICIOUS_MIN_PULSES: int = Field(default=1, description="OTX pulses at or above which an indicator is rated suspicious")
+    GREYNOISE_API_KEY: str = Field(default="", description="GreyNoise API key (community endpoint)")
+    MISP_URL: str = Field(default="", description="Base URL of your MISP instance, e.g. https://misp.corp.example")
+    MISP_API_KEY: str = Field(default="", description="MISP automation key")
+    MISP_VERIFY_SSL: bool = Field(default=True, description="Verify the MISP TLS certificate")
+
     # Ingestion pipeline
     INGEST_OVERLAP_SECONDS: int = Field(default=120, description="Re-query overlap to catch late-indexed events")
     INGEST_MAX_PAGES: int = Field(default=20, description="Max result pages fetched per ingestion cycle")

@@ -37,6 +37,7 @@ _ENC_PREFIX = "enc:v1:"
 _BLOCKED_HOSTS = {"localhost", "metadata.google.internal", "metadata", "instance-data"}
 
 STATUSES = ("active", "suspended")
+SIEM_TYPES = ("splunk", "elastic")
 
 
 class TenantError(Exception):
@@ -89,26 +90,30 @@ def validate_tenant_id(tenant_id: str) -> str:
 
 
 def validate_siem_url(url: str) -> str:
+    return validate_outbound_url(url, "SIEM")
+
+
+def validate_outbound_url(url: str, what: str = "URL") -> str:
     """HTTPS only, no credentials in the URL, and never the server itself or a cloud metadata endpoint."""
     url = (url or "").strip()
     parsed = urlparse(url)
     if parsed.scheme != "https" or not parsed.hostname:
-        raise TenantError(422, "SIEM URL must be an https:// URL")
+        raise TenantError(422, f"{what} URL must be an https:// URL")
     if parsed.username or parsed.password:
         raise TenantError(422, "Put credentials in the username and password fields, not in the URL")
     try:
         parsed.port  # raises ValueError for an out-of-range port
     except ValueError:
-        raise TenantError(422, "SIEM URL has an invalid port")
+        raise TenantError(422, f"{what} URL has an invalid port")
     host = parsed.hostname.lower().rstrip(".")
     if host in _BLOCKED_HOSTS or host.endswith(".localhost"):
-        raise TenantError(422, "That SIEM host is not allowed")
+        raise TenantError(422, f"That {what} host is not allowed")
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
         ip = None
     if ip and (ip.is_loopback or ip.is_link_local or ip.is_unspecified or ip.is_multicast or ip.is_reserved):
-        raise TenantError(422, "That SIEM address is not allowed (loopback, link-local, multicast or reserved)")
+        raise TenantError(422, f"That {what} address is not allowed (loopback, link-local, multicast or reserved)")
     return url.rstrip("/")
 
 
@@ -141,10 +146,12 @@ def validate_noise(cfg: dict) -> dict:
 class SiemConfig:
     enabled: bool = False
     configured: bool = False
+    type: str = "splunk"  # splunk | elastic
     source: str = "none"  # tenant | platform | none
     url: str = ""
     username: str = ""
     password: str = ""
+    api_key: str = ""
     verify_ssl: bool = True
     detection_index: str = ""
     allowed_indexes: list[str] = field(default_factory=list)
@@ -160,6 +167,10 @@ class TenantConfig:
     siem: SiemConfig = field(default_factory=SiemConfig)
     vt_api_key: str = ""
     abuseipdb_api_key: str = ""
+    otx_api_key: str = ""
+    greynoise_api_key: str = ""
+    misp_url: str = ""
+    misp_api_key: str = ""
     ti_sources: dict[str, str] = field(default_factory=dict)  # feed -> tenant | platform | none
     noise: Optional[dict] = None  # tenant policy, or None for the platform policy
     created_at: Optional[datetime] = None
@@ -196,15 +207,20 @@ async def resolve_config(db, org_id: str) -> TenantConfig:
     own = stored.get("siem") or {}
     if own:
         siem.source = "tenant"
-        for key in ("url", "username", "verify_ssl", "detection_index", "poll_interval_seconds"):
+        for key in ("type", "url", "username", "verify_ssl", "detection_index", "poll_interval_seconds"):
             if own.get(key) not in (None, ""):
                 setattr(siem, key, own[key])
         if own.get("allowed_indexes") is not None:
             siem.allowed_indexes = list(own["allowed_indexes"])
         if own.get("password_enc"):
             siem.password = decrypt_secret(own["password_enc"])
+        if own.get("api_key_enc"):
+            siem.api_key = decrypt_secret(own["api_key_enc"])
         siem.enabled = bool(own.get("enabled", True))
-    siem.configured = bool(siem.url and siem.username and siem.password)
+    if siem.type == "elastic":
+        siem.configured = bool(siem.url and (siem.api_key or (siem.username and siem.password)))
+    else:
+        siem.configured = bool(siem.url and siem.username and siem.password)
     if not is_platform(org_id) and not own:
         siem.enabled = False
     cfg.siem = siem
@@ -221,6 +237,22 @@ async def resolve_config(db, org_id: str) -> TenantConfig:
             value, source = "", "none"
         setattr(cfg, field_name, value)
         cfg.ti_sources[feed] = source
+
+    for feed, field_name, setting_name in (("otx", "otx_api_key", "OTX_API_KEY"), ("greynoise", "greynoise_api_key", "GREYNOISE_API_KEY")):
+        own_key = decrypt_secret(ti.get(f"{field_name}_enc"))
+        platform_key = (getattr(settings, setting_name) or "").strip()
+        allowed = is_platform(org_id) or settings.TENANT_USE_PLATFORM_THREAT_INTEL
+        value, source = (own_key, "tenant") if own_key else ((platform_key, "platform") if platform_key and allowed else ("", "none"))
+        setattr(cfg, field_name, value)
+        cfg.ti_sources[feed] = source
+    # MISP is an organisation's own intelligence: URL and key travel together, from the tenant or (if allowed) the platform.
+    own_misp_key = decrypt_secret(ti.get("misp_api_key_enc"))
+    if own_misp_key and ti.get("misp_url"):
+        cfg.misp_url, cfg.misp_api_key, cfg.ti_sources["misp"] = ti["misp_url"], own_misp_key, "tenant"
+    elif settings.MISP_URL and settings.MISP_API_KEY and (is_platform(org_id) or settings.TENANT_USE_PLATFORM_THREAT_INTEL):
+        cfg.misp_url, cfg.misp_api_key, cfg.ti_sources["misp"] = settings.MISP_URL, settings.MISP_API_KEY, "platform"
+    else:
+        cfg.ti_sources["misp"] = "none"
 
     cfg.noise = stored.get("noise") or None
     return cfg
@@ -248,18 +280,38 @@ class UnconfiguredSiem:
         return None
 
 
+def elastic_client(cfg: TenantConfig):
+    from app.infrastructure.siem.elastic import ElasticClient
+
+    indexes = list(dict.fromkeys([*(cfg.siem.allowed_indexes or []), cfg.siem.detection_index])) if cfg.siem.detection_index else (cfg.siem.allowed_indexes or ["*"])
+    return ElasticClient(url=cfg.siem.url, username=cfg.siem.username, password=cfg.siem.password, api_key=cfg.siem.api_key,
+                         verify_ssl=cfg.siem.verify_ssl, indexes=indexes)
+
+
+def siem_client(cfg: TenantConfig):
+    """The provider this tenant's SIEM settings select. Callers never need to know which SIEM it is."""
+    return elastic_client(cfg) if cfg.siem.type == "elastic" else splunk_client(cfg)
+
+
 def siem_for(cfg: TenantConfig):
-    return splunk_client(cfg) if cfg.siem.configured else UnconfiguredSiem()
+    return siem_client(cfg) if cfg.siem.configured else UnconfiguredSiem()
 
 
 async def ingestion_kwargs(db, org_id: str) -> dict:
     """Everything IngestionService needs to run as this tenant and no other."""
     cfg = await resolve_config(db, org_id)
     return {
-        "splunk_factory": lambda: splunk_client(cfg),
+        "splunk_factory": lambda: siem_client(cfg),
         "noise": noise_filter(cfg),
         "detection_index": cfg.siem.detection_index or settings.SPLUNK_DETECTION_INDEX,
     }
+
+
+async def threat_intel_config(db, org_id: str) -> dict:
+    """Every feed credential this tenant may use, keyed by feed. Empty string = not configured."""
+    cfg = await resolve_config(db, org_id)
+    return {"virustotal": cfg.vt_api_key, "abuseipdb": cfg.abuseipdb_api_key, "otx": cfg.otx_api_key, "greynoise": cfg.greynoise_api_key,
+            "misp_url": cfg.misp_url, "misp_key": cfg.misp_api_key}
 
 
 async def threat_intel_keys(db, org_id: str) -> tuple[str, str]:
@@ -283,13 +335,16 @@ def public_view(cfg: TenantConfig) -> dict:
         "id": cfg.org_id, "name": cfg.name, "status": cfg.status, "registered": cfg.registered, "is_platform": cfg.is_platform,
         "created_at": cfg.created_at.isoformat() if isinstance(cfg.created_at, datetime) else None,
         "siem": {
-            "enabled": s.enabled, "configured": s.configured, "source": s.source, "url": s.url, "username": s.username,
-            "password_set": bool(s.password), "verify_ssl": s.verify_ssl, "detection_index": s.detection_index,
+            "enabled": s.enabled, "configured": s.configured, "type": s.type, "source": s.source, "url": s.url, "username": s.username,
+            "password_set": bool(s.password), "api_key_set": bool(s.api_key), "verify_ssl": s.verify_ssl, "detection_index": s.detection_index,
             "allowed_indexes": s.allowed_indexes, "poll_interval_seconds": s.poll_interval_seconds,
         },
         "threat_intel": {
             "virustotal": {"configured": bool(cfg.vt_api_key), "source": cfg.ti_sources.get("virustotal", "none")},
             "abuseipdb": {"configured": bool(cfg.abuseipdb_api_key), "source": cfg.ti_sources.get("abuseipdb", "none")},
+            "otx": {"configured": bool(cfg.otx_api_key), "source": cfg.ti_sources.get("otx", "none")},
+            "greynoise": {"configured": bool(cfg.greynoise_api_key), "source": cfg.ti_sources.get("greynoise", "none")},
+            "misp": {"configured": bool(cfg.misp_api_key), "source": cfg.ti_sources.get("misp", "none"), "url": cfg.misp_url},
         },
         "noise": {"source": "tenant" if cfg.noise else "platform", **(cfg.noise or {})},
     }
@@ -329,10 +384,18 @@ async def update_settings(db, org_id: str, update: dict) -> list[str]:
                 raise TenantError(422, f"Poll interval must be between {MIN_POLL_SECONDS} and {MAX_POLL_SECONDS} seconds")
             siem["poll_interval_seconds"] = incoming["poll_interval_seconds"]
             changed.append("siem.poll_interval_seconds")
+        if incoming.get("type") is not None:
+            if incoming["type"] not in SIEM_TYPES:
+                raise TenantError(422, f"SIEM type must be one of {list(SIEM_TYPES)}")
+            siem["type"] = incoming["type"]
+            changed.append("siem.type")
         for key in ("enabled", "username", "verify_ssl"):
             if incoming.get(key) is not None:
                 siem[key] = incoming[key]
                 changed.append(f"siem.{key}")
+        if incoming.get("api_key") is not None:
+            siem["api_key_enc"] = encrypt_secret(incoming["api_key"]) if incoming["api_key"] else ""
+            changed.append("siem.api_key")
         if incoming.get("password") is not None:
             siem["password_enc"] = encrypt_secret(incoming["password"]) if incoming["password"] else ""
             changed.append("siem.password")
@@ -340,11 +403,15 @@ async def update_settings(db, org_id: str, update: dict) -> list[str]:
 
     if update.get("threat_intel") is not None:
         ti = dict(stored.get("threat_intel") or {})
-        for key in ("vt_api_key", "abuseipdb_api_key"):
+        for key in ("vt_api_key", "abuseipdb_api_key", "otx_api_key", "greynoise_api_key", "misp_api_key"):
             value = update["threat_intel"].get(key)
             if value is not None:
                 ti[f"{key}_enc"] = encrypt_secret(value) if value else ""
                 changed.append(f"threat_intel.{key}")
+        if update["threat_intel"].get("misp_url") is not None:
+            url = update["threat_intel"]["misp_url"]
+            ti["misp_url"] = validate_outbound_url(url, "MISP") if url else ""
+            changed.append("threat_intel.misp_url")
         stored["threat_intel"] = ti
 
     if update.get("reset_noise"):

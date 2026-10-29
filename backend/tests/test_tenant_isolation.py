@@ -45,7 +45,7 @@ T0 = NOW - timedelta(hours=2)
 A_IDS = {
     "alert_id": "a-alert-1", "incident_id": "a-inc-1", "request_id": "a-resp-1", "ticket_id": "a-ticket-1",
     "job_id": "a-job-1", "user_id": "a-user-admin", "org_id": A, "channel_id": "a-chan-1", "owner_id": "a-user-admin",
-    "note_id": "a-note-1",
+    "note_id": "a-note-1", "webhook_id": "a-hook-1", "token_id": "a-token-1", "delivery_id": "a-delivery-1",
 }
 A_ID_VALUES = set(A_IDS.values()) | {"a-inc-2", "a-alert-2"}
 # List-valued fields that hold ids of A's resources.
@@ -78,7 +78,7 @@ GLOBAL_COLLECTIONS = {
 TENANT_COLLECTIONS = {
     "alerts", "users", "incidents", "investigation_jobs", "tenants", "response_requests", "sessions", "notification_channels",
     "audit_logs", "ingestion_runs", "alert_notes", "investigation_events", "incident_notes", "incident_events", "llm_usage",
-    "ingestion_state", "tenant_runtime", "policies",
+    "ingestion_state", "tenant_runtime", "policies", "webhook_subscriptions", "webhook_deliveries", "outbound_events", "api_tokens", "counters",
 }
 
 ROLES = ("admin", "soc_manager", "soc_analyst")
@@ -138,6 +138,14 @@ def seed_documents() -> dict[str, list[dict]]:
         add("ingestion_runs", _id=f"{prefix}-run-1", org_id=org, started_at=T0, finished_at=T0, status="ok", fetched=1, alerts_new=1, suppressed={}, errors=[], lag_seconds=1, stage=mark)
         add("ingestion_state", _id=f"cursor:{org}:splunk", ts=T0.isoformat(), truncated=False, fetched=0, note=mark)
         add("tenant_runtime", _id=org, last_poll_at=T0, last_error=mark if org == A else None, consecutive_failures=0)
+        add("webhook_subscriptions", _id=f"{prefix}-hook-1", org_id=org, name=f"{mark} SOAR", url=f"https://hooks.{prefix}.example/{mark}", events=["*"], enabled=True,
+            secret_enc=encrypt_secret(f"whsec_{mark}"), created_by=f"{mark}@x", created_at=T0, consecutive_failures=0)
+        add("webhook_deliveries", _id=f"{prefix}-delivery-1", org_id=org, subscription_id=f"{prefix}-hook-1", event_id=f"{prefix}-event-1", event_type="alert.close",
+            status="dead", attempts=6, next_attempt_at=T0, created_at=T0, last_error=f"{mark} refused", last_status_code=500)
+        add("outbound_events", _id=f"{prefix}-event-1", org_id=org, seq=1, type="alert.close", created_at=T0, actor=f"{mark}@x", data={"entity_id": f"{prefix}-alert-1", "note": mark})
+        add("api_tokens", _id=f"{prefix}-token-1", org_id=org, name=f"{mark} pipeline", token_hash=f"hash-{prefix}", prefix=f"fsq_{prefix}000", scopes=["alerts:read"],
+            created_by=f"{mark}@x", created_at=T0, expires_at=NOW + timedelta(days=30), last_used_at=None, revoked_at=None)
+        add("counters", _id=f"events:{org}", seq=1, note=mark)
         add("llm_usage", _id=f"{prefix}-llm-1", org_id=org, day=T0.date().isoformat(), tokens=10, note=mark)
     return docs
 
@@ -184,6 +192,8 @@ def _owned_by_a(collection: str, doc: dict) -> bool:
         return doc["user_id"].startswith("a-")
     if collection == "ingestion_state":
         return f":{A}:" in doc["_id"]
+    if collection == "counters":
+        return doc["_id"].endswith(A)
     return doc.get("org_id") == A
 
 
@@ -193,7 +203,7 @@ async def a_state(db, snapshot_ids) -> dict:
     for collection, ids in snapshot_ids.items():
         docs = [await db[collection].find_one({"_id": i}) for i in ids]
         state[collection] = json.dumps(docs, default=str, sort_keys=True)
-        state[f"{collection}#count"] = await db[collection].count_documents({"org_id": A}) if collection not in ("tenants", "tenant_runtime", "sessions", "ingestion_state") else len(docs)
+        state[f"{collection}#count"] = await db[collection].count_documents({"org_id": A}) if collection not in ("tenants", "tenant_runtime", "sessions", "ingestion_state", "counters") else len(docs)
     return state
 
 
@@ -403,7 +413,8 @@ async def test_positive_control_tenant_a_reaches_its_own_data_through_the_same_r
         resp = await send(client, method, path, body, params)
         if resp.status_code == 200 and CANARY in resp.text:
             served.append(route.path)
-    expected_some = {"/api/v1/alerts/{alert_id}", "/api/v1/incidents/{incident_id}", "/api/v1/response/{request_id}", "/api/v1/tenants/current/settings", "/api/v1/admin/users"}
+    expected_some = {"/api/v1/alerts/{alert_id}", "/api/v1/incidents/{incident_id}", "/api/v1/response/{request_id}", "/api/v1/tenants/current/settings", "/api/v1/admin/users",
+                     "/api/v1/integrations/webhooks/{webhook_id}", "/api/v1/integrations/webhooks", "/api/v1/integrations/tokens", "/api/v1/events"}
     assert expected_some <= set(served), f"tenant A could not read its own data at: {sorted(expected_some - set(served))}"
     assert len(served) >= 10, f"only {len(served)} endpoints served tenant A's canary: {sorted(served)}"
 

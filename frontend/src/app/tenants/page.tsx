@@ -137,8 +137,8 @@ function PlatformSection(props: {
 function SettingsForm({ orgId, onError, onSaved }: { orgId?: string; onError: (m: string | null) => void; onSaved: () => Promise<void> }) {
   const [settings, setSettings] = useState<TenantSettings | null>(null);
   const [f, setF] = useState({
-    enabled: true, url: "", username: "", password: "", verify_ssl: true, detection_index: "", allowed: "", poll: "30",
-    vt: "", abuse: "", benign: "", shared: "", reason: "",
+    type: "splunk" as "splunk" | "elastic", apiKey: "", enabled: true, url: "", username: "", password: "", verify_ssl: true, detection_index: "", allowed: "", poll: "30",
+    vt: "", abuse: "", otx: "", greynoise: "", mispUrl: "", mispKey: "", benign: "", shared: "", reason: "",
   });
   const [busy, setBusy] = useState(false);
   const [info, setInfo] = useState<string | null>(null);
@@ -146,7 +146,7 @@ function SettingsForm({ orgId, onError, onSaved }: { orgId?: string; onError: (m
   const hydrate = useCallback((s: TenantSettings) => {
     setSettings(s);
     setF((prev) => ({
-      ...prev, enabled: s.siem.enabled, url: s.siem.url, username: s.siem.username, verify_ssl: s.siem.verify_ssl,
+      ...prev, type: s.siem.type, apiKey: "", mispUrl: s.threat_intel.misp.url, enabled: s.siem.enabled, url: s.siem.url, username: s.siem.username, verify_ssl: s.siem.verify_ssl,
       detection_index: s.siem.detection_index, allowed: s.siem.allowed_indexes.join(", "), poll: String(s.siem.poll_interval_seconds),
       password: "", vt: "", abuse: "", benign: (s.noise.benign_domains ?? []).join("\n"), shared: (s.noise.shared_hosting_domains ?? []).join("\n"),
     }));
@@ -169,11 +169,16 @@ function SettingsForm({ orgId, onError, onSaved }: { orgId?: string; onError: (m
       const update: SettingsUpdate = {
         reason: f.reason.trim(),
         siem: {
-          enabled: f.enabled, url: f.url.trim(), username: f.username.trim(), verify_ssl: f.verify_ssl, detection_index: f.detection_index.trim(),
+          type: f.type, enabled: f.enabled, url: f.url.trim(), username: f.username.trim(), verify_ssl: f.verify_ssl, detection_index: f.detection_index.trim(),
           allowed_indexes: lines(f.allowed), poll_interval_seconds: Number(f.poll),
           ...(f.password ? { password: f.password } : {}),
+          ...(f.apiKey ? { api_key: f.apiKey } : {}),
         },
-        threat_intel: { ...(f.vt ? { vt_api_key: f.vt } : {}), ...(f.abuse ? { abuseipdb_api_key: f.abuse } : {}) },
+        threat_intel: {
+          ...(f.vt ? { vt_api_key: f.vt } : {}), ...(f.abuse ? { abuseipdb_api_key: f.abuse } : {}),
+          ...(f.otx ? { otx_api_key: f.otx } : {}), ...(f.greynoise ? { greynoise_api_key: f.greynoise } : {}),
+          ...(f.mispUrl.trim() !== (settings?.threat_intel.misp.url ?? "") ? { misp_url: f.mispUrl.trim() } : {}), ...(f.mispKey ? { misp_api_key: f.mispKey } : {}),
+        },
         noise: { benign_domains: lines(f.benign), shared_hosting_domains: lines(f.shared), suppress: settings?.noise.suppress ?? [] },
         ...extra,
       };
@@ -213,15 +218,25 @@ function SettingsForm({ orgId, onError, onSaved }: { orgId?: string; onError: (m
       </h2>
 
       <fieldset className="space-y-2">
-        <legend className="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">SIEM (Splunk)</legend>
+        <legend className="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">SIEM</legend>
         <p className="text-xs text-[var(--text-muted)]">
           {settings.siem.configured ? `Connected using ${SOURCE_LABEL[settings.siem.source]} settings.` : "No SIEM is configured: nothing is polled and search returns only data already ingested."}
         </p>
         <div className="grid gap-3 md:grid-cols-3">
+          <label className="space-y-1">
+            <span className={label}>Product</span>
+            <select className={field} value={f.type} onChange={(e) => setF({ ...f, type: e.target.value as "splunk" | "elastic" })} aria-label="SIEM product">
+              <option value="splunk">Splunk</option>
+              <option value="elastic">Elastic (Winlogbeat / Elastic Agent, ECS)</option>
+            </select>
+          </label>
+          {f.type === "elastic" && (
+            <label className="space-y-1"><span className={label}>API key {settings.siem.api_key_set ? "(set; leave blank to keep)" : "(or use username and password)"}</span><input className={field} type="password" value={f.apiKey} onChange={(e) => setF({ ...f, apiKey: e.target.value })} autoComplete="new-password" /></label>
+          )}
           <label className="space-y-1"><span className={label}>URL (https)</span><input className={field} value={f.url} onChange={(e) => setF({ ...f, url: e.target.value })} placeholder="https://splunk.example.com:8089" /></label>
           <label className="space-y-1"><span className={label}>Username</span><input className={field} value={f.username} onChange={(e) => setF({ ...f, username: e.target.value })} autoComplete="off" /></label>
           <label className="space-y-1"><span className={label}>Password {settings.siem.password_set ? "(set; leave blank to keep)" : ""}</span><input className={field} type="password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} autoComplete="new-password" /></label>
-          <label className="space-y-1"><span className={label}>Detection index</span><input className={field} value={f.detection_index} onChange={(e) => setF({ ...f, detection_index: e.target.value })} /></label>
+          <label className="space-y-1"><span className={label}>{f.type === "elastic" ? "Detection index pattern (winlogbeat-*)" : "Detection index"}</span><input className={field} value={f.detection_index} onChange={(e) => setF({ ...f, detection_index: e.target.value })} /></label>
           <label className="space-y-1"><span className={label}>Searchable indexes (comma separated)</span><input className={field} value={f.allowed} onChange={(e) => setF({ ...f, allowed: e.target.value })} /></label>
           <label className="space-y-1"><span className={label}>Poll every (seconds, 10-3600)</span><input className={field} type="number" min={10} max={3600} value={f.poll} onChange={(e) => setF({ ...f, poll: e.target.value })} /></label>
         </div>
@@ -243,7 +258,24 @@ function SettingsForm({ orgId, onError, onSaved }: { orgId?: string; onError: (m
             <span className={label}>AbuseIPDB API key: {settings.threat_intel.abuseipdb.configured ? `using ${SOURCE_LABEL[settings.threat_intel.abuseipdb.source]}` : "not set"}</span>
             <input className={field} type="password" value={f.abuse} onChange={(e) => setF({ ...f, abuse: e.target.value })} placeholder="Enter to replace" autoComplete="new-password" />
           </label>
+          <label className="space-y-1">
+            <span className={label}>AlienVault OTX key: {settings.threat_intel.otx.configured ? `using ${SOURCE_LABEL[settings.threat_intel.otx.source]}` : "not set"}</span>
+            <input className={field} type="password" value={f.otx} onChange={(e) => setF({ ...f, otx: e.target.value })} placeholder="Enter to replace" autoComplete="new-password" />
+          </label>
+          <label className="space-y-1">
+            <span className={label}>GreyNoise key: {settings.threat_intel.greynoise.configured ? `using ${SOURCE_LABEL[settings.threat_intel.greynoise.source]}` : "not set"}</span>
+            <input className={field} type="password" value={f.greynoise} onChange={(e) => setF({ ...f, greynoise: e.target.value })} placeholder="Enter to replace" autoComplete="new-password" />
+          </label>
+          <label className="space-y-1">
+            <span className={label}>MISP URL (https)</span>
+            <input className={field} value={f.mispUrl} onChange={(e) => setF({ ...f, mispUrl: e.target.value })} placeholder="https://misp.example.com" />
+          </label>
+          <label className="space-y-1">
+            <span className={label}>MISP key: {settings.threat_intel.misp.configured ? `using ${SOURCE_LABEL[settings.threat_intel.misp.source]}` : "not set"}</span>
+            <input className={field} type="password" value={f.mispKey} onChange={(e) => setF({ ...f, mispKey: e.target.value })} placeholder="Enter to replace" autoComplete="new-password" />
+          </label>
         </div>
+        <p className="text-[11px] text-[var(--text-muted)]">Optional feeds are only asked when set. Two independent feeds must call an indicator malicious before a block is suggested. MISP results are private to this tenant and never cached.</p>
       </fieldset>
 
       <fieldset className="space-y-2">

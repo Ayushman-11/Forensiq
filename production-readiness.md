@@ -22,6 +22,8 @@ This list covers what must change before Forensiq can hold real security telemet
 | Incident grouping | Done | branch `feat/phase1b-incidents` |
 | Case management (2.4) | Done | branch `case_management` |
 | Response actions (2.5) | Done | branch `response_actions` |
+| Multi-tenancy (2.6) | Done | branch `multi_tenancy` |
+| Integrations (2.7) | Done | branch `integrations` |
 | UTC timestamps serialised with offset | Done | PR #17 |
 
 Everything below is still open.
@@ -177,9 +179,13 @@ A SOC tool that must be watched to be useful will be missed overnight. This is t
 
 ### 2.7 Integrations
 
-- A second SIEM (Sentinel or Elastic) through the existing `SIEMProvider` interface.
-- More threat-intel sources (OTX, MISP, GreyNoise) with the corroboration rules already in place.
-- Webhook and API for outbound events; API tokens for service accounts with scoped permissions.
+**Status: implemented** (`infrastructure/siem/elastic.py`, feeds in `agents/ioc_agent.py`, `services/events.py`, `services/api_tokens.py`, `endpoints/integrations.py`, UI at `/integrations` and `/tenants`; tests in `test_elastic_siem.py`, `test_threat_intel_sources.py`, `test_webhooks_events.py`, `test_api_tokens.py`).
+
+- [x] Second SIEM: **Elastic** behind the existing provider interface, selectable per tenant (Tenants page or `siem.type`). Reads Winlogbeat / Elastic Agent ECS documents through a point in time with `search_after`, flattens them into the rows the existing normalisation already understands, so detection rules, noise policy and incident grouping behave identically whichever SIEM feeds them. Interactive search takes a Lucene query string over the tenant's configured indexes only; API key or username/password, both encrypted and write-only. Sentinel is not implemented.
+- [x] More threat-intel sources: **OTX**, **GreyNoise** (IPv4) and **MISP**, per tenant with the same platform-fallback rule. They only run when configured, emit the same enrichment records, and feed the existing corroboration rule (two distinct feeds must call an indicator malicious before a block is suggested; errored or unconfigured feeds never count). GreyNoise RIOT (a known benign service) overrides corroboration with a "do not block" warning. MISP results are private to the tenant and are never cached.
+- [x] Outbound events: every audited action plus `alert.created` becomes a tenant event with a gap-free sequence number. Webhooks (admin-managed, up to 20 per tenant, https only, per-event or family patterns like `alert.*`) get signed deliveries (`X-Forensiq-Signature`, HMAC-SHA256 over `timestamp.body`), retried at 1 min, 5 min, 30 min, 2 h and 6 h, then dead (redeliverable), with a connection test, secret rotation and a delivery log. A webhook that fails 30 times in a row is disabled and audited. The target is re-resolved at delivery and refused if it points at loopback, link-local or metadata addresses. A pull feed, `GET /api/v1/events?after=<cursor>`, reads the same events exactly once; events are kept 30 days.
+- [x] API tokens for service accounts with scoped permissions: nine scopes (`alerts:read|write`, `incidents:read|write`, `response:read|request`, `events:read`, `search:execute`, `policies:read`); `fsq_...` tokens, shown once, stored as a hash, always expiring (default 90 days, max 365), revocable, 25 active per tenant, audited. Access is deny-by-default: a route no scope maps to is unreachable, and a token acts as an analyst so every manager/admin gate still refuses it. Tokens cannot approve, execute or roll back response actions, ingest, or manage users, tenants, webhooks or tokens. A test pins the exact list of token-reachable routes and fails when it changes.
+- Not done: Microsoft Sentinel; webhook payload templates for specific vendors (Jira, ServiceNow, Slack) beyond the generic signed JSON; OAuth client-credentials for service accounts; per-token rate limits beyond the existing limiter.
 - **Effort: L each.**
 
 ### 2.8 Reporting

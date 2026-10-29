@@ -46,16 +46,22 @@ async def execute_search(
     detection_index = tenant.siem.detection_index or settings.SPLUNK_DETECTION_INDEX
     try:
         validate_time_range(req.earliest_time, req.latest_time, settings.SEARCH_MAX_RANGE_DAYS)
-        safe_query = validate_search(
-            req.query,
-            allowed_indexes={*tenant.siem.allowed_indexes, detection_index},
-            default_index=detection_index,
-        )
+        if tenant.siem.type == "elastic":
+            # Not SPL: a Lucene query string over the tenant's configured indexes. Read-only by construction.
+            safe_query = req.query.strip()
+            if not safe_query or len(safe_query) > 1000 or "\x00" in safe_query:
+                raise SPLRejected("Query must be 1-1000 characters")
+        else:
+            safe_query = validate_search(
+                req.query,
+                allowed_indexes={*tenant.siem.allowed_indexes, detection_index},
+                default_index=detection_index,
+            )
     except SPLRejected as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
     try:
-        await record_audit(db, user, "search.execute", "search", "splunk", {"query": safe_query[:500]})
+        await record_audit(db, user, "search.execute", "search", tenant.siem.type, {"query": safe_query[:500]})
     except Exception as exc:  # auditing must not make search unavailable, but must be visible in logs
         logger.error("search_audit_failed", error=str(exc))
 

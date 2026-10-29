@@ -42,6 +42,14 @@ async def record_audit(
     }
 
     await db["audit_logs"].insert_one(entry)
+    try:
+        from app.services.events import emit_audit_event  # late import: events record their own audit entries
+
+        await emit_audit_event(db, entry)
+    except Exception as exc:  # an event that cannot be queued must never undo or fail the audited action
+        from app.core.logging import logger
+
+        logger.error("audit_event_emit_failed", action=action, error=str(exc))
     return entry
 
 

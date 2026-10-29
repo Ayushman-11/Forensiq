@@ -4,7 +4,7 @@ Wires endpoint routers with authentication, role gates, and rate limiting.
 """
 
 from fastapi import APIRouter, Depends
-from app.api.v1.endpoints import admin, alerts, health, search, dashboard, auth, reports, investigation_ws, users, incidents, policies, response, tenants
+from app.api.v1.endpoints import admin, alerts, health, search, dashboard, auth, reports, investigation_ws, users, incidents, policies, response, tenants, integrations
 from app.api.deps import get_current_user
 from app.services.rate_limiter import rate_limiter
 from app.core.config import settings
@@ -79,4 +79,10 @@ api_router.include_router(
 )
 api_router.include_router(
     tenants.router, prefix="/tenants", tags=["tenants"], dependencies=[Depends(get_current_user)]
+)
+api_router.include_router(
+    integrations.router, prefix="/integrations", tags=["integrations"], dependencies=[Depends(get_current_user)]
+)
+api_router.include_router(
+    integrations.feed_router, prefix="/events", tags=["events"], dependencies=[Depends(get_current_user)]
 )

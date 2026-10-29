@@ -55,6 +55,10 @@ async def _ingestion_component(db, user) -> dict:
 async def _threat_intel_component(db, user) -> dict:
     tenant = await resolve_config(db, tenant_id(user))
     feeds = {"VirusTotal": bool(tenant.vt_api_key), "AbuseIPDB": bool(tenant.abuseipdb_api_key)}
+    # Optional feeds appear only once configured; an unset one is not a gap in coverage.
+    for name, configured in (("OTX", tenant.otx_api_key), ("GreyNoise", tenant.greynoise_api_key), ("MISP", tenant.misp_api_key)):
+        if configured:
+            feeds[name] = True
     failing: dict[str, int] = {}
     cursor = db["alerts"].find(
         scoped_query(user, {"status": "Investigated"}), {"enrichments.source": 1, "enrichments.status": 1},

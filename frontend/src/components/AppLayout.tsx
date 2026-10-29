@@ -22,6 +22,7 @@ import {
   Layers,
   ShieldBan,
   Building2,
+  Webhook,
   User,
   Activity
 } from "lucide-react";
@@ -67,8 +68,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     { href: "/raw-logs", icon: Terminal, label: "Raw Logs", badge: "SPL" },
     { href: "/reports", icon: FileText, label: "Reports", badge: null },
     { href: "/tenants", icon: Building2, label: "Tenants", badge: null },
+    { href: "/integrations", icon: Webhook, label: "Integrations", badge: null },
     { href: "/admin", icon: Settings, label: "Administration", badge: null },
-  ].filter((item) => (item.href !== "/admin" && item.href !== "/tenants") || user?.role === "admin");
+  ].filter((item) => (item.href !== "/admin" && item.href !== "/tenants" && item.href !== "/integrations") || user?.role === "admin");
 
   const userEmail = user?.email || "";
   const userRole = user ? roleLabel(user.role) : "";

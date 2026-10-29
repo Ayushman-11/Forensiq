@@ -9,6 +9,8 @@ export type TenantSettings = {
   siem: {
     enabled: boolean;
     configured: boolean;
+    type: "splunk" | "elastic";
+    api_key_set: boolean;
     source: "tenant" | "platform" | "none";
     url: string;
     username: string;
@@ -21,6 +23,9 @@ export type TenantSettings = {
   threat_intel: {
     virustotal: { configured: boolean; source: "tenant" | "platform" | "none" };
     abuseipdb: { configured: boolean; source: "tenant" | "platform" | "none" };
+    otx: { configured: boolean; source: "tenant" | "platform" | "none" };
+    greynoise: { configured: boolean; source: "tenant" | "platform" | "none" };
+    misp: { configured: boolean; source: "tenant" | "platform" | "none"; url: string };
   };
   noise: { source: "tenant" | "platform"; benign_domains?: string[]; shared_hosting_domains?: string[]; suppress?: unknown[] };
 };
@@ -41,6 +46,8 @@ export type TenantRow = {
 export type SettingsUpdate = {
   reason: string;
   siem?: {
+    type?: "splunk" | "elastic";
+    api_key?: string;
     enabled?: boolean;
     url?: string;
     username?: string;
@@ -50,7 +57,14 @@ export type SettingsUpdate = {
     allowed_indexes?: string[];
     poll_interval_seconds?: number;
   };
-  threat_intel?: { vt_api_key?: string; abuseipdb_api_key?: string };
+  threat_intel?: {
+    vt_api_key?: string;
+    abuseipdb_api_key?: string;
+    otx_api_key?: string;
+    greynoise_api_key?: string;
+    misp_url?: string;
+    misp_api_key?: string;
+  };
   noise?: { benign_domains: string[]; shared_hosting_domains: string[]; suppress: unknown[] };
   reset_noise?: boolean;
 };

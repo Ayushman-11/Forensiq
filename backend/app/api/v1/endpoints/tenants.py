@@ -40,7 +40,9 @@ def _err(exc: svc.TenantError) -> HTTPException:
 
 
 class SiemUpdate(BaseModel):
+    type: Optional[str] = Field(default=None, max_length=20, description="splunk or elastic")
     enabled: Optional[bool] = None
+    api_key: Optional[str] = Field(default=None, max_length=500, description="Elastic API key (encoded). Omit to keep, empty string to clear")
     url: Optional[str] = Field(default=None, max_length=300)
     username: Optional[str] = Field(default=None, max_length=200)
     password: Optional[str] = Field(default=None, max_length=500, description="Omit to keep, empty string to clear")
@@ -53,6 +55,10 @@ class SiemUpdate(BaseModel):
 class ThreatIntelUpdate(BaseModel):
     vt_api_key: Optional[str] = Field(default=None, max_length=300, description="Omit to keep, empty string to clear")
     abuseipdb_api_key: Optional[str] = Field(default=None, max_length=300)
+    otx_api_key: Optional[str] = Field(default=None, max_length=300)
+    greynoise_api_key: Optional[str] = Field(default=None, max_length=300)
+    misp_url: Optional[str] = Field(default=None, max_length=300, description="Your MISP base URL (https)")
+    misp_api_key: Optional[str] = Field(default=None, max_length=300)
 
 
 class NoiseUpdate(BaseModel):
@@ -111,8 +117,8 @@ async def _apply_settings(db, actor: dict, org_id: str, payload: SettingsUpdate)
 async def _test_siem(db, actor: dict, org_id: str) -> dict:
     cfg = await svc.resolve_config(db, org_id)
     if not cfg.siem.configured:
-        raise HTTPException(status_code=409, detail="No SIEM URL, username and password are configured for this tenant")
-    client = svc.splunk_client(cfg)
+        raise HTTPException(status_code=409, detail="This tenant has no complete SIEM configuration (URL and credentials)")
+    client = svc.siem_client(cfg)
     try:
         await client.authenticate()
         result = {"ok": True, "detail": "Authenticated"}

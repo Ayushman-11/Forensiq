@@ -5,11 +5,12 @@ Provides Dependency Injection for SIEM Clients, Database Sessions, and Auth.
 
 from typing import AsyncGenerator, Callable
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.infrastructure.siem.splunk import SplunkClient
+from app.services import api_tokens
 from app.services import tenants as tenant_service
 from app.infrastructure.siem.base import SIEMProvider
 from app.core.security import decode_token, TokenError
@@ -27,7 +28,24 @@ async def get_platform_siem_client() -> AsyncGenerator[SIEMProvider, None]:
         await client.close()
 
 
+async def _service_principal(request: Request, db: AsyncIOMotorDatabase, token: str) -> dict:
+    """An API token acting as its service account, limited to the one scope the route needs (deny by default)."""
+    try:
+        principal = await api_tokens.authenticate(db, token)
+    except api_tokens.TokenError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail, headers={"WWW-Authenticate": "Bearer"})
+    needed = api_tokens.required_scope(request.method, request.url.path)
+    if needed is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is not available to API tokens")
+    if needed not in principal["scopes"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"This token lacks the {needed} scope")
+    if await tenant_service.is_suspended(db, principal["org_id"]):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This organisation is suspended")
+    return principal
+
+
 async def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ) -> dict:
@@ -43,6 +61,9 @@ async def get_current_user(
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    if credentials.credentials.startswith(api_tokens.TOKEN_PREFIX):
+        return await _service_principal(request, db, credentials.credentials)
 
     try:
         payload = decode_token(credentials.credentials)

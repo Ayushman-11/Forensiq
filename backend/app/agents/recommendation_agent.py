@@ -128,8 +128,13 @@ def _malicious_by_ioc(enrichments: list) -> Dict[str, Dict[str, Any]]:
     for e in enrichments:
         if e.get("reputation") != "malicious" or e.get("status", "ok") != "ok":
             continue
-        entry = grouped.setdefault(e.get("ioc"), {"ioc": e.get("ioc"), "ioc_type": e.get("ioc_type", "indicator"), "sources": set()})
+        entry = grouped.setdefault(e.get("ioc"), {"ioc": e.get("ioc"), "ioc_type": e.get("ioc_type", "indicator"), "sources": set(), "benign_service": False})
         entry["sources"].add(e.get("source"))
+    # GreyNoise RIOT lists well-known benign services (Microsoft, Google, CDNs). When it disagrees with a
+    # malicious verdict, corroboration does not make blocking safe.
+    for e in enrichments:
+        if e.get("source") == "GreyNoise" and e.get("status", "ok") == "ok" and (e.get("raw_response") or {}).get("riot") and e.get("ioc") in grouped:
+            grouped[e["ioc"]]["benign_service"] = True
     return grouped
 
 
@@ -139,6 +144,9 @@ def _block_step(entry: Dict[str, Any], noise: NoiseFilter) -> str:
     if ioc_type == "domain" and noise.is_shared_hosting(ioc):
         return (f"'{ioc}' is shared hosting flagged by {sources}: do not block the domain. "
                 f"Pull proxy/DNS logs for the exact URLs fetched and block those URLs only.")
+    if entry.get("benign_service"):
+        return (f"{ioc_type.capitalize()} '{ioc}' was flagged by {sources}, but GreyNoise lists it as a common benign service (RIOT): "
+                f"do not block it. Check which URLs or accounts actually touched it.")
     if len(entry["sources"]) >= 2:
         return f"Suggested (Requires human approval): Block confirmed malicious {ioc_type} '{ioc}' (corroborated by {sources}) on firewalls and EDR."
     return f"Validate {ioc_type} '{ioc}' (flagged only by {sources}) against a second source before blocking it."
