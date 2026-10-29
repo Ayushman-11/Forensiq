@@ -1,14 +1,12 @@
-from langgraph.graph import END, START, StateGraph
-
-from app.agents.context_agent import extract_context_node
-from app.agents.correlation_agent import correlate_events_node
-from app.agents.ioc_agent import enrich_ioc_node
-from app.agents.mitre_agent import map_mitre_node
-from app.agents.recommendation_agent import generate_recommendations_node
-from app.agents.risk_agent import assess_risk_node
+from langgraph.graph import StateGraph, START, END
 from app.agents.state import AgentState
+from app.agents.context_agent import extract_context_node
+from app.agents.ioc_agent import enrich_ioc_node
+from app.agents.correlation_agent import correlate_events_node
+from app.agents.mitre_agent import map_mitre_node
 from app.agents.timeline_agent import build_timeline_node
-
+from app.agents.risk_agent import assess_risk_node
+from app.agents.recommendation_agent import generate_recommendations_node
 
 def build_investigation_graph():
     """
@@ -26,7 +24,7 @@ def build_investigation_graph():
     """
     # 1. Initialize the state graph
     builder = StateGraph(AgentState)
-
+    
     # 2. Add specialized agent nodes
     builder.add_node("extract_context", extract_context_node)
     builder.add_node("enrich_iocs", enrich_ioc_node)
@@ -35,7 +33,7 @@ def build_investigation_graph():
     builder.add_node("build_timeline", build_timeline_node)
     builder.add_node("assess_risk", assess_risk_node)
     builder.add_node("generate_recommendations", generate_recommendations_node)
-
+    
     # 3. Add edges sequentially
     builder.add_edge(START, "extract_context")
     builder.add_edge("extract_context", "enrich_iocs")
@@ -45,7 +43,7 @@ def build_investigation_graph():
     builder.add_edge("build_timeline", "assess_risk")
     builder.add_edge("assess_risk", "generate_recommendations")
     builder.add_edge("generate_recommendations", END)
-
+    
     # 4. Compile the graph
     return builder.compile()
 

@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
-from collections.abc import Callable
-from typing import Literal
+from typing import Callable, Literal
 
 import tldextract
 

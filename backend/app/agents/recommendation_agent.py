@@ -1,4 +1,4 @@
-﻿"""
+"""
 Investigation Recommendation Agent Node for LangGraph.
 Synthesizes full investigation findings, risk assessments, and ATT&CK mappings
 into an actionable incident response checklist using Grok AI (with deterministic fallback).
@@ -51,6 +51,18 @@ Do not include any conversational text or markdown code blocks outside of valid 
 @lru_cache(maxsize=1)
 def _noise_policy() -> NoiseFilter:
     return NoiseFilter.from_yaml(settings.NOISE_CONFIG_PATH)
+
+
+async def _tenant_noise_policy(org_id: str) -> NoiseFilter:
+    """The alert's own tenant policy; the platform policy when the tenant has none or the database is unreachable."""
+    try:
+        from app.database.session import get_db
+        from app.services.tenants import noise_filter, resolve_config
+
+        return noise_filter(await resolve_config(await get_db(), org_id))
+    except Exception as exc:
+        logger.warning("tenant_noise_policy_unavailable", org_id=org_id, error=str(exc))
+        return _noise_policy()
 
 
 def _build_evidence_catalog(
@@ -116,8 +128,13 @@ def _malicious_by_ioc(enrichments: list) -> Dict[str, Dict[str, Any]]:
     for e in enrichments:
         if e.get("reputation") != "malicious" or e.get("status", "ok") != "ok":
             continue
-        entry = grouped.setdefault(e.get("ioc"), {"ioc": e.get("ioc"), "ioc_type": e.get("ioc_type", "indicator"), "sources": set()})
+        entry = grouped.setdefault(e.get("ioc"), {"ioc": e.get("ioc"), "ioc_type": e.get("ioc_type", "indicator"), "sources": set(), "benign_service": False})
         entry["sources"].add(e.get("source"))
+    # GreyNoise RIOT lists well-known benign services (Microsoft, Google, CDNs). When it disagrees with a
+    # malicious verdict, corroboration does not make blocking safe.
+    for e in enrichments:
+        if e.get("source") == "GreyNoise" and e.get("status", "ok") == "ok" and (e.get("raw_response") or {}).get("riot") and e.get("ioc") in grouped:
+            grouped[e["ioc"]]["benign_service"] = True
     return grouped
 
 
@@ -127,6 +144,9 @@ def _block_step(entry: Dict[str, Any], noise: NoiseFilter) -> str:
     if ioc_type == "domain" and noise.is_shared_hosting(ioc):
         return (f"'{ioc}' is shared hosting flagged by {sources}: do not block the domain. "
                 f"Pull proxy/DNS logs for the exact URLs fetched and block those URLs only.")
+    if entry.get("benign_service"):
+        return (f"{ioc_type.capitalize()} '{ioc}' was flagged by {sources}, but GreyNoise lists it as a common benign service (RIOT): "
+                f"do not block it. Check which URLs or accounts actually touched it.")
     if len(entry["sources"]) >= 2:
         return f"Suggested (Requires human approval): Block confirmed malicious {ioc_type} '{ioc}' (corroborated by {sources}) on firewalls and EDR."
     return f"Validate {ioc_type} '{ioc}' (flagged only by {sources}) against a second source before blocking it."
@@ -138,9 +158,10 @@ def _deterministic_recommendation(
     correlations: list,
     mitre_mappings: list,
     risk_assessment: dict,
+    noise: Optional[NoiseFilter] = None,
 ) -> Dict[str, Any]:
     """Generates defensive checklists using rule-based heuristics."""
-    noise = _noise_policy()
+    noise = noise or _noise_policy()
     risk_score = risk_assessment.get("risk_score", 50)
     host = alert.get("host") or "target host"
     malicious = list(_malicious_by_ioc(enrichments).values())
@@ -287,19 +308,19 @@ async def generate_recommendations_node(state: AgentState) -> Dict[str, Any]:
         formatted_rec = (
             f"{directive}\n\n"
             f"Actionable Steps (Containment advice is suggested; all automated actions require human approval):\n"
-            + "\n".join(f"ΓÇó {item}" for item in checklist)
+            + "\n".join(f"• {item}" for item in checklist)
         )
         log_msg = f"Grok AI Recommendation Agent: generated response checklist with {len(checklist)} step(s) via Grok"
         engine = f"llm:{settings.XAI_MODEL}"
     else:
         # Fallback to deterministic checklist
-        rec_data = _deterministic_recommendation(alert, enrichments, correlations, mitre_mappings, risk_assessment)
+        rec_data = _deterministic_recommendation(alert, enrichments, correlations, mitre_mappings, risk_assessment, noise=await _tenant_noise_policy(org_id))
         directive = rec_data["recommendation"]
         checklist = rec_data["checklist"]
         formatted_rec = (
             f"{directive}\n\n"
             f"Actionable Steps (Containment advice is suggested; all automated actions require human approval):\n"
-            + "\n".join(f"ΓÇó {item}" for item in checklist)
+            + "\n".join(f"• {item}" for item in checklist)
         )
         log_msg = f"Recommendation Agent: generated response checklist with {len(checklist)} step(s) [Deterministic Engine]"
         engine = rec_data["engine"]

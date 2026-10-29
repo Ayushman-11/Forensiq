@@ -2,34 +2,79 @@
 Alert Ingestion and Listing endpoints.
 """
 
-import json
+from typing import List, Dict, Any, Literal, Optional
+from datetime import datetime, timedelta, timezone
 import re
 import uuid
-from datetime import UTC, datetime, timedelta
-from typing import Literal
-
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+import asyncio
+import json
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Query
 from fastapi.responses import StreamingResponse
-from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
-
-from app.api.deps import get_current_user, require_roles
-from app.core.errors import internal_error, new_request_id
-from app.core.logging import logger
-from app.core.tenancy import scoped_query, tenant_filter, tenant_id
+from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.database.session import get_db
-from app.services.audit import record_audit
+from app.models.alert import AlertModel
 from app.services.ingestion import IngestionService
+from app.agents.graph import investigation_graph
+from app.core.logging import logger
+from app.core.timeutil import iso_utc
+from app.core.errors import internal_error, new_request_id
+from app.api.deps import require_roles, get_current_user
+from app.core.tenancy import scoped_query, tenant_filter, tenant_id
+from app.services.sla import get_sla_targets
+from app.services.tenants import ingestion_kwargs, resolve_config
+from app.services.audit import record_audit
+from app.services.correlation import correlate_alert
+from app.services.job_queue import enqueue_investigation_job
+from app.services.triage import (
+    OPEN_STATUSES,
+    TriageError,
+    apply_disposition,
+    assign_alert,
+    sla_state,
+)
 from app.services.investigation_streamer import (
     investigation_stream_manager,
+    finalize_and_save_investigation as _finalize_and_save_investigation,
     json_serial,
 )
 
 router = APIRouter()
 
 class DispositionRequest(BaseModel):
-    action: Literal["close", "escalate", "suppress"]
-    note: str | None = Field(default=None, max_length=5000)
+    action: Literal["close", "escalate", "suppress", "reopen"]
+    verdict: Optional[Literal["true_positive", "benign_true_positive", "false_positive", "duplicate"]] = None
+    note: Optional[str] = Field(default=None, max_length=5000)
+
+
+class AssignRequest(BaseModel):
+    assignee_id: Optional[str] = Field(default=None, max_length=100)
+
+
+class BulkRequest(BaseModel):
+    alert_ids: List[str] = Field(min_length=1, max_length=200)
+    action: Literal["assign", "close", "escalate", "suppress", "reopen"]
+    verdict: Optional[Literal["true_positive", "benign_true_positive", "false_positive", "duplicate"]] = None
+    note: Optional[str] = Field(default=None, max_length=5000)
+    assignee_id: Optional[str] = Field(default=None, max_length=100)
+
+
+SORTS = {
+    "newest": [("_detected", -1)],
+    "oldest": [("_detected", 1)],
+    "severity": [("_sev_rank", -1), ("_detected", -1)],
+    "risk": [("risk_score", -1), ("_detected", -1)],
+}
+SEVERITY_RANK = {"$switch": {"branches": [
+    {"case": {"$eq": ["$severity", "critical"]}, "then": 4},
+    {"case": {"$eq": ["$severity", "high"]}, "then": 3},
+    {"case": {"$eq": ["$severity", "medium"]}, "then": 2},
+    {"case": {"$eq": ["$severity", "low"]}, "then": 1},
+], "default": 0}}
+
+
+def _triage_error(exc: TriageError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail=exc.detail)
 
 class NoteRequest(BaseModel):
     content: str = Field(min_length=1, max_length=5000)
@@ -40,41 +85,61 @@ VALID_STATUSES = {
     for s in ("New", "Investigating", "Investigated", "Investigation Failed", "Closed", "Escalated", "Suppressed")
 }
 
-@router.get("/", response_model=list[dict])
+@router.get("/", response_model=List[dict])
 async def list_alerts(
     limit: int = Query(50, ge=1, le=200),
     severity: str = Query(None, description="Filter by severity"),
     status: str = Query(None, description="Filter by status"),
-    search: str = Query(None, max_length=100, description="Search in title or host"),
+    search: str = Query(None, max_length=100, description="Search title, host, user, rule, DNS query or ATT&CK technique"),
+    assignee: str = Query(None, max_length=100, description="'me', 'unassigned' or a user id"),
+    incident: str = Query(None, max_length=100, description="Only alerts in this incident"),
+    sort: Literal["newest", "oldest", "severity", "risk"] = Query("newest"),
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    """Fetches recent alerts from MongoDB with optional filtering."""
+    """Fetches alerts with optional filtering. status=open means every not-yet-resolved status."""
     conditions = []
+    if incident:
+        conditions.append({"incident_id": incident})
+    if assignee == "me":
+        conditions.append({"assignee_id": user.get("id")})
+    elif assignee == "unassigned":
+        conditions.append({"assignee_id": {"$in": [None]}})
+    elif assignee:
+        conditions.append({"assignee_id": assignee})
     if severity and severity.lower() != "all":
         if severity.lower() not in VALID_SEVERITIES:
             raise HTTPException(status_code=422, detail=f"severity must be one of {sorted(VALID_SEVERITIES)} or 'all'")
         conditions.append({"severity": severity.lower()})
-    if status and status.lower() != "all":
+    if status and status.lower() == "open":
+        conditions.append({"status": {"$in": list(OPEN_STATUSES)}})
+    elif status and status.lower() != "all":
         canonical = VALID_STATUSES.get(status.lower())
         if canonical is None:
-            raise HTTPException(status_code=422, detail=f"status must be one of {sorted(VALID_STATUSES.values())} or 'all'")
+            raise HTTPException(status_code=422, detail=f"status must be one of {sorted(VALID_STATUSES.values())}, 'open' or 'all'")
         conditions.append({"status": canonical})
     if search:
         pattern = re.escape(search)
         conditions.append({"$or": [
-            {"title": {"$regex": pattern, "$options": "i"}},
-            {"host": {"$regex": pattern, "$options": "i"}},
+            {field: {"$regex": pattern, "$options": "i"}}
+            for field in ("title", "host", "user", "rule_name", "dns_query", "mitre_technique", "mitre_mappings.technique")
         ]})
     try:
+        sla_targets = await get_sla_targets(db, tenant_id(user))
         alerts = []
-        cursor = db["alerts"].find(scoped_query(user, *conditions), {"raw_events": 0}).sort("created_at", -1).limit(limit)
-        async for document in cursor:
-            # Convert _id to string if it isn't already, ensure serializable
+        pipeline = [
+            {"$match": scoped_query(user, *conditions)},
+            {"$addFields": {"_detected": {"$ifNull": ["$detected_at", "$created_at"]}, "_sev_rank": SEVERITY_RANK}},
+            {"$sort": dict(SORTS[sort])},
+            {"$limit": limit},
+            {"$project": {"raw_events": 0, "_sev_rank": 0, "_detected": 0}},
+        ]
+        async for document in db["alerts"].aggregate(pipeline):
             document["_id"] = str(document["_id"])
-            # Format datetime
-            if "created_at" in document and isinstance(document["created_at"], datetime):
-                document["created_at"] = document["created_at"].isoformat()
+            document["sla"] = sla_state(document, targets_by_severity=sla_targets)
+            for key in ("created_at", "detected_at", "acknowledged_at", "resolved_at", "assigned_at", "updated_at"):
+                if isinstance(document.get(key), datetime):
+                    document[key] = iso_utc(document[key])
             alerts.append(document)
         return alerts
     except Exception as e:
@@ -94,22 +159,27 @@ async def alerts_by_rule(db: AsyncIOMotorDatabase = Depends(get_db), user: dict 
             results.append({"rule_name": doc["_id"], "count": doc["count"]})
         return results
     except Exception as e:
-        logger.error(f"Error fetching rule stats: {e}")
-        return []
+        raise internal_error("alerts_by_rule_failed", e)
 
 @router.get("/stats/timeline")
 async def alerts_timeline(db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
-    """Returns alert counts grouped by hour for the last 24 hours."""
+    """Returns alert counts grouped by detection hour (UTC) for the last 24 hours.
+
+    created_at is the event time, which can be weeks old for backfilled data; detected_at is when
+    Forensiq raised the alert. Older alerts without detected_at fall back to created_at.
+    """
     try:
-        twenty_four_hours_ago = datetime.utcnow() - timedelta(hours=24)
+        twenty_four_hours_ago = datetime.now(timezone.utc) - timedelta(hours=24)
         pipeline = [
-            {"$match": {"$and": [tenant_filter(user), {"created_at": {"$gte": twenty_four_hours_ago}}]}},
+            {"$match": tenant_filter(user)},
+            {"$addFields": {"_detected": {"$ifNull": ["$detected_at", "$created_at"]}}},
+            {"$match": {"_detected": {"$gte": twenty_four_hours_ago}}},
             {"$group": {
                 "_id": {
-                    "year": {"$year": "$created_at"},
-                    "month": {"$month": "$created_at"},
-                    "day": {"$dayOfMonth": "$created_at"},
-                    "hour": {"$hour": "$created_at"}
+                    "year": {"$year": "$_detected"},
+                    "month": {"$month": "$_detected"},
+                    "day": {"$dayOfMonth": "$_detected"},
+                    "hour": {"$hour": "$_detected"}
                 },
                 "count": {"$sum": 1}
             }},
@@ -121,12 +191,11 @@ async def alerts_timeline(db: AsyncIOMotorDatabase = Depends(get_db), user: dict
             results.append({"hour": hour_str, "count": doc["count"]})
         return results
     except Exception as e:
-        logger.error(f"Error fetching timeline stats: {e}")
-        return []
+        raise internal_error("alerts_timeline_failed", e)
 
 @router.get("/stats/mitre")
 async def alerts_mitre_stats(db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
-    """Returns aggregated MITRE ATT&CK techniques, tactics, hit counts, and rule coverage."""
+    """Returns aggregated MITRE ATT&CK techniques, tactics, hit counts, and rule coverage across all alerts."""
     try:
         cursor = db["alerts"].find(
             scoped_query(user, {
@@ -136,17 +205,17 @@ async def alerts_mitre_stats(db: AsyncIOMotorDatabase = Depends(get_db), user: d
                 ]
             }),
             {"_id": 1, "title": 1, "severity": 1, "mitre_technique": 1, "mitre_tactic": 1, "mitre_mappings": 1}
-        ).limit(500)
-
+        )
+        
         tech_map = {}
         tactic_counts = {}
         total_mapped = 0
-
+        
         async for doc in cursor:
             total_mapped += 1
             alert_id = str(doc.get("_id", ""))
             sev = (doc.get("severity") or "medium").lower()
-
+            
             mappings = doc.get("mitre_mappings") or []
             if not mappings and doc.get("mitre_technique"):
                 mappings = [{
@@ -154,16 +223,16 @@ async def alerts_mitre_stats(db: AsyncIOMotorDatabase = Depends(get_db), user: d
                     "tactic": doc.get("mitre_tactic") or "Execution",
                     "name": doc.get("title") or ""
                 }]
-
+                
             for m in mappings:
                 tech_id = str(m.get("technique") or "").strip().upper()
                 if not tech_id:
                     continue
                 tactic = str(m.get("tactic") or "Execution").strip()
                 name = str(m.get("name") or "").strip()
-
+                
                 tactic_counts[tactic] = tactic_counts.get(tactic, 0) + 1
-
+                
                 if tech_id not in tech_map:
                     tech_map[tech_id] = {
                         "id": tech_id,
@@ -177,7 +246,7 @@ async def alerts_mitre_stats(db: AsyncIOMotorDatabase = Depends(get_db), user: d
                 entry["count"] += 1
                 if alert_id and alert_id not in entry["alert_ids"]:
                     entry["alert_ids"].append(alert_id)
-
+                
                 sev_ranks = {"low": 1, "medium": 2, "high": 3, "critical": 4}
                 if sev_ranks.get(sev, 1) > sev_ranks.get(entry["severity"], 1):
                     entry["severity"] = sev
@@ -188,8 +257,7 @@ async def alerts_mitre_stats(db: AsyncIOMotorDatabase = Depends(get_db), user: d
             "total_mapped_alerts": total_mapped
         }
     except Exception as e:
-        logger.error(f"Error fetching MITRE stats: {e}")
-        return {"techniques": [], "tactics_summary": {}, "total_mapped_alerts": 0}
+        raise internal_error("alerts_mitre_stats_failed", e)
 
 @router.get("/{alert_id}", response_model=dict)
 async def get_alert(alert_id: str, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
@@ -198,11 +266,13 @@ async def get_alert(alert_id: str, db: AsyncIOMotorDatabase = Depends(get_db), u
         alert = await db["alerts"].find_one(scoped_query(user, {"_id": alert_id}))
         if not alert:
             raise HTTPException(status_code=404, detail="Alert not found")
-
+        
         # Ensure proper serialization
         alert["_id"] = str(alert["_id"])
-        if "created_at" in alert and isinstance(alert["created_at"], datetime):
-            alert["created_at"] = alert["created_at"].isoformat()
+        alert["sla"] = sla_state(alert, targets_by_severity=await get_sla_targets(db, tenant_id(user)))
+        for key in ("created_at", "detected_at", "acknowledged_at", "resolved_at", "assigned_at", "updated_at", "escalated_at"):
+            if isinstance(alert.get(key), datetime):
+                alert[key] = iso_utc(alert[key])
 
         return alert
     except HTTPException:
@@ -217,7 +287,11 @@ async def ingest_from_splunk(
 ):
     """Triggers a manual ingestion of alerts from Splunk into MongoDB."""
     try:
-        service = IngestionService(db, tenant_id(_user))
+        org_id = tenant_id(_user)
+        cfg = await resolve_config(db, org_id)
+        if not cfg.siem.configured:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No SIEM is configured for this tenant")
+        service = IngestionService(db, org_id, **await ingestion_kwargs(db, org_id))
         inserted = await service.fetch_and_store_alerts()
         result = {"status": "degraded" if service.errors else "success", "inserted": len(inserted), "fetched": service.total_fetched, "rules_run": service.rules_run, "errors": service.errors}
         if service.errors and not inserted:
@@ -253,7 +327,7 @@ async def run_investigation_background(alert_id: str, job_id: str, db: AsyncIOMo
             {"_id": job_id},
             {"$set": {
                 "status": "failed",
-                "completed_at": datetime.now(UTC),
+                "completed_at": datetime.now(timezone.utc),
                 "error": "investigation_failed",
                 "error_ref": ref,
             }}
@@ -317,7 +391,7 @@ async def investigate_alert_stream(
 
 @router.post("/{alert_id:path}/investigate", response_model=dict)
 async def investigate_alert(
-    alert_id: str,
+    alert_id: str, 
     background_tasks: BackgroundTasks,
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -327,31 +401,21 @@ async def investigate_alert(
         alert = await db["alerts"].find_one(scoped_query(user, {"_id": alert_id}))
         if not alert:
             raise HTTPException(status_code=404, detail="Alert not found")
-
-        job_id = str(uuid.uuid4())
-
-        await db["investigation_jobs"].insert_one({
-            "_id": job_id,
-            "alert_id": alert_id,
-            "status": "pending",
-            "created_at": datetime.utcnow()
-            ,"org_id": tenant_id(user)
-        })
-
-        await db["alerts"].update_one(
-            scoped_query(user, {"_id": alert_id}),
-            {"$set": {"status": "Investigating"}}
-        )
-
-        background_tasks.add_task(run_investigation_background, alert_id, job_id, db)
-
+            
+        enqueue_res = await enqueue_investigation_job(db, alert_id, user)
+        job_id = enqueue_res["job_id"]
+        
+        # Dispatch in background for immediate execution
+        if enqueue_res.get("status") == "success":
+            background_tasks.add_task(run_investigation_background, alert_id, job_id, db)
+        
         return {
             "status": "success",
             "job_id": job_id,
             "alert_id": alert_id,
             "message": "Investigation started in the background"
         }
-
+        
     except HTTPException:
         raise
     except Exception as e:
@@ -371,13 +435,13 @@ async def get_investigation_status(job_id: str, db: AsyncIOMotorDatabase = Depen
         job = await db["investigation_jobs"].find_one(scoped_query(user, {"_id": job_id}))
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
-
+            
         # Serialize datetime
         job["_id"] = str(job["_id"])
         for key in ["created_at", "started_at", "completed_at"]:
             if key in job and isinstance(job[key], datetime):
-                job[key] = job[key].isoformat()
-
+                job[key] = iso_utc(job[key])
+                
         return _sanitize_job(job)
     except HTTPException:
         raise
@@ -392,27 +456,51 @@ async def investigation_history(alert_id: str, db: AsyncIOMotorDatabase = Depend
     async for job in db["investigation_jobs"].find(scoped_query(user, {"alert_id": alert_id})).sort("created_at", -1).limit(20):
         job["_id"] = str(job["_id"])
         for key in ("created_at", "started_at", "completed_at"):
-            if isinstance(job.get(key), datetime): job[key] = job[key].isoformat()
+            if isinstance(job.get(key), datetime): job[key] = iso_utc(job[key])
         jobs.append(_sanitize_job(job))
     return jobs
 
+@router.post("/bulk")
+async def bulk_action(payload: BulkRequest, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
+    """Apply one action to many alerts. Each alert is checked on its own; failures do not stop the rest."""
+    results = []
+    for alert_id in dict.fromkeys(payload.alert_ids):  # de-duplicate, keep order
+        try:
+            if payload.action == "assign":
+                await assign_alert(db, user, alert_id, payload.assignee_id)
+            else:
+                await apply_disposition(db, user, alert_id, payload.action, payload.verdict, payload.note)
+            results.append({"alert_id": alert_id, "ok": True})
+        except TriageError as exc:
+            results.append({"alert_id": alert_id, "ok": False, "status_code": exc.status_code, "error": exc.detail})
+    return {"succeeded": sum(r["ok"] for r in results), "failed": sum(not r["ok"] for r in results), "results": results}
+
+
 @router.patch("/{alert_id:path}/disposition")
 async def set_disposition(alert_id: str, payload: DispositionRequest, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
-    statuses = {"close": "Closed", "escalate": "Escalated", "suppress": "Suppressed"}
-    update = {"status": statuses[payload.action], "disposition": payload.action, "updated_at": datetime.utcnow()}
-    if payload.note: update["disposition_note"] = payload.note
-    result = await db["alerts"].update_one(scoped_query(user, {"_id": alert_id}), {"$set": update})
-    if not result.matched_count: raise HTTPException(status_code=404, detail="Alert not found")
-    await record_audit(db, user, f"alert.{payload.action}", "alert", alert_id, {"note": payload.note} if payload.note else {})
-    return {"status": update["status"], "alert_id": alert_id}
+    try:
+        return await apply_disposition(db, user, alert_id, payload.action, payload.verdict, payload.note)
+    except TriageError as exc:
+        raise _triage_error(exc)
+
+
+@router.patch("/{alert_id:path}/assignee")
+async def set_assignee(alert_id: str, payload: AssignRequest, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
+    try:
+        return await assign_alert(db, user, alert_id, payload.assignee_id)
+    except TriageError as exc:
+        raise _triage_error(exc)
 
 @router.post("/{alert_id:path}/notes")
 async def add_note(alert_id: str, payload: NoteRequest, db: AsyncIOMotorDatabase = Depends(get_db), user: dict = Depends(get_current_user)):
     if not await db["alerts"].find_one(scoped_query(user, {"_id": alert_id}), {"_id": 1}): raise HTTPException(status_code=404, detail="Alert not found")
-    note = {"_id": str(uuid.uuid4()), "org_id": tenant_id(user), "alert_id": alert_id, "content": payload.content, "author_email": user.get("email"), "created_at": datetime.utcnow()}
+    now = datetime.now(timezone.utc)
+    note = {"_id": str(uuid.uuid4()), "org_id": tenant_id(user), "alert_id": alert_id, "content": payload.content, "author_email": user.get("email"), "created_at": now}
     await db["alert_notes"].insert_one(note)
+    # A note is a human touching the alert: it starts the acknowledge clock if nothing else has.
+    await db["alerts"].update_one(scoped_query(user, {"_id": alert_id, "acknowledged_at": {"$exists": False}}), {"$set": {"acknowledged_at": now}})
     await record_audit(db, user, "alert.note_added", "alert", alert_id, {"note_id": note["_id"]})
-    note["created_at"] = note["created_at"].isoformat()
+    note["created_at"] = iso_utc(note["created_at"])
     return note
 
 @router.get("/{alert_id:path}/notes")
@@ -420,7 +508,7 @@ async def list_notes(alert_id: str, db: AsyncIOMotorDatabase = Depends(get_db), 
     notes = []
     async for note in db["alert_notes"].find(scoped_query(user, {"alert_id": alert_id})).sort("created_at", 1):
         note["_id"] = str(note["_id"])
-        if isinstance(note.get("created_at"), datetime): note["created_at"] = note["created_at"].isoformat()
+        if isinstance(note.get("created_at"), datetime): note["created_at"] = iso_utc(note["created_at"])
         notes.append(note)
     return notes
 
@@ -429,7 +517,7 @@ async def list_audit(alert_id: str, db: AsyncIOMotorDatabase = Depends(get_db), 
     logs = []
     async for entry in db["audit_logs"].find(scoped_query(user, {"entity_type": "alert", "entity_id": alert_id})).sort("created_at", -1).limit(100):
         entry["_id"] = str(entry["_id"])
-        if isinstance(entry.get("created_at"), datetime): entry["created_at"] = entry["created_at"].isoformat()
+        if isinstance(entry.get("created_at"), datetime): entry["created_at"] = iso_utc(entry["created_at"])
         logs.append(entry)
     return logs
 

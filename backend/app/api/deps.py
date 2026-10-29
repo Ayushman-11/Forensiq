@@ -3,22 +3,24 @@ FastAPI Route Dependencies.
 Provides Dependency Injection for SIEM Clients, Database Sessions, and Auth.
 """
 
-from collections.abc import AsyncGenerator, Callable
+from typing import AsyncGenerator, Callable
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.security import TokenError, decode_token
-from app.database.session import get_db
-from app.infrastructure.siem.base import SIEMProvider
 from app.infrastructure.siem.splunk import SplunkClient
+from app.services import api_tokens
+from app.services import tenants as tenant_service
+from app.infrastructure.siem.base import SIEMProvider
+from app.core.security import decode_token, TokenError
+from app.database.session import get_db
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
 
-async def get_siem_client() -> AsyncGenerator[SIEMProvider, None]:
-    """Dependency Provider for SIEM Client (SplunkClient). Ensures client is closed after request."""
+async def get_platform_siem_client() -> AsyncGenerator[SIEMProvider, None]:
+    """The operator's own SIEM, for the unauthenticated platform health probe only. Never for tenant data."""
     client = SplunkClient()
     try:
         yield client
@@ -26,7 +28,24 @@ async def get_siem_client() -> AsyncGenerator[SIEMProvider, None]:
         await client.close()
 
 
+async def _service_principal(request: Request, db: AsyncIOMotorDatabase, token: str) -> dict:
+    """An API token acting as its service account, limited to the one scope the route needs (deny by default)."""
+    try:
+        principal = await api_tokens.authenticate(db, token)
+    except api_tokens.TokenError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail, headers={"WWW-Authenticate": "Bearer"})
+    needed = api_tokens.required_scope(request.method, request.url.path)
+    if needed is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is not available to API tokens")
+    if needed not in principal["scopes"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"This token lacks the {needed} scope")
+    if await tenant_service.is_suspended(db, principal["org_id"]):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This organisation is suspended")
+    return principal
+
+
 async def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ) -> dict:
@@ -42,6 +61,9 @@ async def get_current_user(
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    if credentials.credentials.startswith(api_tokens.TOKEN_PREFIX):
+        return await _service_principal(request, db, credentials.credentials)
 
     try:
         payload = decode_token(credentials.credentials)
@@ -62,7 +84,23 @@ async def get_current_user(
     user["id"] = str(user.pop("_id"))
     user.pop("password_hash", None)
     user["org_id"] = user.get("org_id", "default")
+    if await tenant_service.is_suspended(db, user["org_id"]):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This organisation is suspended")
     return user
+
+
+async def get_siem_client(
+    user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+) -> AsyncGenerator[SIEMProvider, None]:
+    """The caller's tenant SIEM. A tenant with none configured gets a client that fails like an unreachable one:
+    it never falls back to the platform's SIEM."""
+    cfg = await tenant_service.resolve_config(db, user["org_id"])
+    client = tenant_service.siem_for(cfg)
+    try:
+        yield client
+    finally:
+        await client.close()
 
 
 def require_roles(*roles: str) -> Callable:

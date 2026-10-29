@@ -1,4 +1,4 @@
-﻿"""
+"""
 Forensiq FastAPI Main Application Entrypoint.
 Configures app lifespan, middleware (security headers, body limits, CORS, trusted hosts), routers.
 """
@@ -21,12 +21,16 @@ from app.database.session import connect_to_mongo, close_mongo_connection
 from app.services.poller import AlertPoller
 from app.services.investigation_worker import InvestigationWorker
 from app.services.job_queue import reap_stuck_jobs
+from app.services.sla_monitor import SLAEscalationMonitor
+from app.services.events import WebhookDispatcher
 from app.database.session import db_config
 
 _NON_PROD_ENVS = frozenset({"development", "dev", "test", "testing", "local"})
 
 poller = None
 investigation_worker = None
+sla_monitor = None
+webhook_dispatcher = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -73,7 +77,7 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             logger.error("reap_stuck_jobs_failed", error=str(exc))
 
-    global poller, investigation_worker
+    global poller, investigation_worker, sla_monitor, webhook_dispatcher
     if db_config.client:
         db = db_config.client[settings.MONGO_DB_NAME]
         try:
@@ -85,6 +89,12 @@ async def lifespan(app: FastAPI):
         poller = AlertPoller(db, interval_seconds=settings.POLLER_INTERVAL_SECONDS)
         poller.start()
 
+        sla_monitor = SLAEscalationMonitor(db, sweep_interval_seconds=settings.SLA_SWEEP_INTERVAL_SECONDS)
+        sla_monitor.start()
+
+        webhook_dispatcher = WebhookDispatcher(db)
+        webhook_dispatcher.start()
+
     yield
     
     if investigation_worker:
@@ -92,6 +102,10 @@ async def lifespan(app: FastAPI):
             await investigation_worker.stop()
         except Exception as exc:
             logger.error("investigation_worker_stop_failed", error=str(exc))
+    if webhook_dispatcher:
+        await webhook_dispatcher.stop()
+    if sla_monitor:
+        await sla_monitor.stop()
     if poller:
         await poller.stop()
         

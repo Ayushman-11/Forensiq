@@ -12,12 +12,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install uv package manager
 RUN pip install --no-cache-dir uv
 
-# Copy project definition and install dependencies
-COPY pyproject.toml .
-RUN uv pip install --system -e .
-
-# Copy application source code
+# Copy project definition, README (referenced by pyproject) and source, then install.
+# Hatchling's editable build validates the readme and the `app` package up front.
+COPY pyproject.toml README.md ./
 COPY app/ app/
+RUN uv pip install --system -e .
 
 EXPOSE 8000
 

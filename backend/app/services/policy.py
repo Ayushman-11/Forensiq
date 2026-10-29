@@ -48,6 +48,8 @@ async def get_active_policy(db, org_id: str, policy_type: str) -> dict:
         return DEFAULT_INCIDENT_GROUPING
     elif policy_type == "noise_policy":
         return {"suppress_known_benign": True, "rules": []}
+    elif policy_type == "escalation":
+        return {}  # services/sla.py fills in DEFAULT_ESCALATION
 
     return {}
 

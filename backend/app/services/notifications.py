@@ -36,6 +36,7 @@ class NotificationEventType(str, enum.Enum):
     SLA_RESOLVE_BREACH = "sla_resolve_breach"
     UNASSIGNED_CRITICAL = "unassigned_critical"
     ALERT_ESCALATED = "alert_escalated"
+    RESPONSE_APPROVAL_REQUESTED = "response_approval_requested"
 
 
 class NotificationChannelType(str, enum.Enum):
@@ -80,6 +81,7 @@ class ChannelConfig(BaseModel):
             NotificationEventType.SLA_RESOLVE_BREACH,
             NotificationEventType.UNASSIGNED_CRITICAL,
             NotificationEventType.ALERT_ESCALATED,
+            NotificationEventType.RESPONSE_APPROVAL_REQUESTED,
         ]
     )
     roles: List[str] = Field(default_factory=lambda: ["admin", "senior_analyst", "analyst"])

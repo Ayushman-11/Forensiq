@@ -1,12 +1,11 @@
-from datetime import UTC, datetime
-
 import pytest
-from httpx import ASGITransport, AsyncClient
+from datetime import datetime, timezone
+from httpx import AsyncClient, ASGITransport
 from mongomock_motor import AsyncMongoMockClient
 
-from app.core.security import create_access_token
-from app.database.session import get_db
 from app.main import app
+from app.database.session import get_db
+from app.core.security import create_access_token
 
 
 @pytest.fixture
@@ -67,7 +66,7 @@ async def test_download_report_pdf_full_and_executive(mock_db):
             "risk_score": 88,
             "ai_confidence": 92,
             "priority": "critical",
-            "created_at": datetime.now(UTC),
+            "created_at": datetime.now(timezone.utc),
             "raw_logs": "mimikatz.exe sekurlsa::pth /user:Administrator",
             "extracted_iocs": ["10.0.0.15", "evil.com"],
             "enrichments": [{"ioc": "evil.com", "reputation": "malicious"}],

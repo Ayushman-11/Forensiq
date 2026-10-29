@@ -1,10 +1,10 @@
+from mongomock_motor import AsyncMongoMockClient
 import re
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import FastAPI, HTTPException
 from httpx import ASGITransport, AsyncClient
-
 from app.api.v1.endpoints import alerts as alerts_module
 from app.core.errors import internal_error, new_request_id
 from app.main import global_exception_handler
@@ -72,12 +72,11 @@ async def test_ingest_502_is_not_rewrapped_as_500():
 
     with patch.object(alerts_module, "IngestionService", FakeService):
         with pytest.raises(HTTPException) as info:
-            await alerts_module.ingest_from_splunk(db=object(), _user={"org_id": "default", "role": "admin"})
+            await alerts_module.ingest_from_splunk(db=AsyncMongoMockClient()["ingest_502"], _user={"org_id": "default", "role": "admin"})
     assert info.value.status_code == 502
 
 
 # ---- fix round 1: ingestion / stored-error sanitization ----
-from mongomock_motor import AsyncMongoMockClient  # noqa: E402
 
 from app.api.v1.endpoints.dashboard import ingestion_health  # noqa: E402
 from app.core.config import settings  # noqa: E402
@@ -104,7 +103,7 @@ def _real_service(db):
 @pytest.mark.asyncio
 async def test_ingest_502_detail_hides_underlying_exception_text():
     db = AsyncMongoMockClient()["forensiq_test"]
-    with patch.object(alerts_module, "IngestionService", lambda d, t: _real_service(d)):
+    with patch.object(alerts_module, "IngestionService", lambda d, t, **kw: _real_service(d)):
         with pytest.raises(HTTPException) as info:
             await alerts_module.ingest_from_splunk(db=db, _user={"org_id": "default", "role": "admin"})
     assert info.value.status_code == 502

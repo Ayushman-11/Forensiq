@@ -1,4 +1,4 @@
-﻿"""
+"""
 Core Application Configuration Module.
 Enforces type safety and environment variable loading using Pydantic Settings v2.
 Integrates file-based secrets mounts (Vault/K8s/Docker secrets) and key rotation.
@@ -149,6 +149,15 @@ class Settings(BaseSettings):
         default=25, description="AbuseIPDB confidence score at or above which an IP is rated suspicious"
     )
 
+    # Additional threat-intel feeds. Each is optional and only queried when configured.
+    OTX_API_KEY: str = Field(default="", description="AlienVault OTX API key")
+    OTX_MALICIOUS_MIN_PULSES: int = Field(default=5, description="OTX community pulses that must list an indicator before it is rated malicious")
+    OTX_SUSPICIOUS_MIN_PULSES: int = Field(default=1, description="OTX pulses at or above which an indicator is rated suspicious")
+    GREYNOISE_API_KEY: str = Field(default="", description="GreyNoise API key (community endpoint)")
+    MISP_URL: str = Field(default="", description="Base URL of your MISP instance, e.g. https://misp.corp.example")
+    MISP_API_KEY: str = Field(default="", description="MISP automation key")
+    MISP_VERIFY_SSL: bool = Field(default=True, description="Verify the MISP TLS certificate")
+
     # Ingestion pipeline
     INGEST_OVERLAP_SECONDS: int = Field(default=120, description="Re-query overlap to catch late-indexed events")
     INGEST_MAX_PAGES: int = Field(default=20, description="Max result pages fetched per ingestion cycle")
@@ -160,6 +169,39 @@ class Settings(BaseSettings):
     INVESTIGATION_CONCURRENCY: int = Field(default=3, description="Max concurrent auto-investigations")
     POLLER_LEASE_TTL_SECONDS: int = Field(default=90, description="Single-poller lease time to live")
     POLLER_INTERVAL_SECONDS: int = Field(default=30, description="Seconds between SIEM ingestion cycles")
+    INCIDENT_WINDOW_HOURS: int = Field(default=6, description="Alerts sharing a link key within this gap join one incident")
+    # Multi-tenancy. Admins of the platform tenant manage all tenants; every other tenant only ever sees its own data.
+    PLATFORM_ORG_ID: str = Field(default="default", description="The operator's own tenant: its admins can create and suspend tenants")
+    TENANT_SECRETS_KEY: str = Field(default="", description="Fernet key that encrypts per-tenant secrets at rest; derived from SECRET_KEY when empty")
+    TENANT_USE_PLATFORM_THREAT_INTEL: bool = Field(default=True, description="A tenant without its own VirusTotal/AbuseIPDB key uses the platform's")
+    POLLER_TENANT_CONCURRENCY: int = Field(default=5, description="Tenants polled at the same time")
+    SLA_SWEEP_INTERVAL_SECONDS: int = Field(default=60, description="Seconds between SLA breach / escalation sweeps")
+
+    # External ticketing (case management). Each system is optional; unset means "not configured".
+    JIRA_BASE_URL: str = Field(default="", description="e.g. https://acme.atlassian.net")
+    JIRA_EMAIL: str = Field(default="", description="Jira account email used with the API token")
+    JIRA_API_TOKEN: str = Field(default="", description="Jira API token")
+    JIRA_PROJECT_KEY: str = Field(default="", description="Project new tickets are created in")
+    JIRA_ISSUE_TYPE: str = Field(default="Task", description="Issue type for created tickets")
+    SERVICENOW_INSTANCE_URL: str = Field(default="", description="e.g. https://acme.service-now.com")
+    SERVICENOW_USER: str = Field(default="", description="ServiceNow integration user")
+    SERVICENOW_PASSWORD: str = Field(default="", description="ServiceNow integration password")
+    TICKET_SYNC_INTERVAL_SECONDS: int = Field(default=300, description="How often linked tickets are polled for status")
+
+    # Response actions (EDR isolate, IdP disable user, firewall block). Dry runs always work;
+    # live execution stays off until an operator turns it on.
+    RESPONSE_LIVE_EXECUTION_ENABLED: bool = Field(default=False, description="Allow approved response actions to change the target system")
+    RESPONSE_REQUEST_TTL_HOURS: int = Field(default=24, description="A request nobody approves within this time expires")
+    RESPONSE_APPROVAL_TTL_MINUTES: int = Field(default=60, description="An approval must be used within this time")
+    RESPONSE_MAX_LIVE_PER_HOUR: int = Field(default=10, description="Circuit breaker: live executions per tenant per hour")
+    RESPONSE_PROTECTED_TARGETS: str = Field(default="", description="Comma-separated hosts, accounts or IPs that may never be actioned (domain controllers, break-glass accounts)")
+    CROWDSTRIKE_BASE_URL: str = Field(default="https://api.crowdstrike.com", description="CrowdStrike Falcon API base URL for your cloud")
+    CROWDSTRIKE_CLIENT_ID: str = Field(default="", description="Falcon API client id (scope: Hosts write)")
+    CROWDSTRIKE_CLIENT_SECRET: str = Field(default="", description="Falcon API client secret")
+    OKTA_BASE_URL: str = Field(default="", description="e.g. https://acme.okta.com")
+    OKTA_API_TOKEN: str = Field(default="", description="Okta API token (SSWS) allowed to suspend users")
+    FIREWALL_WEBHOOK_URL: str = Field(default="", description="HTTPS endpoint of the firewall automation gateway that applies block/unblock")
+    FIREWALL_WEBHOOK_TOKEN: str = Field(default="", description="Bearer token sent to the firewall gateway")
 
     # Data Durability & Governance (Retention in days)
     AUDIT_RETENTION_DAYS: int = Field(default=365, description="Retention in days for audit logs")

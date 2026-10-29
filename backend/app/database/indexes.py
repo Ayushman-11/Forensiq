@@ -15,6 +15,22 @@ async def ensure_indexes(db) -> None:
     await alerts.create_index("user")
     await alerts.create_index("extracted_iocs")
     await alerts.create_index("status")
+    await alerts.create_index([("org_id", 1), ("incident_id", 1)])
+    incidents = db["incidents"]
+    await incidents.create_index([("org_id", 1), ("keys", 1), ("last_seen", -1)])
+    await incidents.create_index([("org_id", 1), ("last_seen", -1)])
+    await db["response_requests"].create_index([("org_id", 1), ("status", 1), ("requested_at", -1)])
+    await db["response_requests"].create_index([("org_id", 1), ("action_type", 1), ("target", 1)])
+    await db["outbound_events"].create_index([("org_id", 1), ("seq", 1)], unique=True)
+    await db["outbound_events"].create_index("created_at", expireAfterSeconds=30 * 24 * 3600)
+    await db["webhook_deliveries"].create_index([("status", 1), ("next_attempt_at", 1)])
+    await db["webhook_deliveries"].create_index([("org_id", 1), ("subscription_id", 1), ("created_at", -1)])
+    await db["webhook_deliveries"].create_index("created_at", expireAfterSeconds=14 * 24 * 3600)
+    await db["webhook_subscriptions"].create_index([("org_id", 1), ("enabled", 1)])
+    await db["api_tokens"].create_index("token_hash", unique=True)
+    await db["api_tokens"].create_index([("org_id", 1), ("created_at", -1)])
+    await db["incident_notes"].create_index([("org_id", 1), ("incident_id", 1), ("created_at", -1)])
+    await db["incident_events"].create_index([("org_id", 1), ("incident_id", 1), ("at", -1)])
 
     runs = db["ingestion_runs"]
     await runs.create_index([("org_id", 1), ("started_at", -1)])

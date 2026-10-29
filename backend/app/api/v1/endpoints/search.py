@@ -1,18 +1,18 @@
 import re
-from datetime import UTC, datetime
-
-from fastapi import APIRouter, Depends, HTTPException, status
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from datetime import datetime, timezone
+from typing import List, Optional
+from fastapi import APIRouter, Depends, Query, HTTPException, status
 from pydantic import BaseModel, Field
-
-from app.api.deps import get_db, get_siem_client, require_roles
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from app.api.deps import get_siem_client, get_db, require_roles
+from app.services.tenants import resolve_config
 from app.core.config import settings
-from app.core.logging import logger
 from app.core.tenancy import scoped_query
-from app.infrastructure.siem.base import SIEMProvider
-from app.schemas.normalized_event import NormalizedEvent
 from app.services.audit import record_audit
 from app.services.spl_guard import SPLRejected, validate_search, validate_time_range
+from app.infrastructure.siem.base import SIEMProvider
+from app.schemas.normalized_event import NormalizedEvent
+from app.core.logging import logger
 
 router = APIRouter()
 
@@ -27,7 +27,7 @@ class SearchRequest(BaseModel):
 class SearchResponse(BaseModel):
     count: int
     query: str
-    events: list[NormalizedEvent]
+    events: List[NormalizedEvent]
 
 
 @router.post("", response_model=SearchResponse)
@@ -42,18 +42,26 @@ async def execute_search(
     Executes a guarded search against the configured SIEM and returns normalized events.
     If Splunk is unavailable, falls back to searching the caller's tenant data in MongoDB.
     """
+    tenant = await resolve_config(db, user["org_id"])
+    detection_index = tenant.siem.detection_index or settings.SPLUNK_DETECTION_INDEX
     try:
         validate_time_range(req.earliest_time, req.latest_time, settings.SEARCH_MAX_RANGE_DAYS)
-        safe_query = validate_search(
-            req.query,
-            allowed_indexes={*settings.SPLUNK_ALLOWED_INDEXES, settings.SPLUNK_DETECTION_INDEX},
-            default_index=settings.SPLUNK_DETECTION_INDEX,
-        )
+        if tenant.siem.type == "elastic":
+            # Not SPL: a Lucene query string over the tenant's configured indexes. Read-only by construction.
+            safe_query = req.query.strip()
+            if not safe_query or len(safe_query) > 1000 or "\x00" in safe_query:
+                raise SPLRejected("Query must be 1-1000 characters")
+        else:
+            safe_query = validate_search(
+                req.query,
+                allowed_indexes={*tenant.siem.allowed_indexes, detection_index},
+                default_index=detection_index,
+            )
     except SPLRejected as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
     try:
-        await record_audit(db, user, "search.execute", "search", "splunk", {"query": safe_query[:500]})
+        await record_audit(db, user, "search.execute", "search", tenant.siem.type, {"query": safe_query[:500]})
     except Exception as exc:  # auditing must not make search unavailable, but must be visible in logs
         logger.error("search_audit_failed", error=str(exc))
 
@@ -92,18 +100,18 @@ async def execute_search(
         cursor = db["alerts"].find(scoped_query(user, mongo_query) if mongo_query else scoped_query(user)).limit(req.limit)
         alert_docs = await cursor.to_list(length=req.limit)
 
-        events: list[NormalizedEvent] = []
+        events: List[NormalizedEvent] = []
         for doc in alert_docs:
             created_at = doc.get("created_at")
             if isinstance(created_at, dict) and "$date" in created_at:
                 try:
                     ts = datetime.fromisoformat(created_at["$date"].replace("Z", "+00:00"))
                 except Exception:
-                    ts = datetime.now(UTC)
+                    ts = datetime.now(timezone.utc)
             elif isinstance(created_at, datetime):
                 ts = created_at
             else:
-                ts = datetime.now(UTC)
+                ts = datetime.now(timezone.utc)
 
             events.append(
                 NormalizedEvent(

@@ -16,9 +16,9 @@ import pytest
 from mongomock_motor import AsyncMongoMockClient
 
 import app.main as main_module
+from app.main import lifespan, app
 from app.core.config import settings
 from app.database.session import db_config
-from app.main import app, lifespan
 
 
 @pytest.mark.asyncio

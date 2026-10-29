@@ -1,11 +1,11 @@
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from mongomock_motor import AsyncMongoMockClient
 
-import app.services.ingestion as ingestion_mod
 from app.core.config import settings
 from app.normalization.noise import NoiseFilter
+import app.services.ingestion as ingestion_mod
 from app.services.ingestion import IngestionService
 
 
@@ -70,7 +70,7 @@ async def test_cursor_advances_to_newest_processed_event_only_on_success(db, spl
     await _service(db, FakeSplunk([page])).fetch_and_store_alerts()
     cursor = await db["ingestion_state"].find_one({"_id": "cursor:default:splunk"})
     newest = max(datetime.fromisoformat(r["_time"].replace("Z", "+00:00")) for r in page)
-    assert datetime.fromisoformat(cursor["ts"]) == newest.astimezone(UTC)
+    assert datetime.fromisoformat(cursor["ts"]) == newest.astimezone(timezone.utc)
 
     boom = _service(db, FakeSplunk(error=RuntimeError("splunk down")))
     assert await boom.fetch_and_store_alerts() == []
@@ -93,7 +93,7 @@ async def test_next_cycle_queries_from_cursor_minus_overlap(db, splunk_rows):
 
 @pytest.mark.asyncio
 async def test_first_run_uses_legacy_last_ingested_then_lookback(db):
-    legacy = datetime(2026, 8, 1, tzinfo=UTC)
+    legacy = datetime(2026, 8, 1, tzinfo=timezone.utc)
     await db["ingestion_state"].insert_one({"_id": "last_ingested", "ts": legacy.isoformat()})
     splunk = FakeSplunk([])
     await _service(db, splunk).fetch_and_store_alerts()
@@ -103,13 +103,13 @@ async def test_first_run_uses_legacy_last_ingested_then_lookback(db):
     db2 = AsyncMongoMockClient()["fresh"]
     splunk2 = FakeSplunk([])
     await _service(db2, splunk2).fetch_and_store_alerts()
-    expected = datetime.now(UTC) - timedelta(hours=settings.INGEST_INITIAL_LOOKBACK_HOURS)
+    expected = datetime.now(timezone.utc) - timedelta(hours=settings.INGEST_INITIAL_LOOKBACK_HOURS)
     assert abs(int(splunk2.queries[0][1]) - int(expected.timestamp())) < 5
 
 
 @pytest.mark.asyncio
 async def test_failed_logons_aggregate_into_one_alert_per_source(db):
-    base = datetime(2026, 8, 11, 6, 0, tzinfo=UTC)
+    base = datetime(2026, 8, 11, 6, 0, tzinfo=timezone.utc)
 
     def row(i, ip):
         return {"_time": (base + timedelta(seconds=i)).isoformat(), "EventCode": "4625", "host": "LAB",
@@ -176,7 +176,7 @@ async def test_cursor_never_regresses(db, splunk_rows):
 async def test_truncated_cycle_resumes_exactly_at_cursor(db, monkeypatch):
     monkeypatch.setattr(settings, "INGEST_PAGE_SIZE", 2)
     monkeypatch.setattr(settings, "INGEST_MAX_PAGES", 1)
-    base = datetime(2026, 8, 11, 6, 0, 7, tzinfo=UTC)
+    base = datetime(2026, 8, 11, 6, 0, 7, tzinfo=timezone.utc)
     await _service(db, FakeSplunk([[_fail_row(base, 0), _fail_row(base, 1)]])).fetch_and_store_alerts()
     run = await db["ingestion_runs"].find_one({})
     cursor = await _cursor(db)
@@ -200,7 +200,7 @@ async def test_non_truncated_next_cycle_is_bucket_aligned(db, splunk_rows):
 
 @pytest.mark.asyncio
 async def test_partial_store_failure_still_reports_stored_alerts(db, monkeypatch):
-    base = datetime(2026, 8, 11, 6, 0, tzinfo=UTC)
+    base = datetime(2026, 8, 11, 6, 0, tzinfo=timezone.utc)
     rows = [_fail_row(base, i, ip) for ip in ("45.33.32.156", "185.220.101.4") for i in range(6)]
     real = ingestion_mod.build_alert_doc
     calls = {"n": 0}
@@ -223,8 +223,8 @@ async def test_partial_store_failure_still_reports_stored_alerts(db, monkeypatch
 @pytest.mark.asyncio
 async def test_slow_brute_force_counts_across_cycles(db, monkeypatch):
     bucket = settings.INGEST_DEDUP_BUCKET_SECONDS
-    now_epoch = int(datetime.now(UTC).timestamp())
-    base = datetime.fromtimestamp(now_epoch - now_epoch % bucket - 2 * bucket, tz=UTC)  # bucket-aligned
+    now_epoch = int(datetime.now(timezone.utc).timestamp())
+    base = datetime.fromtimestamp(now_epoch - now_epoch % bucket - 2 * bucket, tz=timezone.utc)  # bucket-aligned
     rows, reported = [], []
     for i in range(6):
         rows.append(_fail_row(base, i * 50))
@@ -244,7 +244,7 @@ async def _seed_cursor(db, ts, fetched, truncated=False):
 async def test_alignment_only_when_previous_load_is_low(db, monkeypatch):
     monkeypatch.setattr(settings, "INGEST_PAGE_SIZE", 40)
     monkeypatch.setattr(settings, "INGEST_MAX_PAGES", 1)  # cap 40, quarter = 10
-    cursor = datetime(2026, 8, 11, 6, 4, 50, tzinfo=UTC)
+    cursor = datetime(2026, 8, 11, 6, 4, 50, tzinfo=timezone.utc)
     plain = int((cursor - timedelta(seconds=settings.INGEST_OVERLAP_SECONDS)).timestamp())
 
     await _seed_cursor(db, cursor, fetched=10)
@@ -264,7 +264,7 @@ async def test_sustained_load_does_not_flip_flop_truncation(db, monkeypatch):
     monkeypatch.setattr(settings, "INGEST_PAGE_SIZE", 20)
     monkeypatch.setattr(settings, "INGEST_MAX_PAGES", 1)  # cap 20
     monkeypatch.setattr(settings, "INGEST_INITIAL_LOOKBACK_HOURS", 24 * 365 * 10)
-    base = datetime(2026, 8, 11, 6, 0, 0, tzinfo=UTC)
+    base = datetime(2026, 8, 11, 6, 0, 0, tzinfo=timezone.utc)
     # one row per 10 s for 15 minutes: the 120 s overlap window holds ~12 rows (fits), a 420 s window ~42 (does not)
     rows = [_fail_row(base, i * 10, f"10.0.{i % 250}.{i // 250}") for i in range(90)]
     cursors, flags = [], []
@@ -275,3 +275,27 @@ async def test_sustained_load_does_not_flip_flop_truncation(db, monkeypatch):
     assert cursors == sorted(cursors)
     assert cursors[-1] == datetime.fromisoformat(rows[-1]["_time"])
     assert flags[-6:] == [False] * 6
+
+
+@pytest.mark.asyncio
+async def test_ingested_alerts_are_grouped_into_incidents(db, splunk_rows):
+    svc = _service(db, FakeSplunk([_rows(splunk_rows, "22", "13", "3")]))
+    new = await svc.fetch_and_store_alerts()
+
+    assert new
+    linked = [a async for a in db["alerts"].find({"incident_id": {"$exists": True}})]
+    assert linked, "alerts with a host should be linked"
+    for alert in linked:
+        incident = await db["incidents"].find_one({"_id": alert["incident_id"]})
+        assert incident["org_id"] == "default" and alert["host"].lower() in {h.lower() for h in incident["hosts"]}
+
+
+@pytest.mark.asyncio
+async def test_a_linking_failure_never_fails_ingestion(db, splunk_rows, monkeypatch):
+    async def boom(*a, **k):
+        raise RuntimeError("grouping broke")
+
+    monkeypatch.setattr(ingestion_mod, "link_alerts", boom)
+    svc = _service(db, FakeSplunk([_rows(splunk_rows, "22")]))
+    new = await svc.fetch_and_store_alerts()
+    assert new and (await db["ingestion_runs"].find_one({}))["status"] == "ok"

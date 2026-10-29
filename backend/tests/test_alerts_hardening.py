@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import FastAPI
@@ -35,7 +35,7 @@ async def get(app, path):
         return await c.get(path)
 
 
-NOW = datetime.now(UTC).replace(tzinfo=None)
+NOW = datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def alert(i, org, **kw):
@@ -84,3 +84,42 @@ async def test_stats_endpoints_only_count_the_callers_tenant(db):
     assert by_rule == [{"rule_name": "r1", "count": 2}]
     timeline = (await get(make_app(db, "acme"), "/alerts/stats/timeline")).json()
     assert sum(t["count"] for t in timeline) == 2
+
+
+@pytest.mark.asyncio
+async def test_background_investigation_reuses_the_job_row_created_by_post(db, monkeypatch):
+    """POST /investigate inserts the job first; the run must update it, not insert a duplicate _id."""
+    from app.services import investigation_streamer
+
+    async def fake_astream(state):
+        yield {"assess_risk": {"risk_assessment": {"risk_score": 40, "confidence_score": 60, "engine": "deterministic_fallback"}}}
+        yield {"generate_recommendations": {"recommendation": "r", "recommendation_engine": "deterministic_fallback"}}
+
+    monkeypatch.setattr(investigation_streamer.investigation_graph, "astream", fake_astream)
+    monkeypatch.setattr(investigation_streamer, "correlate_alert", lambda *a, **k: _empty())
+    await db["alerts"].insert_one(alert(1, "acme"))
+    await db["investigation_jobs"].insert_one({"_id": "job-1", "alert_id": "a1", "org_id": "acme", "status": "pending"})
+
+    await alerts_module.run_investigation_background("a1", "job-1", db)
+
+    job = await db["investigation_jobs"].find_one({"_id": "job-1"})
+    saved = await db["alerts"].find_one({"_id": "a1"})
+    assert job["status"] == "complete"
+    assert saved["status"] == "Investigated"
+    assert saved["ai_confidence"] == 60
+    assert saved["engines"] == {"risk": "deterministic_fallback", "recommendation": "deterministic_fallback"}
+
+
+async def _empty():
+    return []
+
+
+@pytest.mark.asyncio
+async def test_timeline_buckets_by_detection_time_not_event_time(db):
+    month_ago = NOW - timedelta(days=30)
+    await db["alerts"].insert_many([
+        alert(1, "acme", created_at=month_ago, detected_at=NOW),  # backfilled event, detected now
+        alert(2, "acme", created_at=month_ago, detected_at=month_ago),
+    ])
+    timeline = (await get(make_app(db, "acme"), "/alerts/stats/timeline")).json()
+    assert sum(t["count"] for t in timeline) == 1

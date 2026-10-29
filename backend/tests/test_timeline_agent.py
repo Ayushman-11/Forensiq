@@ -2,7 +2,8 @@
 Unit tests for Timeline Agent Node in LangGraph.
 """
 
-from app.agents.timeline_agent import build_timeline_node
+import pytest
+from app.agents.timeline_agent import build_timeline_node, PHASE_EXECUTION, PHASE_C2, PHASE_PERSISTENCE
 
 
 def test_build_timeline_from_alert_and_context():
