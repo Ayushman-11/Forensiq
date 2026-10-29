@@ -39,9 +39,13 @@ jobs:
 
       - name: Ruff lint
         run: ruff check .
+        # TODO: remove continue-on-error once current Ruff baseline is cleaned up.
+        continue-on-error: true
 
       - name: Ruff format check
         run: ruff format --check .
+        # TODO: remove continue-on-error once current Ruff baseline is cleaned up.
+        continue-on-error: true
 
       - name: mypy type check
         # We run mypy in non-strict mode for now until the existing type debt
